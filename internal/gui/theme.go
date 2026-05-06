@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -26,6 +27,8 @@ type Theme struct {
 
 	ActiveBorderColor gocui.Attribute // focused panel border + cursor row foreground
 	SelectedRowBg     gocui.Attribute // highlighted row background in list panels
+	DimCode           string          // ANSI sequence applied to preview text when dimmed
+	DimFrameColor     gocui.Attribute // gocui color for preview frame/title when dimmed
 }
 
 var defaultTheme = Theme{
@@ -45,7 +48,7 @@ var defaultTheme = Theme{
 	SelectedRowBg:     gocui.Get256Color(8),
 }
 
-func newTheme(cfg config.ThemeConfig) Theme {
+func newTheme(cfg config.ThemeConfig, dimLevel float64) Theme {
 	t := defaultTheme
 	t.Color1 = config.ResolveColor(cfg.Color1, t.Color1)
 	t.Color2 = config.ResolveColor(cfg.Color2, t.Color2)
@@ -62,6 +65,25 @@ func newTheme(cfg config.ThemeConfig) Theme {
 	}
 	if cfg.SelectedRowBgColor != "" {
 		t.SelectedRowBg = resolveGocuiColor(cfg.SelectedRowBgColor, t.SelectedRowBg)
+	}
+
+	if dimLevel < 0 {
+		dimLevel = 0
+	}
+	if dimLevel > 1 {
+		dimLevel = 1
+	}
+	if dimLevel > 0 {
+		// 256-color grayscale ramp: 232 (#080808, near-black) … 255 (#eeeeee).
+		colorIdx := 255 - int(dimLevel*23)
+		if colorIdx < 232 {
+			colorIdx = 232
+		}
+		t.DimCode = fmt.Sprintf("\033[38;5;%dm", colorIdx)
+		t.DimFrameColor = gocui.Get256Color(int32(colorIdx))
+	} else {
+		t.DimCode = ""
+		t.DimFrameColor = gocui.ColorDefault
 	}
 	return t
 }

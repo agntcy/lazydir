@@ -23,6 +23,7 @@ type GUIConfig struct {
 	ScrollStep         int         `yaml:"scrollStep"`
 	SplitRatio         float64     `yaml:"splitRatio"`
 	InputDebounceDelay int         `yaml:"inputDebounceDelay"`
+	DimLevel           *float64    `yaml:"dimLevel"`
 }
 
 // ThemeConfig lets users override the base16 color palette used throughout the

@@ -30,6 +30,11 @@ func parseFlags(userCfg config.Config) gui.Config {
 		oasfServers = []string{oasf.DefaultServerAddress}
 	}
 
+	dimLevel := 0.6
+	if userCfg.GUI.DimLevel != nil {
+		dimLevel = *userCfg.GUI.DimLevel
+	}
+
 	cfg := gui.Config{
 		Directory: dirclient.Config{
 			ServerAddress: dirServers[0].Address,
@@ -46,6 +51,7 @@ func parseFlags(userCfg config.Config) gui.Config {
 		ScrollStep:         userCfg.GUI.ScrollStep,
 		SplitRatio:         userCfg.GUI.SplitRatio,
 		InputDebounceDelay: userCfg.GUI.InputDebounceDelay,
+		DimLevel:           dimLevel,
 		FirstPageSize:      userCfg.Stream.FirstPageSize,
 		BatchSize:          userCfg.Stream.BatchSize,
 	}

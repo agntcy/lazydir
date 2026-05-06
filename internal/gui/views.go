@@ -193,26 +193,79 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 
 // renderPreviewText sets plain text content in the preview panel.
 func (app *Gui) renderPreviewText(g *gocui.Gui, subtitle, content string) {
-	v, err := g.View(viewPreview)
-	if err != nil {
-		return
-	}
-	v.Title = previewTitle(subtitle)
-	v.Clear()
-	_ = v.SetOrigin(0, 0)
-	fmt.Fprint(v, content)
+	app.state.previewSubtitle = subtitle
+	app.state.previewContent = content
+	app.writePreview(g, true)
 }
 
 // renderPreviewJSON sets syntax-highlighted JSON in the preview panel.
 func (app *Gui) renderPreviewJSON(g *gocui.Gui, subtitle, jsonStr string) {
+	app.state.previewSubtitle = subtitle
+	app.state.previewContent = highlightJSON(jsonStr)
+	app.writePreview(g, true)
+}
+
+// writePreview renders the stored preview content into the preview view.
+// When a right-column popup is active the content is dimmed so the popup
+// stands out visually. If resetScroll is true the view scrolls back to top.
+func (app *Gui) writePreview(g *gocui.Gui, resetScroll bool) {
 	v, err := g.View(viewPreview)
 	if err != nil {
 		return
 	}
-	v.Title = previewTitle(subtitle)
+	v.Title = previewTitle(app.state.previewSubtitle)
+
+	dimmed := app.shouldDimPreview(g)
+	app.state.previewDimmed = dimmed
+	if dimmed {
+		v.FrameColor = app.theme.DimFrameColor
+		v.TitleColor = app.theme.DimFrameColor
+	} else {
+		v.FrameColor = gocui.ColorDefault
+		v.TitleColor = gocui.ColorDefault
+	}
+
 	v.Clear()
-	_ = v.SetOrigin(0, 0)
-	fmt.Fprint(v, highlightJSON(jsonStr))
+	if resetScroll {
+		_ = v.SetOrigin(0, 0)
+	}
+
+	content := app.state.previewContent
+	if dimmed && content != "" {
+		content = dimText(content, app.theme.DimCode)
+	}
+	fmt.Fprint(v, content)
+}
+
+// dimText strips all ANSI escape sequences from s and wraps the plain text
+// in dimCode so the entire content renders at a single uniform brightness.
+func dimText(s, dimCode string) string {
+	return dimCode + stripANSI(s) + "\033[0m"
+}
+
+// stripANSI removes all ANSI CSI escape sequences (\033[…X) from a string.
+func stripANSI(s string) string {
+	var buf strings.Builder
+	buf.Grow(len(s))
+	for i := 0; i < len(s); {
+		if i+1 < len(s) && s[i] == '\033' && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && !isCSITerminator(s[j]) {
+				j++
+			}
+			if j < len(s) {
+				i = j + 1
+				continue
+			}
+		}
+		buf.WriteByte(s[i])
+		i++
+	}
+	return buf.String()
+}
+
+func isCSITerminator(b byte) bool {
+	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
 }
 
 // previewTitle formats the preview panel title, always keeping the [0] Preview

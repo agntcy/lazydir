@@ -120,6 +120,11 @@ type appState struct {
 	// info popup state (shared between filters and records panels)
 	infoPrevView   string // view to return to when info popup closes
 	infoPopupPanel string // which panel opened the popup (viewFilters or viewRecords)
+
+	// preview dimming: stored content so we can toggle dim without refetching
+	previewSubtitle string
+	previewContent  string // rendered (ANSI-colored) content
+	previewDimmed   bool   // true when the preview is currently showing dimmed
 }
 
 // Config bundles everything needed to start the GUI.
@@ -132,6 +137,7 @@ type Config struct {
 	ScrollStep         int
 	SplitRatio         float64
 	InputDebounceDelay int
+	DimLevel           float64
 	FirstPageSize      int
 	BatchSize          int
 }
@@ -158,7 +164,7 @@ func New(cfg Config) error {
 
 	app := &Gui{
 		cfg:   cfg,
-		theme: newTheme(cfg.Theme),
+		theme: newTheme(cfg.Theme, cfg.DimLevel),
 		state: appState{
 			activeDir:    initialDir,
 			serverAddr:   cfg.Directory.ServerAddress,

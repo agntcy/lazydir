@@ -15,6 +15,7 @@ gui:
     color10: "brightBlack"  # dim/muted text (IDs)
     activeBorderColor: "green"    # focused panel border + cursor
     selectedRowBgColor: "8"       # highlighted row background (256-color)
+  dimLevel: 0.6                   # preview dimming when a popup is open (0 = off, 1 = invisible)
   scrollStep: 3                   # lines per scroll keypress
   splitRatio: 0.33                # left panel width as fraction of terminal
   inputDebounceDelay: 150         # ms before live filter fires

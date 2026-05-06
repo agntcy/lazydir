@@ -27,6 +27,9 @@ var roundedFrame = []rune{'─', '│', '╭', '╮', '╰', '╯'}
 // listViews are the panels that show a highlighted cursor row.
 var listViews = []string{viewDirectory, viewFilters, viewRecords}
 
+// rightColumnPopups are popup views rendered over the preview panel.
+var rightColumnPopups = []string{viewInfoPopup, viewCopyMenu, viewServerMenu, viewAuthPopup}
+
 // layout is the gocui Manager — called on every redraw/resize.
 func (g *Gui) layout(gui *gocui.Gui) error {
 	maxX, maxY := gui.Size()
@@ -37,14 +40,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 	bottomY1 := maxY
 	panelBottom := maxY - 2
 
-	splitRatio := g.cfg.SplitRatio
-	if splitRatio <= 0 || splitRatio >= 1 {
-		splitRatio = 0.33
-	}
-	leftW := int(float64(maxX) * splitRatio)
-	if leftW < 10 {
-		leftW = 10
-	}
+	leftW := g.leftColumnWidth(maxX)
 	rightX0 := leftW
 
 	optionsX1 := maxX - 1
@@ -329,6 +325,9 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Visible = false
 	}
 
+	// Dim the preview panel when a popup overlays it.
+	g.updatePreviewDim(gui)
+
 	// First-time init: populate bottom bar and set focus.
 	if gui.CurrentView() == nil {
 		g.renderStatus(gui)
@@ -409,6 +408,20 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 	_ = v.SetCursor(0, g.state.connCursor)
 }
 
+// leftColumnWidth returns the pixel width of the left panel column,
+// applying the configured split ratio with clamping and minimum.
+func (g *Gui) leftColumnWidth(maxX int) int {
+	splitRatio := g.cfg.SplitRatio
+	if splitRatio <= 0 || splitRatio >= 1 {
+		splitRatio = 0.33
+	}
+	leftW := int(float64(maxX) * splitRatio)
+	if leftW < 10 {
+		leftW = 10
+	}
+	return leftW
+}
+
 // inputHostView resolves which left-column panel the input prompt should
 // attach itself to. The prompt is inserted above the host, shifting the
 // panels below it down.
@@ -420,6 +433,33 @@ func (g *Gui) inputHostView() string {
 	default:
 		return viewRecords
 	}
+}
+
+// ── Preview dimming ──────────────────────────────────────────────────────────
+
+// rightColumnPopupActive returns true if any popup is visible over the preview.
+func (app *Gui) rightColumnPopupActive(gui *gocui.Gui) bool {
+	for _, name := range rightColumnPopups {
+		if v, err := gui.View(name); err == nil && v.Visible {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldDimPreview returns true when the preview content should be dimmed
+// (dimming is enabled and at least one right-column popup is visible).
+func (app *Gui) shouldDimPreview(gui *gocui.Gui) bool {
+	return app.theme.DimCode != "" && app.rightColumnPopupActive(gui)
+}
+
+// updatePreviewDim re-renders the preview with or without dimming when the
+// popup overlay state changes. It preserves the current scroll position.
+func (app *Gui) updatePreviewDim(gui *gocui.Gui) {
+	if app.shouldDimPreview(gui) == app.state.previewDimmed {
+		return
+	}
+	app.writePreview(gui, false)
 }
 
 // ── Popup positioning helpers ────────────────────────────────────────────────

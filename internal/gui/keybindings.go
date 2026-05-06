@@ -1199,15 +1199,7 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 			app.state.filters.inlineDescText = err.Error()
 		} else {
 			maxX, _ := g.Size()
-			splitRatio := app.cfg.SplitRatio
-			if splitRatio <= 0 || splitRatio >= 1 {
-				splitRatio = 0.33
-			}
-			leftW := int(float64(maxX) * splitRatio)
-			if leftW < 10 {
-				leftW = 10
-			}
-			descW := maxX - leftW - 4
+			descW := maxX - app.leftColumnWidth(maxX) - 4
 			if descW < 40 {
 				descW = 40
 			}

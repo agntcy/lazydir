@@ -200,6 +200,7 @@ gui:
   scrollStep: 3           # lines per scroll keypress (default: 3)
   splitRatio: 0.33        # left panel width as fraction of terminal (default: 0.33)
   inputDebounceDelay: 150 # ms before live filter fires (default: 150)
+  dimLevel: 0.6           # preview dimming when a popup overlays it (0 = off, 1 = invisible)
 ```
 
 ### Server defaults
