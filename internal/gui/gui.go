@@ -3,6 +3,8 @@ package gui
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,6 +75,11 @@ type appState struct {
 	records         []*dirclient.RecordSummary
 	filteredRecords []*dirclient.RecordSummary
 	recordCursor    int
+
+	// Record grouping: records with the same Name but different versions
+	// are grouped together with a collapsible header.
+	recordDisplayRows   []recordDisplayRow
+	recordGroupExpanded map[string]bool
 
 	// records-stream lifecycle
 	stream     streamState
@@ -589,16 +596,109 @@ func (app *Gui) startRecordsStream() {
 func (app *Gui) applyNameFilter() {
 	if app.state.filterQuery == "" {
 		app.state.filteredRecords = app.state.records
+	} else {
+		q := strings.ToLower(app.state.filterQuery)
+		out := make([]*dirclient.RecordSummary, 0, len(app.state.records))
+		for _, r := range app.state.records {
+			if strings.Contains(strings.ToLower(r.Name), q) {
+				out = append(out, r)
+			}
+		}
+		app.state.filteredRecords = out
+	}
+	app.buildRecordDisplayRows()
+}
+
+// buildRecordDisplayRows computes the grouped display rows from
+// filteredRecords. Records sharing the same Name are grouped together with a
+// collapsible header (similar to filter categories). Groups with a single
+// record are shown flat without a header.
+func (app *Gui) buildRecordDisplayRows() {
+	records := app.state.filteredRecords
+	if len(records) == 0 {
+		app.state.recordDisplayRows = nil
 		return
 	}
-	q := strings.ToLower(app.state.filterQuery)
-	out := make([]*dirclient.RecordSummary, 0, len(app.state.records))
-	for _, r := range app.state.records {
-		if strings.Contains(strings.ToLower(r.Name), q) {
-			out = append(out, r)
+
+	if app.state.recordGroupExpanded == nil {
+		app.state.recordGroupExpanded = map[string]bool{}
+	}
+
+	// Build ordered groups preserving first-seen order.
+	type group struct {
+		name    string
+		records []*dirclient.RecordSummary
+	}
+	seen := map[string]int{} // name -> index into groups
+	var groups []group
+	for _, r := range records {
+		name := r.Name
+		if name == "" {
+			name = r.CID
+		}
+		if idx, ok := seen[name]; ok {
+			groups[idx].records = append(groups[idx].records, r)
+		} else {
+			seen[name] = len(groups)
+			groups = append(groups, group{name: name, records: []*dirclient.RecordSummary{r}})
 		}
 	}
-	app.state.filteredRecords = out
+
+	var rows []recordDisplayRow
+	for _, g := range groups {
+		if len(g.records) == 1 {
+			rows = append(rows, recordDisplayRow{record: g.records[0]})
+			continue
+		}
+		sort.Slice(g.records, func(i, j int) bool {
+			return compareVersions(g.records[i].Version, g.records[j].Version) > 0
+		})
+		rows = append(rows, recordDisplayRow{groupName: g.name})
+		if app.state.recordGroupExpanded[g.name] {
+			for _, r := range g.records {
+				rows = append(rows, recordDisplayRow{record: r, grouped: true})
+			}
+		}
+	}
+	app.state.recordDisplayRows = rows
+}
+
+// compareVersions compares two version strings. It attempts semver-style
+// numeric comparison (splitting on ".") and falls back to lexicographic order.
+// Returns >0 if a > b, <0 if a < b, 0 if equal.
+func compareVersions(a, b string) int {
+	a = strings.TrimPrefix(a, "v")
+	b = strings.TrimPrefix(b, "v")
+	aParts := strings.Split(a, ".")
+	bParts := strings.Split(b, ".")
+	maxLen := len(aParts)
+	if len(bParts) > maxLen {
+		maxLen = len(bParts)
+	}
+	for i := 0; i < maxLen; i++ {
+		var ap, bp string
+		if i < len(aParts) {
+			ap = aParts[i]
+		}
+		if i < len(bParts) {
+			bp = bParts[i]
+		}
+		an, aErr := strconv.Atoi(ap)
+		bn, bErr := strconv.Atoi(bp)
+		if aErr == nil && bErr == nil {
+			if an != bn {
+				return an - bn
+			}
+			continue
+		}
+		if ap != bp {
+			if ap < bp {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
 }
 
 // openInput shows the shared input prompt, pre-fills it with initialValue,

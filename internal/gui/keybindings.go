@@ -478,6 +478,16 @@ func (app *Gui) filterOpenSearch(g *gocui.Gui, v *gocui.View) error {
 
 // ── Records panel handlers ────────────────────────────────────────────────────
 
+// cursorRecord returns the record under the current cursor position, or nil
+// if the cursor is on a group header or out of range.
+func (app *Gui) cursorRecord() *dirclient.RecordSummary {
+	rows := app.state.recordDisplayRows
+	if app.state.recordCursor >= len(rows) {
+		return nil
+	}
+	return rows[app.state.recordCursor].record
+}
+
 func (app *Gui) recordMouseClick(g *gocui.Gui, v *gocui.View) error {
 	app.hideInfoPopupIfVisible(g)
 	if err := app.focusTo(g, viewRecords); err != nil {
@@ -486,8 +496,14 @@ func (app *Gui) recordMouseClick(g *gocui.Gui, v *gocui.View) error {
 	_, cy := v.Cursor()
 	_, oy := v.Origin()
 	idx := oy + cy
-	if idx >= 0 && idx < len(app.state.filteredRecords) {
+	rows := app.state.recordDisplayRows
+	if idx >= 0 && idx < len(rows) {
 		app.state.recordCursor = idx
+		row := rows[idx]
+		if row.record == nil {
+			app.state.recordGroupExpanded[row.groupName] = !app.state.recordGroupExpanded[row.groupName]
+			app.buildRecordDisplayRows()
+		}
 		app.renderRecordsView(g)
 		app.autoPreviewRecord(g)
 	}
@@ -504,7 +520,8 @@ func (app *Gui) recordCursorUp(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) recordCursorDown(g *gocui.Gui, v *gocui.View) error {
-	if app.state.recordCursor < len(app.state.filteredRecords)-1 {
+	rows := app.state.recordDisplayRows
+	if app.state.recordCursor < len(rows)-1 {
 		app.state.recordCursor++
 		app.renderRecordsView(g)
 		app.autoPreviewRecord(g)
@@ -513,11 +530,19 @@ func (app *Gui) recordCursorDown(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
-	records := app.state.filteredRecords
-	if app.state.recordCursor >= len(records) {
+	rows := app.state.recordDisplayRows
+	if app.state.recordCursor >= len(rows) {
 		return nil
 	}
-	cid := records[app.state.recordCursor].CID
+	row := rows[app.state.recordCursor]
+	if row.record == nil {
+		app.state.recordGroupExpanded[row.groupName] = !app.state.recordGroupExpanded[row.groupName]
+		app.buildRecordDisplayRows()
+		app.renderRecordsView(g)
+		app.autoPreviewRecord(g)
+		return nil
+	}
+	cid := row.record.CID
 	if cid == "" {
 		return nil
 	}
@@ -567,11 +592,11 @@ func (app *Gui) clearFilter(g *gocui.Gui, v *gocui.View) error {
 // recordToggleInfo opens/closes the info popup for the currently highlighted
 // record, fetching details via the directory's PullInfo RPC.
 func (app *Gui) recordToggleInfo(g *gocui.Gui, v *gocui.View) error {
-	records := app.state.filteredRecords
-	if app.state.recordCursor >= len(records) {
+	r := app.cursorRecord()
+	if r == nil {
 		return nil
 	}
-	cid := records[app.state.recordCursor].CID
+	cid := r.CID
 	if cid == "" {
 		return nil
 	}
@@ -870,6 +895,8 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.stream = streamLoading
 	app.state.records = nil
 	app.state.filteredRecords = nil
+	app.state.recordDisplayRows = nil
+	app.state.recordGroupExpanded = map[string]bool{}
 	app.state.recordCursor = 0
 	app.state.filters = newFilterState()
 	app.state.filterQuery = ""
@@ -1112,13 +1139,20 @@ func (app *Gui) pullRecord(cid string) {
 }
 
 // autoPreviewRecord fires a background pull for the record currently under the
-// cursor, resetting the preview scroll position first.
+// cursor, resetting the preview scroll position first. For group headers it
+// previews the first record in the group.
 func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
-	records := app.state.filteredRecords
-	if app.state.recordCursor >= len(records) {
+	rows := app.state.recordDisplayRows
+	if app.state.recordCursor >= len(rows) {
 		return
 	}
-	cid := records[app.state.recordCursor].CID
+	row := rows[app.state.recordCursor]
+	var cid string
+	if row.record != nil {
+		cid = row.record.CID
+	} else {
+		cid = app.firstCIDInGroup(row.groupName)
+	}
 	if cid == "" {
 		return
 	}
@@ -1126,6 +1160,44 @@ func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
 		_ = pv.SetOrigin(0, 0)
 	}
 	go app.pullRecord(cid)
+}
+
+// firstCIDInGroup returns the CID of the latest-version record in the named
+// group. When expanded, the first child row is already the latest (sorted).
+// When collapsed, it scans filteredRecords and picks the highest version.
+func (app *Gui) firstCIDInGroup(name string) string {
+	if app.state.recordGroupExpanded[name] {
+		found := false
+		for _, row := range app.state.recordDisplayRows {
+			if row.record == nil && row.groupName == name {
+				found = true
+				continue
+			}
+			if found {
+				if row.record != nil {
+					return row.record.CID
+				}
+				break
+			}
+		}
+	}
+	var best *dirclient.RecordSummary
+	for _, r := range app.state.filteredRecords {
+		rName := r.Name
+		if rName == "" {
+			rName = r.CID
+		}
+		if rName != name {
+			continue
+		}
+		if best == nil || compareVersions(r.Version, best.Version) > 0 {
+			best = r
+		}
+	}
+	if best != nil {
+		return best.CID
+	}
+	return ""
 }
 
 // filterToggleInfo opens/closes the info popup for the currently highlighted
@@ -1449,8 +1521,7 @@ func (app *Gui) closeHelp(g *gocui.Gui, v *gocui.View) error {
 // ── Copy menu popup ───────────────────────────────────────────────────────────
 
 func (app *Gui) openCopyMenu(g *gocui.Gui, v *gocui.View) error {
-	records := app.state.filteredRecords
-	if app.state.recordCursor >= len(records) {
+	if app.cursorRecord() == nil {
 		return nil
 	}
 	cv, err := g.View(viewCopyMenu)
@@ -1470,27 +1541,20 @@ func (app *Gui) closeCopyMenu(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) copyCID(g *gocui.Gui, v *gocui.View) error {
-	records := app.state.filteredRecords
-	if app.state.recordCursor >= len(records) {
+	r := app.cursorRecord()
+	if r == nil || r.CID == "" {
 		return app.closeCopyMenu(g, v)
 	}
-	cid := records[app.state.recordCursor].CID
-	if cid == "" {
-		return app.closeCopyMenu(g, v)
-	}
-	_ = writeClipboard(cid)
+	_ = writeClipboard(r.CID)
 	return app.closeCopyMenu(g, v)
 }
 
 func (app *Gui) copyRecordJSON(g *gocui.Gui, v *gocui.View) error {
-	records := app.state.filteredRecords
-	if app.state.recordCursor >= len(records) {
+	r := app.cursorRecord()
+	if r == nil || r.CID == "" {
 		return app.closeCopyMenu(g, v)
 	}
-	cid := records[app.state.recordCursor].CID
-	if cid == "" {
-		return app.closeCopyMenu(g, v)
-	}
+	cid := r.CID
 	if err := app.closeCopyMenu(g, v); err != nil {
 		return err
 	}

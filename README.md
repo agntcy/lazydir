@@ -37,7 +37,7 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 |-------|---------|
 | **[1] Connections** | Shows both endpoints the TUI is currently talking to — the Directory server and the OASF schema server — along with the connection status of the former. Press `c` to switch to a different Directory server and `o` to point at a different OASF schema server. |
 | **[2] Filters** | Lists every filter category as a collapsible tree (Skills, Domains, Modules, OASF version, Version, Author, Trusted, Verified). Each category has a `▶`/`▼` triangle — pressing `enter` on a category expands or collapses its options dropdown; pressing `enter` or `space` on an option toggles its selection. Skills, domains, and modules display their OASF numeric ID and caption (fetched from the OASF schema server) sorted by ID. Selected options are shown in a distinct color and remain visible under their category even when collapsed. Multiple values can be active per category. The `[3] Records` pane updates immediately as filters change. Press `/` to search across all non-boolean categories simultaneously — matching options appear grouped under their category headers as you type; the search matches against name, caption, and ID. Press `i` on a skill, domain, or module option to toggle its OASF class hierarchy tree and description inline. |
-| **[3] Records** | Lists records that satisfy the active filters. Shows name and version. Use `/` to filter by name — results narrow live as you type. Press `enter` to load the full record JSON in the preview panel. Press `i` to toggle inline record info (CID, annotations, schema version, created-at) below the selected record. Press `y` to open a yank/copy menu where `c` copies the CID and `a` copies the full record JSON to the clipboard. |
+| **[3] Records** | Lists records that satisfy the active filters. Shows name and version. Records sharing the same name but with different versions are automatically grouped under a collapsible `▶`/`▼` header (similar to filter categories) — press `enter` on a group header to expand/collapse it; expanded groups show each version as an indented child row. Use `/` to filter by name — results narrow live as you type. Press `enter` on a record row to load the full record JSON in the preview panel. Press `i` to toggle inline record info (CID, annotations, schema version, created-at) below the selected record. Press `y` to open a yank/copy menu where `c` copies the CID and `a` copies the full record JSON to the clipboard. |
 | **Preview** | The right two-thirds of the screen. Displays syntax-highlighted JSON of the selected record. Scroll with `↑`/`↓` when the preview panel is focused. |
 
 ## Prerequisites
@@ -147,7 +147,8 @@ lazydir -s my-dir.example.com:443 \
 | `/` (Filters) | Search options across all categories (name, caption, ID) |
 | `i` (Filters, on option) | Toggle inline OASF class hierarchy and description |
 | `esc` (Filters) | Clear search query |
-| `enter` (Records) | Load the full record JSON in the preview panel |
+| `enter` (Records, on group header) | Expand / collapse the version group |
+| `enter` (Records, on record) | Load the full record JSON in the preview panel |
 | `i` (Records) | Toggle inline record info (CID, annotations, schema version, created-at) |
 | `y` (Records) | Open yank/copy menu — `c` copies the CID, `a` copies the full record JSON |
 | `/` (Records) | Live-filter by name |

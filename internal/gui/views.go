@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/akijakya/lazydir/internal/dirclient"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -15,6 +16,14 @@ import (
 // indent1 is the single-level indentation used for child rows everywhere in
 // the TUI (applied filter selections, inline descriptions, inline record info).
 const indent1 = "    "
+
+// recordDisplayRow describes one rendered line in the records panel.
+// It is either a group header (when record is nil) or a record entry.
+type recordDisplayRow struct {
+	groupName string                   // non-empty for group headers
+	record    *dirclient.RecordSummary // non-nil for actual record entries
+	grouped   bool                     // true if this record is part of a multi-version group
+}
 
 // lazydirStyle is a chroma style derived from "tango" with punctuation
 // remapped to plain white so that { } [ ] ( ) , : ; are readable on dark
@@ -159,25 +168,46 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		nameW = 8
 	}
 
+	rows := app.state.recordDisplayRows
+	if app.state.recordCursor >= len(rows) && len(rows) > 0 {
+		app.state.recordCursor = len(rows) - 1
+	}
+
 	lineNum := 0
 	targetLine := 0
-	for i, r := range records {
+	for i, row := range rows {
 		if i == app.state.recordCursor {
 			targetLine = lineNum
 		}
 
-		name := r.Name
-		if name == "" {
-			name = r.CID
+		if row.record == nil {
+			triangle := "▶"
+			if app.state.recordGroupExpanded[row.groupName] {
+				triangle = "▼"
+			}
+			name := row.groupName
+			if len(name) > nameW-2 {
+				name = name[:nameW-3] + "…"
+			}
+			fmt.Fprintf(v, " %s %s\n", triangle, name)
+		} else {
+			name := row.record.Name
+			if name == "" {
+				name = row.record.CID
+			}
+			version := row.record.Version
+			if version == "" {
+				version = "n/a"
+			}
+			if row.grouped {
+				fmt.Fprintf(v, "%s%s\n", indent1, version)
+			} else {
+				if len(name) > nameW {
+					name = name[:nameW-1] + "…"
+				}
+				fmt.Fprintf(v, " %-*s  %s\n", nameW, name, version)
+			}
 		}
-		if len(name) > nameW {
-			name = name[:nameW-1] + "…"
-		}
-		version := r.Version
-		if version == "" {
-			version = "n/a"
-		}
-		fmt.Fprintf(v, " %-*s  %s\n", nameW, name, version)
 		lineNum++
 	}
 
