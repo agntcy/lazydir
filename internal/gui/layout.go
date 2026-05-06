@@ -33,10 +33,8 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 
 	// The bottom bar occupies the last row (maxY-1).
 	// All panels extend down to maxY-2, so they sit flush against it.
-	// For frameless views, content cell y=0 is placed at screen row v.y0+1.
-	// So to render at terminal row (maxY-1), we need v.y0=maxY-2, v.y1=maxY.
-	bottomY0 := maxY - 2 // y0 for bottom bar views
-	bottomY1 := maxY     // y1 for bottom bar views (one past screen, allowed)
+	bottomY0 := maxY - 2
+	bottomY1 := maxY
 	panelBottom := maxY - 2
 
 	splitRatio := g.cfg.SplitRatio
@@ -67,15 +65,13 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		filtersY0        int
 		filtersY1        int
 		recordY0         int
-		inputOnLeft      = false
 		inputX0, inputY0 = 0, 0
 		inputX1, inputY1 = 0, 0
 	)
 
-	// Reserve the prompt slot before deciding panel heights.
-	slotOffsetDir := 0     // shift applied to Connections (only when host=viewDirectory)
-	slotOffsetFilters := 0 // shift applied to Filters
-	slotOffsetRecord := 0  // shift applied to Records
+	slotOffsetDir := 0
+	slotOffsetFilters := 0
+	slotOffsetRecord := 0
 	if showInput {
 		switch inputHost {
 		case viewDirectory:
@@ -86,10 +82,8 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 			slotOffsetFilters = inputSlot
 			slotOffsetRecord = inputSlot
 		case viewRecords, viewPreview, "":
-			// Default: above Records (used by `/` filter too).
 			slotOffsetRecord = inputSlot
 		}
-		inputOnLeft = (inputHost != viewPreview)
 	}
 
 	// Connections panel placement.
@@ -110,8 +104,8 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		recordY0 = panelBottom - 3
 	}
 
-	// Input prompt coordinates, when shown on the left column.
-	if showInput && inputOnLeft {
+	// Input prompt coordinates on the left column.
+	if showInput {
 		inputX0 = 0
 		inputX1 = leftW - 1
 		switch inputHost {
@@ -188,9 +182,8 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Frame = false
 	}
 
-	// Shared input prompt — lives as a regular row above its host panel.
-	// We still create the view at startup so focus/keybindings work; when
-	// not visible it's parked off-screen above the viewport.
+	// ── Input prompt — left column above its host panel ──────────────────
+
 	if !showInput {
 		inputX0, inputX1 = 0, leftW-1
 		inputY0, inputY1 = -inputSlot-1, -2
@@ -210,41 +203,33 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		_, _ = gui.SetViewOnTop(viewInput)
 	}
 
-	// Help popup overlay — centered, shown/hidden on demand.
-	helpW := 54
-	helpH := 22
-	helpX0 := (maxX - helpW) / 2
-	helpY0 := (maxY - helpH) / 2
-	if v, err := gui.SetView(viewHelp, helpX0, helpY0, helpX0+helpW, helpY0+helpH, 0); err != nil {
+	// ── Popups — positioned in the preview (right) column ────────────────
+
+	// Info popup — sized to content, positioned in the right column.
+	ipX0, ipY0, ipX1, ipY1 := 0, -10, 10, -1
+	if ipv, _ := gui.View(viewInfoPopup); ipv != nil && ipv.Visible {
+		ipText := g.infoPopupText()
+		ipMaxW := maxX - 1 - rightX0 - 2
+		ipCW, ipCH := popupContentSize(ipText, ipMaxW)
+		ipX0, ipY0, ipX1, ipY1 = popupRect(gui, g.state.infoPopupPanel,
+			ipCW, ipCH, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
+	}
+	if v, err := gui.SetView(viewInfoPopup, ipX0, ipY0, ipX1, ipY1, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
-		v.Title = " Keybindings  (esc/? to close) "
+		v.Title = " Info "
 		v.Frame = true
 		v.FrameRunes = roundedFrame
-		v.Wrap = false
+		v.Wrap = true
 		v.Visible = false
 	}
 
-	// Copy-menu popup — positioned under the selected record when visible.
-	copyW := 28
-	copyH := 4 // frame(2) + 2 content lines
-	cmX0, cmY0, cmX1, cmY1 := 0, -(copyH + 1), copyW, -1
+	// Copy-menu popup — positioned in the right column.
+	cmX0, cmY0, cmX1, cmY1 := 0, -6, 28, -1
 	if cmv, _ := gui.View(viewCopyMenu); cmv != nil && cmv.Visible {
-		if rv, rvErr := gui.View(viewRecords); rvErr == nil {
-			_, cy := rv.Cursor()
-			screenY := recordY0 + 1 + cy
-			cmX0 = 2
-			cmY0 = screenY + 1
-			if cmY0+copyH-1 > panelBottom {
-				cmY0 = screenY - copyH
-			}
-			cmX1 = cmX0 + copyW
-			if cmX1 > leftW-1 {
-				cmX1 = leftW - 1
-			}
-			cmY1 = cmY0 + copyH - 1
-		}
+		cmX0, cmY0, cmX1, cmY1 = popupRect(gui, viewRecords,
+			24, 2, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
 	}
 	if v, err := gui.SetView(viewCopyMenu, cmX0, cmY0, cmX1, cmY1, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
@@ -257,22 +242,22 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Visible = false
 	}
 
-	// Server selection popup — centered over the connections panel.
+	// Server selection popup — positioned in the right column.
 	{
-		smW := 40
-		if leftW-4 > smW {
-			smW = leftW - 4
-		}
-		smH := 6
+		smX0, smY0, smX1, smY1 := 0, -8, 40, -1
 		if g.state.serverMenuVisible {
-			smH = len(g.state.serverMenuItems) + 2
-		}
-		smX0 := (leftW - smW) / 2
-		smY0 := dirY0 + 1
-		smX1 := smX0 + smW
-		smY1 := smY0 + smH
-		if smY1 > panelBottom {
-			smY1 = panelBottom
+			smCW := 20
+			for _, item := range g.state.serverMenuItems {
+				if l := len(item) + 2; l > smCW {
+					smCW = l
+				}
+			}
+			smCH := len(g.state.serverMenuItems)
+			if smCH < 1 {
+				smCH = 1
+			}
+			smX0, smY0, smX1, smY1 = popupRect(gui, viewDirectory,
+				smCW, smCH, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
 		}
 		if v, err := gui.SetView(viewServerMenu, smX0, smY0, smX1, smY1, 0); err != nil {
 			if !gocui.IsUnknownView(err) {
@@ -287,7 +272,6 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 			v.SelBgColor = g.theme.SelectedRowBg
 			v.SelFgColor = gocui.ColorDefault
 		} else {
-			_, _ = gui.SetView(viewServerMenu, smX0, smY0, smX1, smY1, 0)
 			v.Visible = g.state.serverMenuVisible
 			if g.state.serverMenuVisible {
 				v.Clear()
@@ -299,31 +283,21 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		}
 	}
 
-	// OIDC auth popup — centered on screen.
+	// OIDC auth popup — positioned in the right column.
 	{
-		authW := 50
-		if leftW-4 < authW {
-			authW = leftW - 4
-		}
-		authH := g.state.authPopupLines + 2
-		if authH < 3 {
-			authH = 3
-		}
-		authX0 := 2
-		authY0 := dirY1 + 1
-		if authY0+authH-1 > panelBottom {
-			authY0 = panelBottom - authH + 1
-		}
-		if authY0 < 0 {
-			authY0 = 0
-		}
-		authX1 := authX0 + authW
-		if authX1 > leftW-1 {
-			authX1 = leftW - 1
-		}
-		authY1 := authY0 + authH - 1
-		if authY1 > panelBottom {
-			authY1 = panelBottom
+		authX0, authY0, authX1, authY1 := 0, -10, 50, -1
+		if av, _ := gui.View(viewAuthPopup); av != nil && av.Visible {
+			authCW := 50
+			authMaxW := maxX - 1 - rightX0 - 2
+			if authCW > authMaxW {
+				authCW = authMaxW
+			}
+			authCH := g.state.authPopupLines
+			if authCH < 1 {
+				authCH = 1
+			}
+			authX0, authY0, authX1, authY1 = popupRect(gui, viewDirectory,
+				authCW, authCH, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
 		}
 		if v, err := gui.SetView(viewAuthPopup, authX0, authY0, authX1, authY1, 0); err != nil {
 			if !gocui.IsUnknownView(err) {
@@ -339,54 +313,19 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		}
 	}
 
-	// Info popup — positioned under the selected item in the source panel,
-	// sized dynamically to fit the content.
-	infoW := leftW - 4
-	if infoW < 30 {
-		infoW = 30
-	}
-	infoH := g.infoPopupHeight(panelBottom, infoW-2)
-	ipX0, ipY0, ipX1, ipY1 := 0, -(infoH + 1), infoW, -1
-	if ipv, _ := gui.View(viewInfoPopup); ipv != nil && ipv.Visible {
-		sourceView := viewRecords
-		sourceY0 := recordY0
-		switch g.state.infoPopupPanel {
-		case viewDirectory:
-			sourceView = viewDirectory
-			sourceY0 = dirY0
-		case viewFilters:
-			sourceView = viewFilters
-			sourceY0 = filtersY0
-		}
-		if sv, svErr := gui.View(sourceView); svErr == nil {
-			_, cy := sv.Cursor()
-			screenY := sourceY0 + 1 + cy
-			ipX0 = 2
-			ipY0 = screenY + 1
-			if ipY0+infoH-1 > panelBottom {
-				ipY0 = screenY - infoH
-			}
-			if ipY0 < 0 {
-				ipY0 = 0
-			}
-			ipX1 = ipX0 + infoW
-			if ipX1 > leftW-1 {
-				ipX1 = leftW - 1
-			}
-			ipY1 = ipY0 + infoH - 1
-			if ipY1 > panelBottom {
-				ipY1 = panelBottom
-			}
-		}
-	}
-	if v, err := gui.SetView(viewInfoPopup, ipX0, ipY0, ipX1, ipY1, 0); err != nil {
+	// Help popup overlay — centered, shown/hidden on demand.
+	helpW := 54
+	helpH := 22
+	helpX0 := (maxX - helpW) / 2
+	helpY0 := (maxY - helpH) / 2
+	if v, err := gui.SetView(viewHelp, helpX0, helpY0, helpX0+helpW, helpY0+helpH, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
-		v.Title = " Info "
+		v.Title = " Keybindings  (esc/? to close) "
 		v.Frame = true
 		v.FrameRunes = roundedFrame
-		v.Wrap = true
+		v.Wrap = false
 		v.Visible = false
 	}
 
@@ -425,19 +364,6 @@ func (g *Gui) renderStatus(gui *gocui.Gui) {
 	if v, err := gui.View(viewOptions); err == nil {
 		v.Clear()
 		fmt.Fprintf(v, "%s%s%s", g.theme.Color5, optionsBarText(focused, v.InnerWidth()), g.theme.Reset)
-	}
-}
-
-// inputHostView resolves which left-column panel the input prompt should
-// attach itself to. The prompt is inserted above the host, shifting the
-// panels below it down.
-func (g *Gui) inputHostView() string {
-	host := g.state.prevView
-	switch host {
-	case viewDirectory, viewFilters, viewRecords:
-		return host
-	default:
-		return viewRecords
 	}
 }
 
@@ -483,53 +409,116 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 	_ = v.SetCursor(0, g.state.connCursor)
 }
 
-// infoPopupHeight computes the popup frame height based on the current info
-// content. Returns frame(2) + content lines, clamped to the available space.
-func (g *Gui) infoPopupHeight(panelBottom, innerWidth int) int {
-	maxH := panelBottom / 2
-	if g.state.infoPopupPanel == viewRecords {
-		maxH = panelBottom * 3 / 4
+// inputHostView resolves which left-column panel the input prompt should
+// attach itself to. The prompt is inserted above the host, shifting the
+// panels below it down.
+func (g *Gui) inputHostView() string {
+	host := g.state.prevView
+	switch host {
+	case viewDirectory, viewFilters, viewRecords:
+		return host
+	default:
+		return viewRecords
 	}
-	if maxH < 3 {
-		maxH = 3
-	}
-
-	contentLines := g.infoPopupContentLines(innerWidth)
-
-	h := contentLines + 2 // +2 for the frame top/bottom
-	if h > maxH {
-		h = maxH
-	}
-	return h
 }
 
-// infoPopupContentLines returns how many visual lines the info popup content
-// will use, accounting for word-wrap at the given inner width.
-func (g *Gui) infoPopupContentLines(wrapWidth int) int {
-	if wrapWidth < 10 {
-		wrapWidth = 10
+// ── Popup positioning helpers ────────────────────────────────────────────────
+
+// popupRect computes popup frame coordinates (x0, y0, x1, y1) in the preview
+// (right) column, vertically anchored to the cursor row of sourcePanel. The
+// popup bottom is clamped so it does not exceed panelBottom.
+func popupRect(gui *gocui.Gui, sourcePanel string,
+	contentW, contentH int,
+	rightX0, maxX, panelBottom int,
+	dirY0, filtersY0, recordY0 int) (int, int, int, int) {
+
+	availW := maxX - 1 - rightX0
+	frameW := contentW + 2
+	if frameW > availW {
+		frameW = availW
+	}
+	if frameW < 12 {
+		frameW = 12
+	}
+	x0 := rightX0
+	x1 := x0 + frameW
+
+	sourceY0 := recordY0
+	switch sourcePanel {
+	case viewDirectory:
+		sourceY0 = dirY0
+	case viewFilters:
+		sourceY0 = filtersY0
 	}
 
-	var text string
+	cy := 0
+	if sv, err := gui.View(sourcePanel); err == nil {
+		_, cy = sv.Cursor()
+	}
+	screenY := sourceY0 + 1 + cy
+
+	frameH := contentH + 2
+	y0 := screenY
+	y1 := y0 + frameH - 1
+
+	if y1 > panelBottom {
+		y0 = panelBottom - frameH + 1
+		if y0 < 0 {
+			y0 = 0
+		}
+		y1 = y0 + frameH - 1
+		if y1 > panelBottom {
+			y1 = panelBottom
+		}
+	}
+
+	return x0, y0, x1, y1
+}
+
+// popupContentSize computes the ideal (contentWidth, contentHeight) for text
+// content, given a maximum available content width. Width is the longest line
+// (capped at maxW); height is the number of visual lines after wrapping.
+func popupContentSize(text string, maxW int) (int, int) {
+	if text == "" {
+		return 10, 1
+	}
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	longest := 0
+	for _, line := range lines {
+		if l := len(line); l > longest {
+			longest = l
+		}
+	}
+	w := longest
+	if w > maxW {
+		w = maxW
+	}
+	if w < 10 {
+		w = 10
+	}
+	h := wrappedLineCount(text, w)
+	return w, h
+}
+
+// infoPopupText returns the current text content for the info popup,
+// used by the layout manager to compute popup dimensions.
+func (g *Gui) infoPopupText() string {
 	switch g.state.infoPopupPanel {
 	case viewDirectory:
-		text, _ = g.connInfoText()
+		text, _ := g.connInfoText()
+		return text
 	case viewFilters:
 		if g.state.filters.inlineDescLoading {
-			return 1
+			return "loading…"
 		}
-		text = g.state.filters.inlineDescText
+		return g.state.filters.inlineDescText
 	case viewRecords:
 		if g.state.recordInfoLoading {
-			return 1
+			return "loading…"
 		}
-		text = g.state.recordInfoText
+		return g.state.recordInfoText
 	}
-
-	if text == "" {
-		return 1
-	}
-	return wrappedLineCount(text, wrapWidth)
+	return ""
 }
 
 // wrappedLineCount counts visual lines a string occupies at a given width,

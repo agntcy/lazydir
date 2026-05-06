@@ -171,6 +171,12 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewInfoPopup, gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding(viewInfoPopup, gocui.KeyEsc, gocui.ModNone, app.infoPopupClose); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewInfoPopup, 'i', gocui.ModNone, app.infoPopupClose); err != nil {
+		return err
+	}
 	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
 		if err := g.SetKeybinding(viewInfoPopup, key, gocui.ModNone, app.previewScrollUp); err != nil {
 			return err
@@ -571,13 +577,15 @@ func (app *Gui) recordToggleInfo(g *gocui.Gui, v *gocui.View) error {
 	}
 
 	if app.state.recordInfoCID == cid {
-		return app.closeInfoPopup(g, v)
+		_ = app.closeInfoPopup(g, v)
+		return app.focusTo(g, viewRecords)
 	}
 
 	app.state.recordInfoCID = cid
 	app.state.recordInfoText = ""
 	app.state.recordInfoLoading = true
 	app.openInfoPopup(g, viewRecords)
+	_, _ = g.SetCurrentView(viewInfoPopup)
 
 	go app.fetchRecordInfo(cid)
 	return nil
@@ -710,15 +718,18 @@ func (app *Gui) connCursorDown(g *gocui.Gui, v *gocui.View) error {
 
 func (app *Gui) connToggleInfo(g *gocui.Gui, v *gocui.View) error {
 	if app.state.infoPopupPanel == viewDirectory {
-		return app.closeInfoPopup(g, v)
+		_ = app.closeInfoPopup(g, v)
+		return app.focusTo(g, viewDirectory)
 	}
 	app.openInfoPopup(g, viewDirectory)
+	_, _ = g.SetCurrentView(viewInfoPopup)
 	return nil
 }
 
 func (app *Gui) connDismissInfo(g *gocui.Gui, v *gocui.View) error {
 	if app.state.infoPopupPanel == viewDirectory {
-		return app.closeInfoPopup(g, v)
+		_ = app.closeInfoPopup(g, v)
+		return app.focusTo(g, viewDirectory)
 	}
 	return nil
 }
@@ -1146,13 +1157,15 @@ func (app *Gui) filterToggleInfo(g *gocui.Gui, v *gocui.View) error {
 
 	name := row.option
 	if fs.inlineDesc == name {
-		return app.closeInfoPopup(g, v)
+		_ = app.closeInfoPopup(g, v)
+		return app.focusTo(g, viewFilters)
 	}
 
 	fs.inlineDesc = name
 	fs.inlineDescText = ""
 	fs.inlineDescLoading = true
 	app.openInfoPopup(g, viewFilters)
+	_, _ = g.SetCurrentView(viewInfoPopup)
 
 	go app.fetchInlineDesc(ct, name)
 	return nil
@@ -1185,14 +1198,18 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 		if err != nil {
 			app.state.filters.inlineDescText = err.Error()
 		} else {
-			ipv, _ := g.View(viewInfoPopup)
-			descW := 40
-			if ipv != nil {
-				w, _ := ipv.Size()
-				descW = w - 2
-				if descW < 20 {
-					descW = 20
-				}
+			maxX, _ := g.Size()
+			splitRatio := app.cfg.SplitRatio
+			if splitRatio <= 0 || splitRatio >= 1 {
+				splitRatio = 0.33
+			}
+			leftW := int(float64(maxX) * splitRatio)
+			if leftW < 10 {
+				leftW = 10
+			}
+			descW := maxX - leftW - 4
+			if descW < 40 {
+				descW = 40
 			}
 			app.state.filters.inlineDescText = formatClassInfo(info, descW, app.theme)
 		}
@@ -1263,6 +1280,17 @@ func (app *Gui) clearInlineDesc() {
 }
 
 // ── Info popup ────────────────────────────────────────────────────────────────
+
+// infoPopupClose handles esc/i from within the focused info popup: close it
+// and return focus to whichever panel opened it.
+func (app *Gui) infoPopupClose(g *gocui.Gui, v *gocui.View) error {
+	target := app.state.infoPrevView
+	if target == "" {
+		target = viewRecords
+	}
+	_ = app.closeInfoPopup(g, v)
+	return app.focusTo(g, target)
+}
 
 // hideInfoPopupIfVisible dismisses the info popup without changing focus,
 // useful when focus is being moved by another action (e.g. mouse click).
