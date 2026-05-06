@@ -61,13 +61,12 @@ type appState struct {
 	oasfReconnStop    chan struct{}
 
 	// Server selection popup state
-	serverMenuVisible  bool
-	serverMenuItems    []string
-	serverMenuCursor   int
-	serverMenuPrevView string
+	serverMenuVisible bool
+	serverMenuItems   []string
+	serverMenuCursor  int
 
-	// Auth popup content line count (for dynamic sizing)
-	authPopupLines int
+	// Auth popup content (for dynamic sizing via popupContentSize)
+	authPopupText string
 
 	// records: server already filtered them; we render this slice directly
 	// (after the optional name query in filterQuery is applied).
@@ -83,6 +82,7 @@ type appState struct {
 	// inline record info toggle (records panel)
 	recordInfoCID     string // CID of the record whose info is expanded, "" if none
 	recordInfoText    string // cached description text
+	recordInfoError   bool   // true when recordInfoText is an error message
 	recordInfoLoading bool   // fetch in progress
 
 	// distinct values usable as filter options for each category, growing
@@ -111,15 +111,9 @@ type appState struct {
 	onInputChange  func(string) // called live (debounced) as the user types; nil disables
 	inputDebounce  *time.Timer  // debounce timer for live onChange
 
-	// help popup state
-	helpPrevView string // view to return to when help closes
-
-	// copy menu popup state
-	copyMenuPrevView string // view to return to when copy menu closes
-
-	// info popup state (shared between filters and records panels)
-	infoPrevView   string // view to return to when info popup closes
-	infoPopupPanel string // which panel opened the popup (viewFilters or viewRecords)
+	// popup state (only one right-column popup is active at a time)
+	popupPrevView  string // view to restore focus to when any popup closes
+	infoPopupPanel string // which panel opened the info popup (viewDirectory/viewFilters/viewRecords)
 
 	// preview dimming: stored content so we can toggle dim without refetching
 	previewSubtitle string
@@ -479,9 +473,9 @@ func (app *Gui) startRecordsStream() {
 					app.state.dirStatus = connOK
 					app.state.dirLastConnected = time.Now()
 					app.state.dirError = ""
-					if app.state.infoPopupPanel == viewDirectory {
-						app.closeInfoPopup(g, nil)
-					}
+				if app.state.infoPopupPanel == viewDirectory {
+					_ = app.closeInfoPopup(g, nil)
+				}
 				}
 				app.state.records = append(app.state.records, summaries...)
 				for _, r := range summaries {

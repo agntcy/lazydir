@@ -138,6 +138,7 @@ type filterState struct {
 	// inline description toggle (press 'i' on an option row)
 	inlineDesc        string // option name currently expanded, "" if none
 	inlineDescText    string // cached description text
+	inlineDescError   bool   // true when inlineDescText is an error message
 	inlineDescLoading bool   // fetch in progress
 
 	// / search query — searches option labels across all non-boolean categories

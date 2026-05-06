@@ -605,8 +605,10 @@ func (app *Gui) fetchRecordInfo(cid string) {
 		app.state.recordInfoLoading = false
 		if err != nil {
 			app.state.recordInfoText = err.Error()
+			app.state.recordInfoError = true
 		} else {
 			app.state.recordInfoText = formatRecordInfo(info, app.theme)
+			app.state.recordInfoError = false
 		}
 		app.renderInfoPopup(g)
 		return nil
@@ -652,6 +654,7 @@ func formatRecordInfo(info *dirclient.RecordInfo, t Theme) string {
 func (app *Gui) clearRecordInlineDesc() {
 	app.state.recordInfoCID = ""
 	app.state.recordInfoText = ""
+	app.state.recordInfoError = false
 	app.state.recordInfoLoading = false
 }
 
@@ -737,31 +740,32 @@ func (app *Gui) connDismissInfo(g *gocui.Gui, v *gocui.View) error {
 // connInfoText builds the info popup content for the selected connection row.
 // Returns the text and whether an error is present.
 func (app *Gui) connInfoText() (string, bool) {
+	t := app.theme
 	var sb strings.Builder
 	hasError := false
 	if app.state.connCursor == 0 {
-		fmt.Fprintf(&sb, "Server:  %s\n", app.state.serverAddr)
+		fmt.Fprintf(&sb, "%sServer:%s    %s", t.Color1, t.Reset, app.state.serverAddr)
 		if app.state.activeDir.OIDCIssuer != "" {
-			fmt.Fprintf(&sb, "Auth:    oidc (%s)\n", app.state.activeDir.OIDCIssuer)
+			fmt.Fprintf(&sb, "\n%sAuth:%s      oidc (%s)", t.Color4, t.Reset, app.state.activeDir.OIDCIssuer)
 		} else if app.state.authMode != "" {
-			fmt.Fprintf(&sb, "Auth:    %s\n", app.state.authMode)
+			fmt.Fprintf(&sb, "\n%sAuth:%s      %s", t.Color4, t.Reset, app.state.authMode)
 		} else {
-			sb.WriteString("Auth:    insecure\n")
+			fmt.Fprintf(&sb, "\n%sAuth:%s      insecure", t.Color4, t.Reset)
 		}
 		if !app.state.dirLastConnected.IsZero() {
-			fmt.Fprintf(&sb, "Connected: %s\n", app.state.dirLastConnected.Format("15:04:05"))
+			fmt.Fprintf(&sb, "\n%sConnected:%s %s", t.Color3, t.Reset, app.state.dirLastConnected.Format("15:04:05"))
 		}
 		if app.state.dirError != "" {
-			fmt.Fprintf(&sb, "\nError: %s\n", app.state.dirError)
+			fmt.Fprintf(&sb, "\n\n%sError:%s %s", t.Color6, t.Reset, app.state.dirError)
 			hasError = true
 		}
 	} else {
-		fmt.Fprintf(&sb, "Server:  %s\n", app.state.oasfAddr)
+		fmt.Fprintf(&sb, "%sServer:%s    %s", t.Color1, t.Reset, app.state.oasfAddr)
 		if !app.state.oasfLastConnected.IsZero() {
-			fmt.Fprintf(&sb, "Connected: %s\n", app.state.oasfLastConnected.Format("15:04:05"))
+			fmt.Fprintf(&sb, "\n%sConnected:%s %s", t.Color3, t.Reset, app.state.oasfLastConnected.Format("15:04:05"))
 		}
 		if app.state.oasfError != "" {
-			fmt.Fprintf(&sb, "\nError: %s\n", app.state.oasfError)
+			fmt.Fprintf(&sb, "\n\n%sError:%s %s", t.Color6, t.Reset, app.state.oasfError)
 			hasError = true
 		}
 	}
@@ -788,19 +792,16 @@ func (app *Gui) openServerSelectPopup(g *gocui.Gui, v *gocui.View) error {
 	app.state.serverMenuItems = items
 	app.state.serverMenuCursor = 0
 	app.state.serverMenuVisible = true
-	app.state.serverMenuPrevView = viewDirectory
 
 	smv, err := g.View(viewServerMenu)
 	if err == nil {
-		smv.Visible = true
 		smv.Clear()
 		for _, item := range items {
 			fmt.Fprintln(smv, " "+item)
 		}
 		_ = smv.SetCursor(0, 0)
 	}
-	_, _ = g.SetCurrentView(viewServerMenu)
-	_, _ = g.SetViewOnTop(viewServerMenu)
+	app.showPopup(g, viewServerMenu)
 	return nil
 }
 
@@ -822,8 +823,7 @@ func (app *Gui) serverMenuDown(g *gocui.Gui, v *gocui.View) error {
 
 func (app *Gui) serverMenuClose(g *gocui.Gui, v *gocui.View) error {
 	app.state.serverMenuVisible = false
-	v.Visible = false
-	_, _ = g.SetCurrentView(app.state.serverMenuPrevView)
+	app.hidePopup(g, viewServerMenu)
 	return nil
 }
 
@@ -837,8 +837,7 @@ func (app *Gui) serverMenuSelect(g *gocui.Gui, v *gocui.View) error {
 
 	// Close the popup first.
 	app.state.serverMenuVisible = false
-	v.Visible = false
-	_, _ = g.SetCurrentView(app.state.serverMenuPrevView)
+	app.hidePopup(g, viewServerMenu)
 
 	if selected == "Custom..." {
 		if app.state.connCursor == 0 {
@@ -1012,31 +1011,24 @@ func (app *Gui) showAuthPopup(g *gocui.Gui, url, code string) {
 		" Authenticate in your browser:\n\n   %s\n\n Code: %s  (copied to clipboard)\n\n Waiting for authorization...",
 		url, code,
 	)
-
-	app.state.authPopupLines = strings.Count(content, "\n") + 1
+	app.state.authPopupText = content
 
 	v, err := g.View(viewAuthPopup)
 	if err != nil {
 		return
 	}
 	v.Clear()
-	v.Visible = true
 	fmt.Fprint(v, content)
-	_, _ = g.SetViewOnTop(viewAuthPopup)
+	app.showPopup(g, viewAuthPopup)
 }
 
 func (app *Gui) closeAuthPopup(g *gocui.Gui) {
-	v, err := g.View(viewAuthPopup)
-	if err != nil {
-		return
-	}
-	v.Visible = false
-	v.Clear()
+	app.state.authPopupText = ""
+	app.hidePopup(g, viewAuthPopup)
 }
 
 func (app *Gui) dismissAuthPopup(g *gocui.Gui, v *gocui.View) error {
 	app.closeAuthPopup(g)
-	_, _ = g.SetCurrentView(viewDirectory)
 	return nil
 }
 
@@ -1182,6 +1174,7 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 			}
 			app.state.filters.inlineDescLoading = false
 			app.state.filters.inlineDescText = "OASF not configured"
+			app.state.filters.inlineDescError = true
 			app.renderInfoPopup(g)
 			return nil
 		})
@@ -1197,6 +1190,7 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 		app.state.filters.inlineDescLoading = false
 		if err != nil {
 			app.state.filters.inlineDescText = err.Error()
+			app.state.filters.inlineDescError = true
 		} else {
 			maxX, _ := g.Size()
 			descW := maxX - app.leftColumnWidth(maxX) - 4
@@ -1204,6 +1198,7 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 				descW = 40
 			}
 			app.state.filters.inlineDescText = formatClassInfo(info, descW, app.theme)
+			app.state.filters.inlineDescError = false
 		}
 		app.renderInfoPopup(g)
 		return nil
@@ -1268,7 +1263,42 @@ func formatClassInfo(info *oasf.ClassInfo, descW int, t Theme) string {
 func (app *Gui) clearInlineDesc() {
 	app.state.filters.inlineDesc = ""
 	app.state.filters.inlineDescText = ""
+	app.state.filters.inlineDescError = false
 	app.state.filters.inlineDescLoading = false
+}
+
+// ── Popup helpers (shared open/close logic) ──────────────────────────────────
+
+// showPopup makes a popup view visible, brings it to the top, tracks the
+// previous view for restoring focus later, and sets it as the current view.
+func (app *Gui) showPopup(g *gocui.Gui, name string) {
+	v, err := g.View(name)
+	if err != nil {
+		return
+	}
+	if cv := g.CurrentView(); cv != nil && cv.Name() != name {
+		app.state.popupPrevView = cv.Name()
+	}
+	v.Visible = true
+	_, _ = g.SetViewOnTop(name)
+	_, _ = g.SetCurrentView(name)
+}
+
+// hidePopup hides a popup view and restores focus to the previously active view.
+// It also resets g.SelFrameColor/SelFgColor in case the popup had overridden them.
+func (app *Gui) hidePopup(g *gocui.Gui, name string) {
+	v, err := g.View(name)
+	if err != nil {
+		return
+	}
+	v.Visible = false
+	g.SelFrameColor = app.theme.ActiveBorderColor
+	g.SelFgColor = app.theme.ActiveBorderColor
+	target := app.state.popupPrevView
+	if target == "" {
+		target = viewRecords
+	}
+	_, _ = g.SetCurrentView(target)
 }
 
 // ── Info popup ────────────────────────────────────────────────────────────────
@@ -1276,7 +1306,7 @@ func (app *Gui) clearInlineDesc() {
 // infoPopupClose handles esc/i from within the focused info popup: close it
 // and return focus to whichever panel opened it.
 func (app *Gui) infoPopupClose(g *gocui.Gui, v *gocui.View) error {
-	target := app.state.infoPrevView
+	target := app.state.popupPrevView
 	if target == "" {
 		target = viewRecords
 	}
@@ -1292,9 +1322,13 @@ func (app *Gui) hideInfoPopupIfVisible(g *gocui.Gui) {
 		return
 	}
 	ipv.Visible = false
+	ipv.FrameColor = gocui.ColorDefault
+	ipv.TitleColor = gocui.ColorDefault
+	g.SelFrameColor = app.theme.ActiveBorderColor
+	g.SelFgColor = app.theme.ActiveBorderColor
 	app.clearRecordInlineDesc()
 	app.clearInlineDesc()
-	app.state.infoPrevView = ""
+	app.state.popupPrevView = ""
 	app.state.infoPopupPanel = ""
 }
 
@@ -1304,12 +1338,10 @@ func (app *Gui) openInfoPopup(g *gocui.Gui, sourcePanel string) {
 	if err != nil {
 		return
 	}
-
 	if cv := g.CurrentView(); cv != nil && cv.Name() != viewInfoPopup {
-		app.state.infoPrevView = cv.Name()
+		app.state.popupPrevView = cv.Name()
 	}
 	app.state.infoPopupPanel = sourcePanel
-
 	ipv.Clear()
 	_ = ipv.SetOrigin(0, 0)
 	ipv.Visible = true
@@ -1326,11 +1358,11 @@ func (app *Gui) closeInfoPopup(g *gocui.Gui, v *gocui.View) error {
 	ipv.Visible = false
 	ipv.FrameColor = gocui.ColorDefault
 	ipv.TitleColor = gocui.ColorDefault
-
+	g.SelFrameColor = app.theme.ActiveBorderColor
+	g.SelFgColor = app.theme.ActiveBorderColor
 	app.clearRecordInlineDesc()
 	app.clearInlineDesc()
-
-	app.state.infoPrevView = ""
+	app.state.popupPrevView = ""
 	app.state.infoPopupPanel = ""
 	return nil
 }
@@ -1357,12 +1389,14 @@ func (app *Gui) renderInfoPopup(g *gocui.Gui) {
 			fmt.Fprintf(ipv, "%sloading…%s", app.theme.Color4, app.theme.Reset)
 		} else if app.state.filters.inlineDescText != "" {
 			fmt.Fprint(ipv, app.state.filters.inlineDescText)
+			hasError = app.state.filters.inlineDescError
 		}
 	case viewRecords:
 		if app.state.recordInfoLoading {
 			fmt.Fprintf(ipv, "%sloading…%s", app.theme.Color4, app.theme.Reset)
 		} else if app.state.recordInfoText != "" {
 			fmt.Fprint(ipv, app.state.recordInfoText)
+			hasError = app.state.recordInfoError
 		}
 	}
 
@@ -1373,6 +1407,11 @@ func (app *Gui) renderInfoPopup(g *gocui.Gui) {
 		ipv.FrameColor = gocui.ColorGreen
 		ipv.TitleColor = gocui.ColorGreen
 	}
+	// Also update global sel colors so they are correct when the popup is
+	// (or becomes) the focused view — gocui ignores v.FrameColor/TitleColor
+	// for the current view and uses g.SelFrameColor/SelFgColor instead.
+	g.SelFrameColor = ipv.FrameColor
+	g.SelFgColor = ipv.TitleColor
 }
 
 // ── Help popup ────────────────────────────────────────────────────────────────
@@ -1382,20 +1421,14 @@ func (app *Gui) openHelp(g *gocui.Gui, v *gocui.View) error {
 	if err != nil {
 		return nil
 	}
-
-	// Remember where we came from.
 	if cv := g.CurrentView(); cv != nil && cv.Name() != viewHelp {
-		app.state.helpPrevView = cv.Name()
+		app.state.popupPrevView = cv.Name()
 	}
-
-	// Populate content.
-	focused := app.state.helpPrevView
 	hv.Clear()
 	_ = hv.SetOrigin(0, 0)
-	for _, line := range helpPopupLines(focused) {
+	for _, line := range helpPopupLines(app.state.popupPrevView) {
 		fmt.Fprintln(hv, line)
 	}
-
 	hv.Visible = true
 	_, _ = g.SetCurrentView(viewHelp)
 	_, _ = g.SetViewOnTop(viewHelp)
@@ -1403,17 +1436,8 @@ func (app *Gui) openHelp(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) closeHelp(g *gocui.Gui, v *gocui.View) error {
-	hv, err := g.View(viewHelp)
-	if err != nil {
-		return nil
-	}
-	hv.Visible = false
-
-	target := app.state.helpPrevView
-	if target == "" {
-		target = viewRecords
-	}
-	return app.focusTo(g, target)
+	app.hidePopup(g, viewHelp)
+	return nil
 }
 
 // ── Copy menu popup ───────────────────────────────────────────────────────────
@@ -1423,38 +1447,20 @@ func (app *Gui) openCopyMenu(g *gocui.Gui, v *gocui.View) error {
 	if app.state.recordCursor >= len(records) {
 		return nil
 	}
-
 	cv, err := g.View(viewCopyMenu)
 	if err != nil {
 		return nil
 	}
-
-	if cur := g.CurrentView(); cur != nil && cur.Name() != viewCopyMenu {
-		app.state.copyMenuPrevView = cur.Name()
-	}
-
 	cv.Clear()
 	fmt.Fprintf(cv, "  %sc%s  copy CID\n", app.theme.Color2, app.theme.Reset)
 	fmt.Fprintf(cv, "  %sa%s  copy record JSON", app.theme.Color2, app.theme.Reset)
-
-	cv.Visible = true
-	_, _ = g.SetCurrentView(viewCopyMenu)
-	_, _ = g.SetViewOnTop(viewCopyMenu)
+	app.showPopup(g, viewCopyMenu)
 	return nil
 }
 
 func (app *Gui) closeCopyMenu(g *gocui.Gui, v *gocui.View) error {
-	cv, err := g.View(viewCopyMenu)
-	if err != nil {
-		return nil
-	}
-	cv.Visible = false
-
-	target := app.state.copyMenuPrevView
-	if target == "" {
-		target = viewRecords
-	}
-	return app.focusTo(g, target)
+	app.hidePopup(g, viewCopyMenu)
+	return nil
 }
 
 func (app *Gui) copyCID(g *gocui.Gui, v *gocui.View) error {

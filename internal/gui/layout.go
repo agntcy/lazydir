@@ -283,15 +283,8 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 	{
 		authX0, authY0, authX1, authY1 := 0, -10, 50, -1
 		if av, _ := gui.View(viewAuthPopup); av != nil && av.Visible {
-			authCW := 50
 			authMaxW := maxX - 1 - rightX0 - 2
-			if authCW > authMaxW {
-				authCW = authMaxW
-			}
-			authCH := g.state.authPopupLines
-			if authCH < 1 {
-				authCH = 1
-			}
+			authCW, authCH := popupContentSize(g.state.authPopupText, authMaxW)
 			authX0, authY0, authX1, authY1 = popupRect(gui, viewDirectory,
 				authCW, authCH, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
 		}
@@ -561,16 +554,39 @@ func (g *Gui) infoPopupText() string {
 	return ""
 }
 
-// wrappedLineCount counts visual lines a string occupies at a given width,
-// adding 1 line of margin so gocui never shows a scrollbar.
+// wrappedLineCount counts visual lines a string occupies at a given width.
+// It strips ANSI escape sequences before measuring so colored text is sized
+// correctly (ANSI codes take zero visual width).
 func wrappedLineCount(text string, width int) int {
 	total := 0
 	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
-		if len(line) == 0 {
+		visLen := visualLen(line)
+		if visLen == 0 {
 			total++
 			continue
 		}
-		total += (len(line)-1)/width + 1
+		total += (visLen-1)/width + 1
 	}
-	return total + 1
+	return total
+}
+
+// visualLen returns the visual (display) length of a string, excluding ANSI
+// escape sequences that take zero terminal columns.
+func visualLen(s string) int {
+	n := 0
+	for i := 0; i < len(s); {
+		if i+1 < len(s) && s[i] == '\033' && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && !isCSITerminator(s[j]) {
+				j++
+			}
+			if j < len(s) {
+				i = j + 1
+				continue
+			}
+		}
+		n++
+		i++
+	}
+	return n
 }
