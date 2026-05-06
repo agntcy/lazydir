@@ -871,8 +871,14 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.records = nil
 	app.state.filteredRecords = nil
 	app.state.recordCursor = 0
+	app.state.filters = newFilterState()
+	app.state.filterQuery = ""
+	app.state.filterValues = newFilterValueAggregator()
+	app.state.classEntries = nil
+	app.state.classEntriesVer = ""
 	app.renderDirectory(g)
 	app.renderRecordsView(g)
+	app.renderFiltersView(g)
 
 	if entry.OIDCIssuer != "" {
 		go app.connectWithOIDC(entry)

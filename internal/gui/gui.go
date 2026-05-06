@@ -243,8 +243,6 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		app.state.authMode = cfg.AuthMode
 		app.state.dirLastCfg = &cfg
 		app.state.dirStatus = connTrying
-		app.state.filters = newFilterState()
-		app.state.filterQuery = ""
 		app.renderDirectory(g)
 		app.renderStatus(g)
 		app.startRecordsStream()
@@ -254,9 +252,11 @@ func (app *Gui) connect(cfg dirclient.Config) {
 
 // ── Connection health loops ──────────────────────────────────────────────────
 //
-// Both Directory and OASF use the same pattern: ping periodically (5s when
-// healthy, 1s when failed), update state, and — for Directory — trigger a
-// full reconnect on failure.
+// Both Directory and OASF ping periodically (5s when healthy, 1s when
+// failed) and update the connection indicator. They never flush cached
+// records, filters, or OASF class data — that only happens when the user
+// explicitly changes an address. If the Directory has no client yet
+// (initial connect failed), the loop silently retries establishing one.
 
 const (
 	retryInterval  = 1 * time.Second
@@ -290,62 +290,104 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 		case <-stop:
 			return
 		case <-ticker.C:
-			action := make(chan int, 1) // 0=skip, 1=reconnect, 2=ping
-			var cfg *dirclient.Config
-			var client *dirclient.Client
+		}
+
+		type snapshot struct {
+			client *dirclient.Client
+			cfg    *dirclient.Config
+			status connStatus
+		}
+		ch := make(chan snapshot, 1)
+		app.g.Update(func(g *gocui.Gui) error {
+			ch <- snapshot{
+				client: app.state.client,
+				cfg:    app.state.dirLastCfg,
+				status: app.state.dirStatus,
+			}
+			return nil
+		})
+		snap := <-ch
+
+		if snap.status == connTrying {
+			ticker.Reset(healthInterval)
+			continue
+		}
+
+		if snap.client != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+			err := snap.client.Ping(ctx)
+			cancel()
 
 			app.g.Update(func(g *gocui.Gui) error {
-				switch app.state.dirStatus {
-				case connFailed:
-					if app.state.dirLastCfg == nil {
-						action <- 0
-						return nil
-					}
-					cfg = app.state.dirLastCfg
-					action <- 1
-				case connOK:
-					client = app.state.client
-					if client == nil {
-						action <- 0
-						return nil
-					}
-					action <- 2
-				default:
-					action <- 0
+				if app.state.client != snap.client {
+					return nil
+				}
+				prev := app.state.dirStatus
+				if err == nil {
+					app.state.dirStatus = connOK
+					app.state.dirLastConnected = time.Now()
+					app.state.dirError = ""
+				} else {
+					app.state.dirStatus = connFailed
+					app.state.dirError = err.Error()
+				}
+				if app.state.dirStatus != prev {
+					app.renderDirectory(g)
+				}
+				if err == nil && prev != connOK && len(app.state.records) == 0 {
+					app.startRecordsStream()
 				}
 				return nil
 			})
 
-			switch <-action {
-			case 0:
+			if err == nil {
 				ticker.Reset(healthInterval)
-			case 1:
-				app.g.Update(func(g *gocui.Gui) error {
-					app.state.dirReconnStop = nil
-					return nil
-				})
-				app.connect(*cfg)
-				return
-			case 2:
-				ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
-				err := client.Ping(ctx)
-				cancel()
-				if err != nil {
-					app.g.Update(func(g *gocui.Gui) error {
-						if app.state.client != client {
-							return nil
-						}
-						app.state.dirStatus = connFailed
-						app.state.dirError = err.Error()
-						app.renderDirectory(g)
-						return nil
-					})
-					ticker.Reset(retryInterval)
-				} else {
-					ticker.Reset(healthInterval)
-				}
+			} else {
+				ticker.Reset(retryInterval)
 			}
+			continue
 		}
+
+		if snap.cfg == nil {
+			ticker.Reset(healthInterval)
+			continue
+		}
+
+		// No client yet (initial connect failed) — try to establish one.
+		c, err := dirclient.Connect(context.Background(), *snap.cfg)
+		if err != nil {
+			app.g.Update(func(g *gocui.Gui) error {
+				prev := app.state.dirStatus
+				app.state.dirStatus = connFailed
+				app.state.dirError = err.Error()
+				if prev != connFailed {
+					app.renderDirectory(g)
+				}
+				return nil
+			})
+			ticker.Reset(retryInterval)
+			continue
+		}
+
+		app.g.Update(func(g *gocui.Gui) error {
+			if app.state.client != nil {
+				c.Close()
+				return nil
+			}
+			c.FirstPageSize = app.cfg.FirstPageSize
+			c.BatchSize = app.cfg.BatchSize
+			app.state.client = c
+			app.state.dirStatus = connOK
+			app.state.dirLastConnected = time.Now()
+			app.state.dirError = ""
+			if app.state.infoPopupPanel == viewDirectory {
+				_ = app.closeInfoPopup(g, nil)
+			}
+			app.renderDirectory(g)
+			app.startRecordsStream()
+			return nil
+		})
+		ticker.Reset(healthInterval)
 	}
 }
 
@@ -379,31 +421,39 @@ func (app *Gui) oasfHealthLoop(stop chan struct{}) {
 		case <-stop:
 			return
 		case <-ticker.C:
-			client := app.state.oasfClient
-			if client == nil {
-				return
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
-			err := client.Ping(ctx)
-			cancel()
+		}
 
-			app.g.Update(func(g *gocui.Gui) error {
-				if app.state.oasfClient != client {
-					return nil
-				}
-				if err == nil {
-					app.state.oasfStatus = connOK
-					app.state.oasfLastConnected = time.Now()
-					app.state.oasfError = ""
-					ticker.Reset(healthInterval)
-				} else {
-					app.state.oasfStatus = connFailed
-					app.state.oasfError = err.Error()
-					ticker.Reset(retryInterval)
-				}
-				app.renderDirectory(g)
+		client := app.state.oasfClient
+		if client == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+		err := client.Ping(ctx)
+		cancel()
+
+		app.g.Update(func(g *gocui.Gui) error {
+			if app.state.oasfClient != client {
 				return nil
-			})
+			}
+			prev := app.state.oasfStatus
+			if err == nil {
+				app.state.oasfStatus = connOK
+				app.state.oasfLastConnected = time.Now()
+				app.state.oasfError = ""
+			} else {
+				app.state.oasfStatus = connFailed
+				app.state.oasfError = err.Error()
+			}
+			if app.state.oasfStatus != prev {
+				app.renderDirectory(g)
+			}
+			return nil
+		})
+
+		if err == nil {
+			ticker.Reset(healthInterval)
+		} else {
+			ticker.Reset(retryInterval)
 		}
 	}
 }
@@ -473,9 +523,9 @@ func (app *Gui) startRecordsStream() {
 					app.state.dirStatus = connOK
 					app.state.dirLastConnected = time.Now()
 					app.state.dirError = ""
-				if app.state.infoPopupPanel == viewDirectory {
-					_ = app.closeInfoPopup(g, nil)
-				}
+					if app.state.infoPopupPanel == viewDirectory {
+						_ = app.closeInfoPopup(g, nil)
+					}
 				}
 				app.state.records = append(app.state.records, summaries...)
 				for _, r := range summaries {
