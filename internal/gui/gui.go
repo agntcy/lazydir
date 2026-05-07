@@ -292,6 +292,11 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 	ticker := time.NewTicker(retryInterval)
 	defer ticker.Stop()
 
+	// Track consecutive ping failures for OIDC connections so we only
+	// attempt a token refresh after a sustained outage, not on every blip.
+	var oidcFailCount int
+	const oidcRefreshThreshold = 3
+
 	for {
 		select {
 		case <-stop:
@@ -300,16 +305,18 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 		}
 
 		type snapshot struct {
-			client *dirclient.Client
-			cfg    *dirclient.Config
-			status connStatus
+			client    *dirclient.Client
+			cfg       *dirclient.Config
+			status    connStatus
+			activeDir config.DirectoryEntry
 		}
 		ch := make(chan snapshot, 1)
 		app.g.Update(func(g *gocui.Gui) error {
 			ch <- snapshot{
-				client: app.state.client,
-				cfg:    app.state.dirLastCfg,
-				status: app.state.dirStatus,
+				client:    app.state.client,
+				cfg:       app.state.dirLastCfg,
+				status:    app.state.dirStatus,
+				activeDir: app.state.activeDir,
 			}
 			return nil
 		})
@@ -325,33 +332,56 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 			err := snap.client.Ping(ctx)
 			cancel()
 
+			if err == nil {
+				oidcFailCount = 0
+				app.g.Update(func(g *gocui.Gui) error {
+					if app.state.client != snap.client {
+						return nil
+					}
+					prev := app.state.dirStatus
+					app.state.dirStatus = connOK
+					app.state.dirLastConnected = time.Now()
+					app.state.dirError = ""
+					if prev != connOK {
+						app.renderDirectory(g)
+					}
+					if prev != connOK && len(app.state.records) == 0 {
+						app.startRecordsStream()
+					}
+					return nil
+				})
+				ticker.Reset(healthInterval)
+				continue
+			}
+
+			// Ping failed. For OIDC connections, try a silent token refresh
+			// after several consecutive failures (avoids reacting to transient
+			// blips). Never wipe cached records.
+			isOIDC := snap.cfg != nil && snap.cfg.OIDCIssuer != ""
+			if isOIDC {
+				oidcFailCount++
+				if oidcFailCount >= oidcRefreshThreshold {
+					if app.tryOIDCTokenRefresh(snap) {
+						oidcFailCount = 0
+						ticker.Reset(healthInterval)
+						continue
+					}
+				}
+			}
+
 			app.g.Update(func(g *gocui.Gui) error {
 				if app.state.client != snap.client {
 					return nil
 				}
 				prev := app.state.dirStatus
-				if err == nil {
-					app.state.dirStatus = connOK
-					app.state.dirLastConnected = time.Now()
-					app.state.dirError = ""
-				} else {
-					app.state.dirStatus = connFailed
-					app.state.dirError = err.Error()
-				}
-				if app.state.dirStatus != prev {
+				app.state.dirStatus = connFailed
+				app.state.dirError = err.Error()
+				if prev != connFailed {
 					app.renderDirectory(g)
-				}
-				if err == nil && prev != connOK && len(app.state.records) == 0 {
-					app.startRecordsStream()
 				}
 				return nil
 			})
-
-			if err == nil {
-				ticker.Reset(healthInterval)
-			} else {
-				ticker.Reset(retryInterval)
-			}
+			ticker.Reset(retryInterval)
 			continue
 		}
 
@@ -360,8 +390,27 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 			continue
 		}
 
-		// No client yet (initial connect failed) — try to establish one.
-		c, err := dirclient.Connect(context.Background(), *snap.cfg)
+		// No client yet (initial connect failed) — for OIDC connections,
+		// refresh the token before reconnecting so we don't reuse a stale one.
+		cfg := *snap.cfg
+		if cfg.OIDCIssuer != "" {
+			token, err := dirclient.TryGetCachedToken()
+			if err != nil || token == "" {
+				// No valid cached token — trigger interactive re-auth.
+				app.g.Update(func(g *gocui.Gui) error {
+					app.state.dirStatus = connFailed
+					app.state.dirError = "OIDC token expired"
+					app.renderDirectory(g)
+					app.stopReconnectLoop()
+					go app.connectWithOIDC(snap.activeDir)
+					return nil
+				})
+				return
+			}
+			cfg.AuthToken = token
+		}
+
+		c, err := dirclient.Connect(context.Background(), cfg)
 		if err != nil {
 			app.g.Update(func(g *gocui.Gui) error {
 				prev := app.state.dirStatus
@@ -396,6 +445,61 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 		})
 		ticker.Reset(healthInterval)
 	}
+}
+
+// tryOIDCTokenRefresh attempts to silently refresh the OIDC token from the
+// local cache and reconnect with the new token. Returns true if the refresh
+// succeeded and the connection was re-established. Never wipes cached records.
+func (app *Gui) tryOIDCTokenRefresh(snap struct {
+	client    *dirclient.Client
+	cfg       *dirclient.Config
+	status    connStatus
+	activeDir config.DirectoryEntry
+}) bool {
+	token, err := dirclient.TryGetCachedToken()
+	if err != nil || token == "" {
+		return false
+	}
+
+	// If the cached token is the same one we already have, refreshing
+	// won't help — the failure is not auth-related.
+	if token == snap.cfg.AuthToken {
+		return false
+	}
+
+	cfg := *snap.cfg
+	cfg.AuthToken = token
+
+	c, err := dirclient.Connect(context.Background(), cfg)
+	if err != nil {
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+	pingErr := c.Ping(ctx)
+	cancel()
+	if pingErr != nil {
+		c.Close()
+		return false
+	}
+
+	app.g.Update(func(g *gocui.Gui) error {
+		if app.state.client != snap.client {
+			c.Close()
+			return nil
+		}
+		snap.client.Close()
+		c.FirstPageSize = app.cfg.FirstPageSize
+		c.BatchSize = app.cfg.BatchSize
+		app.state.client = c
+		app.state.dirLastCfg = &cfg
+		app.state.dirStatus = connOK
+		app.state.dirLastConnected = time.Now()
+		app.state.dirError = ""
+		app.renderDirectory(g)
+		return nil
+	})
+	return true
 }
 
 // startOASFReconnectLoop starts the OASF health/reconnect loop.

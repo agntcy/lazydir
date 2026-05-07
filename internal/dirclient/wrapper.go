@@ -76,19 +76,26 @@ func (c *Client) Close() {
 	}
 }
 
-// Ping verifies the server is reachable by issuing a minimal search RPC.
+// Ping verifies the server is reachable by issuing a minimal search RPC and
+// waiting for the first response (or stream completion). It does not wait for
+// the entire result set, making it suitable as a lightweight health check.
 func (c *Client) Ping(ctx context.Context) error {
 	req := &searchv1.SearchRecordsRequest{}
 	result, err := c.c.SearchRecords(ctx, req)
 	if err != nil {
 		return err
 	}
-	// Drain and discard immediately.
-	go func() {
-		for range result.ResCh() {
-		}
-	}()
+	// Wait for the first record, an error, or stream end — whichever comes
+	// first. Then drain the rest in the background so the stream is not leaked.
 	select {
+	case _, ok := <-result.ResCh():
+		if ok {
+			go func() {
+				for range result.ResCh() {
+				}
+			}()
+		}
+		return nil
 	case err := <-result.ErrCh():
 		return err
 	case <-result.DoneCh():
