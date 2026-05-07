@@ -737,6 +737,7 @@ func (app *Gui) applyFilters() {
 	app.applyNameFilter()
 	app.renderRecordsView(app.g)
 	app.renderFiltersView(app.g)
+	app.autoPreviewRecord(app.g)
 }
 
 // applyFiltersServerSide falls back to a server-side stream when filters

@@ -313,6 +313,8 @@ func (app *Gui) inputCancel(g *gocui.Gui, v *gocui.View) error {
 var focusOrder = []string{viewDirectory, viewFilters, viewRecords, viewPreview}
 
 // focusTo sets the current view and updates highlight state on list panels.
+// When focus arrives at or leaves the records panel, the preview is refreshed
+// so it always shows the record under the cursor.
 func (app *Gui) focusTo(g *gocui.Gui, name string) error {
 	_, err := g.SetCurrentView(name)
 	if err != nil {
@@ -320,6 +322,7 @@ func (app *Gui) focusTo(g *gocui.Gui, name string) error {
 	}
 	app.syncHighlight(g, name)
 	app.renderStatus(g)
+	app.autoPreviewRecord(g)
 	return nil
 }
 
