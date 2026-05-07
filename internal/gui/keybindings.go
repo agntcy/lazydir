@@ -374,7 +374,7 @@ func (app *Gui) filterMouseClick(g *gocui.Gui, v *gocui.View) error {
 		app.clearInlineDesc()
 	} else {
 		app.toggleApplied(row.category, row.option)
-		app.startRecordsStream()
+		app.applyFilters()
 	}
 	app.renderFiltersView(g)
 	return nil
@@ -411,7 +411,7 @@ func (app *Gui) filterEnter(g *gocui.Gui, v *gocui.View) error {
 		app.clearInlineDesc()
 	} else {
 		app.toggleApplied(row.category, row.option)
-		app.startRecordsStream()
+		app.applyFilters()
 	}
 	app.renderFiltersView(g)
 	return nil
@@ -429,7 +429,7 @@ func (app *Gui) filterToggleOption(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 	app.toggleApplied(row.category, row.option)
-	app.startRecordsStream()
+	app.applyFilters()
 	app.renderFiltersView(g)
 	return nil
 }
@@ -893,6 +893,7 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.serverAddr = entry.Address
 	app.state.dirStatus = connTrying
 	app.state.stream = streamLoading
+	app.state.fullCache = nil
 	app.state.records = nil
 	app.state.filteredRecords = nil
 	app.state.recordDisplayRows = nil

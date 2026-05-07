@@ -36,7 +36,7 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 
 **[2] Filters** — collapsible categories (Skills, Domains, Modules, OASF version, Version, Author, Trusted / Verified); toggle options with `enter`/`space`; `/` to search across all categories by name, caption, or ID; `i` to open a popup with the OASF class hierarchy and description.
 
-**[3] Records** — server-filtered list showing name and version; multi-version records auto-grouped under collapsible headers; `/` for live name filtering; `i` for record info popup (CID, annotations, schema version, created-at); `y` to yank/copy CID or full JSON.
+**[3] Records** — filtered list showing name and version; most filters (skills, domains, modules, version, author, OASF version) are applied instantly client-side from a local cache — only Trusted/Verified requires a server round-trip; multi-version records auto-grouped under collapsible headers; `/` for live name filtering; `i` for record info popup (CID, annotations, schema version, created-at); `y` to yank/copy CID or full JSON.
 
 **[0] Preview** — syntax-highlighted JSON of the selected record; scrollable when focused.
 

@@ -70,8 +70,15 @@ type appState struct {
 	// Auth popup content (for dynamic sizing via popupContentSize)
 	authPopupText string
 
-	// records: server already filtered them; we render this slice directly
-	// (after the optional name query in filterQuery is applied).
+	// fullCache holds every record received from the unfiltered server stream.
+	// Client-side filters narrow this into records; a new server stream is
+	// only started on explicit refresh or server change.
+	fullCache []*dirclient.RecordSummary
+
+	// records holds the subset of fullCache that matches the current
+	// server-side filter selection (or all of fullCache when no Trusted/
+	// Verified filter is active). filteredRecords is the further subset
+	// after the local name query.
 	records         []*dirclient.RecordSummary
 	filteredRecords []*dirclient.RecordSummary
 	recordCursor    int
@@ -594,9 +601,10 @@ func (app *Gui) pingOASF(client *oasf.Client) {
 }
 
 // startRecordsStream cancels any in-flight records stream and issues a fresh
-// SearchRecords RPC for the current filter selection. It must run on the GUI
-// goroutine (i.e. inside a g.Update callback or a key handler) because it
-// touches state without taking state.mu.
+// unfiltered SearchRecords RPC to populate the full cache. Client-side filters
+// are re-applied once the cache is populated. It must run on the GUI goroutine
+// (i.e. inside a g.Update callback or a key handler) because it touches state
+// without taking state.mu.
 func (app *Gui) startRecordsStream() {
 	if app.state.client == nil {
 		return
@@ -607,6 +615,7 @@ func (app *Gui) startRecordsStream() {
 		app.state.cancelLoad = nil
 	}
 
+	app.state.fullCache = nil
 	app.state.records = nil
 	app.state.recordCursor = 0
 	app.state.streamErr = ""
@@ -621,10 +630,9 @@ func (app *Gui) startRecordsStream() {
 	ctx, cancel := context.WithCancel(context.Background())
 	app.state.cancelLoad = cancel
 
-	queries := app.activeQueries()
 	client := app.state.client
 
-	go client.Stream(ctx, queries, dirclient.StreamCallbacks{
+	go client.Stream(ctx, nil, dirclient.StreamCallbacks{
 		OnFirstPage: func(summaries []*dirclient.RecordSummary) {
 			app.g.Update(func(g *gocui.Gui) error {
 				if ctx.Err() != nil {
@@ -638,13 +646,13 @@ func (app *Gui) startRecordsStream() {
 						_ = app.closeInfoPopup(g, nil)
 					}
 				}
-				app.state.records = append(app.state.records, summaries...)
+				app.state.fullCache = append(app.state.fullCache, summaries...)
 				for _, r := range summaries {
 					app.state.filterValues.add(r)
 				}
 				app.maybeStartClassEntriesFetch(summaries)
 				app.state.stream = streamStreaming
-				app.applyNameFilter()
+				app.applyFilters()
 				app.renderRecordsView(g)
 				app.renderFiltersView(g)
 				app.renderDirectory(g)
@@ -657,11 +665,11 @@ func (app *Gui) startRecordsStream() {
 				if ctx.Err() != nil {
 					return nil
 				}
-				app.state.records = append(app.state.records, batch...)
+				app.state.fullCache = append(app.state.fullCache, batch...)
 				for _, r := range batch {
 					app.state.filterValues.add(r)
 				}
-				app.applyNameFilter()
+				app.applyFilters()
 				app.renderRecordsView(g)
 				app.renderFiltersView(g)
 				return nil
@@ -691,10 +699,154 @@ func (app *Gui) startRecordsStream() {
 	})
 }
 
+// applyFilters narrows fullCache into records using the current filter
+// selections (skills, domains, modules, version, schema version, author),
+// then chains into applyNameFilter for the local name query. Trusted/Verified
+// filters are not applicable client-side (they require server evaluation), so
+// when those are active a fresh server stream is issued instead.
+//
+// Must be called from the GUI goroutine (g.Update callback or key handler).
+func (app *Gui) applyFilters() {
+	applied := app.state.filters.applied
+
+	if len(applied[filterTrustedVerified]) > 0 {
+		app.applyFiltersServerSide()
+		return
+	}
+
+	if len(applied) == 0 {
+		app.state.records = app.state.fullCache
+	} else {
+		out := make([]*dirclient.RecordSummary, 0, len(app.state.fullCache))
+		for _, r := range app.state.fullCache {
+			if matchesFilters(r, applied) {
+				out = append(out, r)
+			}
+		}
+		app.state.records = out
+	}
+	app.state.recordCursor = 0
+	app.applyNameFilter()
+	app.renderRecordsView(app.g)
+}
+
+// applyFiltersServerSide falls back to a server-side stream when filters
+// that can't be evaluated client-side (Trusted/Verified) are active. Unlike
+// startRecordsStream it does NOT clear or repopulate fullCache.
+func (app *Gui) applyFiltersServerSide() {
+	if app.state.client == nil {
+		return
+	}
+	if app.state.cancelLoad != nil {
+		app.state.cancelLoad()
+		app.state.cancelLoad = nil
+	}
+
+	app.state.records = nil
+	app.state.recordCursor = 0
+	app.state.streamErr = ""
+	app.state.stream = streamLoading
+	app.applyNameFilter()
+	app.renderRecordsView(app.g)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	app.state.cancelLoad = cancel
+	queries := app.activeQueries()
+	client := app.state.client
+
+	go client.Stream(ctx, queries, dirclient.StreamCallbacks{
+		OnFirstPage: func(summaries []*dirclient.RecordSummary) {
+			app.g.Update(func(g *gocui.Gui) error {
+				if ctx.Err() != nil {
+					return nil
+				}
+				app.state.records = append(app.state.records, summaries...)
+				app.state.stream = streamStreaming
+				app.applyNameFilter()
+				app.renderRecordsView(g)
+				app.autoPreviewRecord(g)
+				return nil
+			})
+		},
+		OnBatch: func(batch []*dirclient.RecordSummary) {
+			app.g.Update(func(g *gocui.Gui) error {
+				if ctx.Err() != nil {
+					return nil
+				}
+				app.state.records = append(app.state.records, batch...)
+				app.applyNameFilter()
+				app.renderRecordsView(g)
+				return nil
+			})
+		},
+		OnDone: func(err error) {
+			app.g.Update(func(g *gocui.Gui) error {
+				if ctx.Err() != nil {
+					return nil
+				}
+				if err != nil {
+					app.state.stream = streamErrored
+					app.state.streamErr = err.Error()
+				} else {
+					app.state.stream = streamDone
+				}
+				app.renderRecordsView(g)
+				return nil
+			})
+		},
+	})
+}
+
+// matchesFilters checks whether a single record matches all the applied filter
+// selections. Within each category the semantics are OR (match any selected
+// value); across categories the semantics are AND (all categories must match).
+// Trusted/Verified are excluded — they require server evaluation.
+func matchesFilters(r *dirclient.RecordSummary, applied map[filterCategory]map[string]bool) bool {
+	for cat, selected := range applied {
+		if len(selected) == 0 {
+			continue
+		}
+		if cat == filterTrustedVerified {
+			continue
+		}
+		if !matchesCategory(r, cat, selected) {
+			return false
+		}
+	}
+	return true
+}
+
+func matchesCategory(r *dirclient.RecordSummary, cat filterCategory, selected map[string]bool) bool {
+	switch cat {
+	case filterSkills:
+		return sliceMatchesAny(r.Skills, selected)
+	case filterDomains:
+		return sliceMatchesAny(r.Domains, selected)
+	case filterModules:
+		return sliceMatchesAny(r.Modules, selected)
+	case filterOASFVersion:
+		return selected[r.SchemaVersion]
+	case filterVersion:
+		return selected[r.Version]
+	case filterAuthor:
+		return sliceMatchesAny(r.Authors, selected)
+	}
+	return true
+}
+
+func sliceMatchesAny(values []string, selected map[string]bool) bool {
+	for _, v := range values {
+		if selected[v] {
+			return true
+		}
+	}
+	return false
+}
+
 // applyNameFilter recomputes filteredRecords from records by applying only
-// the local name query. Server-side filters have already been applied to
-// records by the time they reach us; the name query is intentionally local
-// so the user can narrow incrementally without restarting the stream.
+// the local name query. The records slice has already been narrowed by
+// applyFilters; the name query is intentionally local so the user can narrow
+// incrementally without restarting the stream.
 //
 // Must be called from the GUI goroutine (g.Update callback or key handler).
 func (app *Gui) applyNameFilter() {
