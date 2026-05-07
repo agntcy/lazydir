@@ -139,6 +139,9 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewFilters, 'i', gocui.ModNone, app.filterToggleInfo); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding(viewFilters, 'x', gocui.ModNone, app.filterClearAll); err != nil {
+		return err
+	}
 
 	// ── Records panel ────────────────────────────────────────────────────────
 	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
@@ -429,6 +432,17 @@ func (app *Gui) filterToggleOption(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 	app.toggleApplied(row.category, row.option)
+	app.applyFilters()
+	app.renderFiltersView(g)
+	return nil
+}
+
+// filterClearAll removes all applied filter selections at once.
+func (app *Gui) filterClearAll(g *gocui.Gui, v *gocui.View) error {
+	if len(app.state.filters.applied) == 0 {
+		return nil
+	}
+	app.state.filters.applied = map[filterCategory]map[string]bool{}
 	app.applyFilters()
 	app.renderFiltersView(g)
 	return nil

@@ -45,6 +45,7 @@ var perPanelBindings = map[string]panelBindings{
 			{"space", "toggle filter", true},
 			{"/", "search options", true},
 			{"i", "toggle class info", true},
+			{"x", "clear all filters", true},
 			{"esc", "clear search", true},
 			{"wheel", "scroll", false},
 		},
