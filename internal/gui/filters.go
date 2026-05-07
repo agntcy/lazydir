@@ -56,14 +56,14 @@ func (a *filterValueAggregator) add(r *dirclient.RecordSummary) {
 	}
 }
 
-// sorted returns the alphabetically sorted values of m.
-func sortedSet(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
+// rebuildActiveFilterValues recomputes activeFilterValues from the current
+// filtered record set so the Filters panel only shows relevant options.
+func (app *Gui) rebuildActiveFilterValues() {
+	a := newFilterValueAggregator()
+	for _, r := range app.state.records {
+		a.add(r)
 	}
-	sort.Strings(out)
-	return out
+	app.state.activeFilterValues = a
 }
 
 // filterCategory identifies a filterable record field shown in the [2] Filters
@@ -143,37 +143,42 @@ func newFilterState() filterState {
 	}
 }
 
-// optionsFor returns the option labels available for a given category, given
-// the records seen on the unfiltered stream so far. Class categories (skills,
-// domains, modules) are sorted by OASF ID when enrichment data is available;
-// other categories are sorted alphabetically.
+// optionsFor returns the option labels available for a given category. When
+// filters are active it reads from activeFilterValues (the narrowed set) so
+// only relevant options are shown; otherwise it falls back to the full
+// filterValues aggregator. Categories that already have active selections
+// always use the full set so the user can add more values to broaden the
+// search (standard faceted-search behaviour). Currently-applied selections
+// are always included so the user can deselect them.
+//
+// Class categories (skills, domains, modules) are sorted by OASF ID when
+// enrichment data is available; other categories are sorted alphabetically.
 func (app *Gui) optionsFor(c filterCategory) []string {
-	a := app.state.filterValues
+	a := app.state.activeFilterValues
+	if a == nil {
+		a = app.state.filterValues
+	}
 	if a == nil {
 		return nil
 	}
-	var raw map[string]bool
-	switch c {
-	case filterSkills:
-		raw = a.skills
-	case filterDomains:
-		raw = a.domains
-	case filterModules:
-		raw = a.modules
-	case filterOASFVersion:
-		return sortedSet(a.schemaVersion)
-	case filterVersion:
-		return sortedSet(a.versions)
-	case filterAuthor:
-		return sortedSet(a.authors)
-	case filterTrustedVerified:
+
+	if c == filterTrustedVerified {
 		return []string{"trusted", "verified"}
-	default:
-		return nil
 	}
 
-	out := make([]string, 0, len(raw))
+	raw := aggregatorFieldFor(a, c)
+	applied := app.state.filters.applied[c]
+
+	merged := make(map[string]bool, len(raw)+len(applied))
 	for k := range raw {
+		merged[k] = true
+	}
+	for k := range applied {
+		merged[k] = true
+	}
+
+	out := make([]string, 0, len(merged))
+	for k := range merged {
 		out = append(out, k)
 	}
 
@@ -186,6 +191,26 @@ func (app *Gui) optionsFor(c filterCategory) []string {
 		sort.Strings(out)
 	}
 	return out
+}
+
+// aggregatorFieldFor returns the value set for a given category from an
+// aggregator instance.
+func aggregatorFieldFor(a *filterValueAggregator, c filterCategory) map[string]bool {
+	switch c {
+	case filterSkills:
+		return a.skills
+	case filterDomains:
+		return a.domains
+	case filterModules:
+		return a.modules
+	case filterOASFVersion:
+		return a.schemaVersion
+	case filterVersion:
+		return a.versions
+	case filterAuthor:
+		return a.authors
+	}
+	return nil
 }
 
 // classEntriesFor returns the OASF class entry map for a class filter

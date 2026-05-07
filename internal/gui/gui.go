@@ -104,6 +104,12 @@ type appState struct {
 	// we've seen it, even if the next filtered stream wouldn't include it).
 	filterValues *filterValueAggregator
 
+	// activeFilterValues is recomputed from state.records each time
+	// applyFilters runs. optionsFor reads from it so the Filters panel
+	// only shows values present in the current filtered result set.
+	// nil when no filters are active (falls back to filterValues).
+	activeFilterValues *filterValueAggregator
+
 	// classEntries caches enriched display info (ID, caption) for OASF
 	// taxonomy classes. Populated once after the first record batch
 	// arrives and provides the schema version needed for the lookup.
@@ -716,6 +722,7 @@ func (app *Gui) applyFilters() {
 
 	if len(applied) == 0 {
 		app.state.records = app.state.fullCache
+		app.state.activeFilterValues = nil
 	} else {
 		out := make([]*dirclient.RecordSummary, 0, len(app.state.fullCache))
 		for _, r := range app.state.fullCache {
@@ -724,10 +731,12 @@ func (app *Gui) applyFilters() {
 			}
 		}
 		app.state.records = out
+		app.rebuildActiveFilterValues()
 	}
 	app.state.recordCursor = 0
 	app.applyNameFilter()
 	app.renderRecordsView(app.g)
+	app.renderFiltersView(app.g)
 }
 
 // applyFiltersServerSide falls back to a server-side stream when filters
@@ -788,6 +797,8 @@ func (app *Gui) applyFiltersServerSide() {
 					app.state.stream = streamErrored
 					app.state.streamErr = err.Error()
 				} else {
+					app.rebuildActiveFilterValues()
+					app.renderFiltersView(g)
 					app.state.stream = streamDone
 				}
 				app.renderRecordsView(g)
@@ -819,28 +830,36 @@ func matchesFilters(r *dirclient.RecordSummary, applied map[filterCategory]map[s
 func matchesCategory(r *dirclient.RecordSummary, cat filterCategory, selected map[string]bool) bool {
 	switch cat {
 	case filterSkills:
-		return sliceMatchesAny(r.Skills, selected)
+		return sliceMatchesAll(r.Skills, selected)
 	case filterDomains:
-		return sliceMatchesAny(r.Domains, selected)
+		return sliceMatchesAll(r.Domains, selected)
 	case filterModules:
-		return sliceMatchesAny(r.Modules, selected)
+		return sliceMatchesAll(r.Modules, selected)
 	case filterOASFVersion:
 		return selected[r.SchemaVersion]
 	case filterVersion:
 		return selected[r.Version]
 	case filterAuthor:
-		return sliceMatchesAny(r.Authors, selected)
+		return sliceMatchesAll(r.Authors, selected)
 	}
 	return true
 }
 
-func sliceMatchesAny(values []string, selected map[string]bool) bool {
-	for _, v := range values {
-		if selected[v] {
-			return true
+// sliceMatchesAll returns true only if values contains every key in selected.
+func sliceMatchesAll(values []string, selected map[string]bool) bool {
+	for k := range selected {
+		found := false
+		for _, v := range values {
+			if v == k {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // applyNameFilter recomputes filteredRecords from records by applying only
