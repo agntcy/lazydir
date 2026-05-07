@@ -24,8 +24,18 @@ server:
   directoryServers:               # predefined servers shown in popup (first = default)
     - address: "localhost:8888"
     # - address: "dir.example.com:443"
+    #   authMode: "oidc"          # insecure | tls | oidc | jwt | x509
     #   oidcIssuer: "https://auth.example.com"
     #   oidcClientID: "lazydir"
+    # - address: "secure.example.com:443"
+    #   authMode: "tls"
+    #   tlsCAFile: "/path/to/ca.pem"
+    #   tlsCertFile: "/path/to/client.crt"
+    #   tlsKeyFile: "/path/to/client.key"
+    #   tlsSkipVerify: false
+    # - address: "ci.example.com:443"
+    #   authMode: "jwt"
+    #   authToken: ""             # or use DIRECTORY_CLIENT_SERVER_ADDRESS env var
   oasfServers:                    # predefined OASF servers (first = default)
     - "https://schema.oasf.outshift.com"
   oasfTimeout: 10                 # seconds for OASF HTTP requests

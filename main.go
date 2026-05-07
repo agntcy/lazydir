@@ -11,8 +11,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
+		printUsage()
+		os.Exit(0)
+	}
+
 	userCfg := config.Load()
-	cfg := parseFlags(userCfg)
+	cfg := buildConfig(userCfg)
 
 	if err := gui.New(cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -20,7 +25,7 @@ func main() {
 	}
 }
 
-func parseFlags(userCfg config.Config) gui.Config {
+func buildConfig(userCfg config.Config) gui.Config {
 	dirServers := userCfg.Server.ResolveDirectoryServers()
 	if len(dirServers) == 0 {
 		dirServers = []config.DirectoryEntry{{Address: "localhost:8888"}}
@@ -35,11 +40,18 @@ func parseFlags(userCfg config.Config) gui.Config {
 		dimLevel = *userCfg.GUI.DimLevel
 	}
 
+	first := dirServers[0]
 	cfg := gui.Config{
 		Directory: dirclient.Config{
-			ServerAddress: dirServers[0].Address,
-			OIDCIssuer:    dirServers[0].OIDCIssuer,
-			OIDCClientID:  dirServers[0].OIDCClientID,
+			ServerAddress: first.Address,
+			AuthMode:      first.AuthMode,
+			AuthToken:     first.AuthToken,
+			TLSCAFile:     first.TLSCAFile,
+			TLSCertFile:   first.TLSCertFile,
+			TLSKeyFile:    first.TLSKeyFile,
+			TLSSkipVerify: first.TLSSkipVerify,
+			OIDCIssuer:    first.OIDCIssuer,
+			OIDCClientID:  first.OIDCClientID,
 		},
 		OASF: oasf.Config{
 			ServerAddress: oasfServers[0],
@@ -56,62 +68,12 @@ func parseFlags(userCfg config.Config) gui.Config {
 		BatchSize:          userCfg.Stream.BatchSize,
 	}
 
-	// Honour the environment variables also used by dirctl and the OASF SDK.
+	// Honour environment variables also used by dirctl and the OASF SDK.
 	if addr := os.Getenv("DIRECTORY_CLIENT_SERVER_ADDRESS"); addr != "" {
 		cfg.Directory.ServerAddress = addr
 	}
 	if addr := os.Getenv("OASF_SERVER_ADDRESS"); addr != "" {
 		cfg.OASF.ServerAddress = addr
-	}
-
-	args := os.Args[1:]
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--server-addr", "-s":
-			if i+1 < len(args) {
-				i++
-				cfg.Directory.ServerAddress = args[i]
-			}
-		case "--oasf-addr", "-o":
-			if i+1 < len(args) {
-				i++
-				cfg.OASF.ServerAddress = args[i]
-			}
-		case "--auth-mode", "-a":
-			if i+1 < len(args) {
-				i++
-				cfg.Directory.AuthMode = args[i]
-			}
-		case "--auth-token":
-			if i+1 < len(args) {
-				i++
-				cfg.Directory.AuthToken = args[i]
-			}
-		case "--tls-ca-file":
-			if i+1 < len(args) {
-				i++
-				cfg.Directory.TLSCAFile = args[i]
-			}
-		case "--tls-cert-file":
-			if i+1 < len(args) {
-				i++
-				cfg.Directory.TLSCertFile = args[i]
-			}
-		case "--tls-key-file":
-			if i+1 < len(args) {
-				i++
-				cfg.Directory.TLSKeyFile = args[i]
-			}
-		case "--tls-skip-verify":
-			cfg.Directory.TLSSkipVerify = true
-		case "--help", "-h":
-			printUsage()
-			os.Exit(0)
-		default:
-			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", args[i])
-			printUsage()
-			os.Exit(1)
-		}
 	}
 
 	return cfg
@@ -121,36 +83,14 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `lazydir - TUI for AGNTCY Directory
 
 Usage:
-  lazydir [flags]
+  lazydir [-h|--help]
 
-Flags:
-  --server-addr, -s   <addr>    Directory server address (default: localhost:8888)
-  --oasf-addr,    -o   <url>    OASF schema server URL (default: %s)
-  --auth-mode,    -a   <mode>   Auth mode: insecure|tls|oidc|jwt|x509 (default: auto-detect)
-  --auth-token        <token>   Pre-issued Bearer token
-  --tls-ca-file       <path>    TLS CA certificate file
-  --tls-cert-file     <path>    TLS client certificate file
-  --tls-key-file      <path>    TLS client key file
-  --tls-skip-verify             Skip TLS certificate verification
-  --help, -h                    Show this help
+All configuration is read from ~/.config/lazydir/config.yml (or config.yaml).
+See config.example.yml for a complete annotated template.
 
-Environment:
-  DIRECTORY_CLIENT_SERVER_ADDRESS  Default Directory server address
-  OASF_SERVER_ADDRESS              Default OASF schema server URL
-
-Key Bindings (inside the TUI):
-  tab / shift+tab    Cycle panel focus
-  1 / 2 / 3 / 0      Jump to panel
-  ↑ ↓ / j k          Navigate list items
-  enter              Open filter category / toggle option / preview record
-  tab (in Filters)   Toggle option in the options view
-  esc (in Filters)   Return from options view to filter list
-  /                  Filter records by name
-  esc (in Records)   Clear name filter
-  c                  Open connect dialog (Connections panel → Directory)
-  o                  Open connect dialog (Connections panel → OASF server)
-  r                  Refresh records
-  ?                  Show keybinding help
-  q / ctrl+c         Quit
-`, oasf.DefaultServerAddress)
+Environment variables (override config file):
+  DIRECTORY_CLIENT_SERVER_ADDRESS  Directory server address
+  OASF_SERVER_ADDRESS              OASF schema server URL
+  DEBUG                            Enable debug logging to lazydir_debug.log
+`)
 }

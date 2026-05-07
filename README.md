@@ -4,15 +4,15 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 
 ## Overview
 
-`lazydir` lets you explore AGNTCY Directory nodes without memorizing `dirctl` commands. It presents the directory's contents in three navigable panels on the left side and a live preview panel on the right:
+`lazydir` lets you explore AGNTCY Directory nodes without memorizing `dirctl` commands. It presents the directory's contents in three navigable panels on the left and a live preview panel on the right:
 
 ```
 ┌────────────────────────┬──────────────────────────────────────────────┐
-│ [1] Connections        │ [Preview]                                    │
+│ [1] Connections        │ [0] Preview                                  │
 │  ● Directory: localh…  │                                              │
-│  ● OASF: schema.oasf…  │  Shows either:                               │
-├────────────────────────│  • OASF skill / domain / module description  │
-│ [2] Filters            │  • Full record JSON (syntax highlighted)     │
+│  ● OASF: schema.oasf…  │  Syntax-highlighted JSON of the              │
+├────────────────────────│  selected record                             │
+│ [2] Filters            │                                              │
 │  ▶ Skills              │                                              │
 │      natural_language… │                                              │
 │  ▶ Domains             │                                              │
@@ -28,17 +28,18 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 │    example.com/bot  v2 │                                              │
 │    …                   │                                              │
 └────────────────────────┴──────────────────────────────────────────────┘
-  navigate: ↑↓  focus: tab  filter records: /  expand: enter
+  navigate: ↑↓  focus: tab  filter records: /  expand: enter  ?: help
 ```
 
-### Panel descriptions
+### Features by panel
 
-| Panel | Purpose |
-|-------|---------|
-| **[1] Connections** | Shows both endpoints the TUI is currently talking to — the Directory server and the OASF schema server — along with the connection status of the former. Press `c` to switch to a different Directory server and `o` to point at a different OASF schema server. |
-| **[2] Filters** | Lists every filter category as a collapsible tree (Skills, Domains, Modules, OASF version, Version, Author, Trusted, Verified). Each category has a `▶`/`▼` triangle — pressing `enter` on a category expands or collapses its options dropdown; pressing `enter` or `space` on an option toggles its selection. Skills, domains, and modules display their OASF numeric ID and caption (fetched from the OASF schema server) sorted by ID. Selected options are shown in a distinct color and remain visible under their category even when collapsed. Multiple values can be active per category. The `[3] Records` pane updates immediately as filters change. Press `/` to search across all non-boolean categories simultaneously — matching options appear grouped under their category headers as you type; the search matches against name, caption, and ID. Press `i` on a skill, domain, or module option to toggle its OASF class hierarchy tree and description inline. |
-| **[3] Records** | Lists records that satisfy the active filters. Shows name and version. Records sharing the same name but with different versions are automatically grouped under a collapsible `▶`/`▼` header (similar to filter categories) — press `enter` on a group header to expand/collapse it; expanded groups show each version as an indented child row. Use `/` to filter by name — results narrow live as you type. Press `enter` on a record row to load the full record JSON in the preview panel. Press `i` to toggle inline record info (CID, annotations, schema version, created-at) below the selected record. Press `y` to open a yank/copy menu where `c` copies the CID and `a` copies the full record JSON to the clipboard. |
-| **Preview** | The right two-thirds of the screen. Displays syntax-highlighted JSON of the selected record. Scroll with `↑`/`↓` when the preview panel is focused. |
+**[1] Connections** — live status for Directory and OASF endpoints; switch servers with `c`/`o`; view connection details with `i`.
+
+**[2] Filters** — collapsible categories (Skills, Domains, Modules, OASF version, Version, Author, Trusted, Verified); toggle options with `enter`/`space`; `/` to search across all categories by name, caption, or ID; `i` to open a popup with the OASF class hierarchy and description.
+
+**[3] Records** — server-filtered list showing name and version; multi-version records auto-grouped under collapsible headers; `/` for live name filtering; `i` for record info popup (CID, annotations, schema version, created-at); `y` to yank/copy CID or full JSON.
+
+**[0] Preview** — syntax-highlighted JSON of the selected record; scrollable when focused.
 
 ## Prerequisites
 
@@ -80,7 +81,6 @@ task build        # downloads deps and builds into .bin/lazydir
 | `task deps` | Download Go module dependencies |
 | `task build` | Build the binary into `.bin/lazydir` (incremental) |
 | `task run` | Build and immediately start `lazydir` |
-| `task run CLI_ARGS="--server-addr localhost:8888"` | Build and start with custom flags |
 | `task fmt` | Format Go source files (`gofmt -s`) |
 | `task vet` | Run `go vet` |
 | `task lint` | Run `golangci-lint` (must be [installed](https://golangci-lint.run/welcome/install/)) |
@@ -89,75 +89,18 @@ task build        # downloads deps and builds into .bin/lazydir
 ## Usage
 
 ```bash
-lazydir [flags]
+lazydir
 ```
 
-### Flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--server-addr`, `-s` | `localhost:8888` | Directory server address |
-| `--oasf-addr`, `-o` | `https://schema.oasf.outshift.com` | OASF schema server URL (used via `oasf-sdk`) |
-| `--auth-mode`, `-a` | _(auto-detect)_ | Auth mode: `insecure`, `tls`, `oidc`, `jwt`, `x509` |
-| `--auth-token` | | Pre-issued Bearer token (for CI / non-interactive) |
-| `--tls-ca-file` | | TLS CA certificate file path |
-| `--tls-cert-file` | | TLS client certificate file path |
-| `--tls-key-file` | | TLS client key file path |
-| `--tls-skip-verify` | `false` | Skip TLS certificate verification |
-| `--help`, `-h` | | Show usage |
+All configuration is read from the config file (see [Configuration](#configuration) below) and environment variables. Run `lazydir --help` for a quick reminder.
 
 ### Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `DIRECTORY_CLIENT_SERVER_ADDRESS` | Default Directory server address (overridden by `--server-addr`) |
-| `OASF_SERVER_ADDRESS` | Default OASF schema server URL (overridden by `--oasf-addr`) |
+| `DIRECTORY_CLIENT_SERVER_ADDRESS` | Override the Directory server address from config |
+| `OASF_SERVER_ADDRESS` | Override the OASF schema server URL from config |
 | `DEBUG` | Set to any value to write a `lazydir_debug.log` file |
-
-### Examples
-
-```bash
-# Connect to a local insecure server
-lazydir --server-addr localhost:8888
-
-# Connect with a pre-issued token
-lazydir --server-addr my-dir.example.com:443 --auth-token "eyJ..."
-
-# Connect using TLS certificates
-lazydir -s my-dir.example.com:443 \
-  --tls-ca-file /path/to/ca.pem \
-  --tls-cert-file /path/to/client.crt \
-  --tls-key-file /path/to/client.key
-```
-
-## Key Bindings
-
-| Key | Action |
-|-----|--------|
-| `q` / `ctrl+c` | Quit |
-| `tab` / `shift+tab` | Cycle panel focus |
-| `1` | Focus the Connections panel |
-| `2` | Focus the Filters panel |
-| `3` | Focus the Records panel |
-| `0` | Focus the Preview panel |
-| `↑` / `k` | Move cursor up |
-| `↓` / `j` | Move cursor down |
-| `enter` (Filters, on category) | Expand / collapse the category dropdown |
-| `enter` / `space` (Filters, on option) | Toggle filter selection |
-| `/` (Filters) | Search options across all categories (name, caption, ID) |
-| `i` (Filters, on option) | Toggle inline OASF class hierarchy and description |
-| `esc` (Filters) | Clear search query |
-| `enter` (Records, on group header) | Expand / collapse the version group |
-| `enter` (Records, on record) | Load the full record JSON in the preview panel |
-| `i` (Records) | Toggle inline record info (CID, annotations, schema version, created-at) |
-| `y` (Records) | Open yank/copy menu — `c` copies the CID, `a` copies the full record JSON |
-| `/` (Records) | Live-filter by name |
-| `esc` (Records) | Clear name filter |
-| `c` (Connections panel) | Open Directory connect dialog |
-| `o` (Connections panel) | Open OASF server connect dialog |
-| `r` | Refresh records from server |
-| `?` | Show the full keybinding popup for the focused panel |
-| `wheel` | Scroll (list and preview panels) |
 
 ## Configuration
 

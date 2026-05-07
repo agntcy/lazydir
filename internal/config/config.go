@@ -46,9 +46,15 @@ type ThemeConfig struct {
 
 // DirectoryEntry describes a predefined directory server.
 type DirectoryEntry struct {
-	Address      string `yaml:"address"`
-	OIDCIssuer   string `yaml:"oidcIssuer"`
-	OIDCClientID string `yaml:"oidcClientID"`
+	Address       string `yaml:"address"`
+	AuthMode      string `yaml:"authMode"`
+	AuthToken     string `yaml:"authToken"`
+	TLSCAFile     string `yaml:"tlsCAFile"`
+	TLSCertFile   string `yaml:"tlsCertFile"`
+	TLSKeyFile    string `yaml:"tlsKeyFile"`
+	TLSSkipVerify bool   `yaml:"tlsSkipVerify"`
+	OIDCIssuer    string `yaml:"oidcIssuer"`
+	OIDCClientID  string `yaml:"oidcClientID"`
 }
 
 // Label returns a human-readable label for display in the server popup.
