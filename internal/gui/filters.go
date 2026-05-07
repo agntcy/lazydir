@@ -77,8 +77,7 @@ const (
 	filterOASFVersion
 	filterVersion
 	filterAuthor
-	filterTrusted
-	filterVerified
+	filterTrustedVerified
 )
 
 // allFilterCategories is the canonical ordered list of filter categories.
@@ -89,8 +88,7 @@ var allFilterCategories = []filterCategory{
 	filterOASFVersion,
 	filterVersion,
 	filterAuthor,
-	filterTrusted,
-	filterVerified,
+	filterTrustedVerified,
 }
 
 // title returns the human-readable label used as the row text in the filter
@@ -109,17 +107,10 @@ func (c filterCategory) title() string {
 		return "Version"
 	case filterAuthor:
 		return "Author"
-	case filterTrusted:
-		return "Trusted"
-	case filterVerified:
-		return "Verified"
+	case filterTrustedVerified:
+		return "Trusted / Verified"
 	}
 	return ""
-}
-
-// boolean reports whether the category is a yes/no filter (only two options).
-func (c filterCategory) boolean() bool {
-	return c == filterTrusted || c == filterVerified
 }
 
 // filterState owns all mutable state for the [2] Filters panel and the set of
@@ -175,8 +166,8 @@ func (app *Gui) optionsFor(c filterCategory) []string {
 		return sortedSet(a.versions)
 	case filterAuthor:
 		return sortedSet(a.authors)
-	case filterTrusted, filterVerified:
-		return []string{"yes", "no"}
+	case filterTrustedVerified:
+		return []string{"trusted", "verified"}
 	default:
 		return nil
 	}
@@ -274,9 +265,7 @@ func (app *Gui) listRows() []listRow {
 }
 
 // activeQueries flattens the applied filter selections into the slice of
-// server-side queries that the directory understands. Yes/no booleans are
-// only emitted when exactly one side is selected — picking both, or neither,
-// means "no filter" and we omit the query entirely.
+// server-side queries that the directory understands.
 func (app *Gui) activeQueries() []dirclient.Query {
 	var qs []dirclient.Query
 	for _, c := range allFilterCategories {
@@ -284,16 +273,19 @@ func (app *Gui) activeQueries() []dirclient.Query {
 		if len(set) == 0 {
 			continue
 		}
-		if c.boolean() {
-			yes := set["yes"]
-			no := set["no"]
-			if yes == no {
-				continue
+		if c == filterTrustedVerified {
+			if set["trusted"] {
+				qs = append(qs, dirclient.Query{
+					Category: dirclient.FilterTrusted,
+					Value:    "true",
+				})
 			}
-			qs = append(qs, dirclient.Query{
-				Category: categoryToFilter(c),
-				Value:    boolValue(yes),
-			})
+			if set["verified"] {
+				qs = append(qs, dirclient.Query{
+					Category: dirclient.FilterVerified,
+					Value:    "true",
+				})
+			}
 			continue
 		}
 		for v := range set {
@@ -320,26 +312,15 @@ func categoryToFilter(c filterCategory) dirclient.FilterCategory {
 		return dirclient.FilterVersion
 	case filterAuthor:
 		return dirclient.FilterAuthor
-	case filterTrusted:
-		return dirclient.FilterTrusted
-	case filterVerified:
-		return dirclient.FilterVerified
 	}
 	return dirclient.FilterSkill
-}
-
-func boolValue(yes bool) string {
-	if yes {
-		return "true"
-	}
-	return "false"
 }
 
 // filteredListRows returns the rows to display. When no query is active it
 // delegates to listRows (respecting the expanded/collapsed state). When a
 // search query is active it ignores the expanded state and shows every option
-// whose label matches the query, grouped under its category header. Boolean
-// categories (Trusted / Verified) are excluded from search results. For class
+// whose label matches the query, grouped under its category header. The
+// Trusted / Verified category is excluded from search results. For class
 // categories the search also matches against the OASF caption and ID.
 func (app *Gui) filteredListRows() []listRow {
 	q := app.state.filters.filterQuery
@@ -349,7 +330,7 @@ func (app *Gui) filteredListRows() []listRow {
 	q = strings.ToLower(q)
 	var rows []listRow
 	for _, c := range allFilterCategories {
-		if c.boolean() {
+		if c == filterTrustedVerified {
 			continue
 		}
 		entries := app.classEntriesFor(c)

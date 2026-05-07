@@ -131,10 +131,8 @@ func (t Theme) filterColor(c filterCategory) string {
 		return t.Color5
 	case filterAuthor:
 		return t.Color7
-	case filterTrusted:
+	case filterTrustedVerified:
 		return t.Color8
-	case filterVerified:
-		return t.Color9
 	}
 	return ""
 }

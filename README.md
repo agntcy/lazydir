@@ -20,8 +20,7 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 │  ▶ OASF version        │                                              │
 │  ▶ Version             │                                              │
 │  ▶ Author              │                                              │
-│  ▶ Trusted             │                                              │
-│  ▶ Verified            │                                              │
+│  ▶ Trusted / Verified  │                                              │
 ├────────────────────────│                                              │
 │ [3] Records  /filter   │                                              │
 │  > cisco.com/agent  v1 │                                              │
@@ -35,7 +34,7 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 
 **[1] Connections** — live status for Directory and OASF endpoints; switch servers with `c`/`o`; view connection details with `i`.
 
-**[2] Filters** — collapsible categories (Skills, Domains, Modules, OASF version, Version, Author, Trusted, Verified); toggle options with `enter`/`space`; `/` to search across all categories by name, caption, or ID; `i` to open a popup with the OASF class hierarchy and description.
+**[2] Filters** — collapsible categories (Skills, Domains, Modules, OASF version, Version, Author, Trusted / Verified); toggle options with `enter`/`space`; `/` to search across all categories by name, caption, or ID; `i` to open a popup with the OASF class hierarchy and description.
 
 **[3] Records** — server-filtered list showing name and version; multi-version records auto-grouped under collapsible headers; `/` for live name filtering; `i` for record info popup (CID, annotations, schema version, created-at); `y` to yank/copy CID or full JSON.
 
@@ -120,8 +119,8 @@ gui:
     color5: "blue"          # version filter, options bar, section headers
     color6: "red"           # disconnected indicator
     color7: "brightRed"     # author filter
-    color8: "brightYellow"  # trusted filter
-    color9: "brightGreen"   # verified filter
+    color8: "brightYellow"  # trusted / verified filter
+    color9: "brightGreen"   # (available)
     color10: "brightBlack"  # dim/muted text (IDs)
     activeBorderColor: "green"    # focused panel border + cursor
     selectedRowBgColor: "8"       # highlighted row background (256-color)

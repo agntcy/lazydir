@@ -447,7 +447,7 @@ func (app *Gui) filterEsc(g *gocui.Gui, v *gocui.View) error {
 }
 
 // filterOpenSearch opens the input prompt to search filter options across all
-// non-boolean categories simultaneously.
+// searchable categories simultaneously.
 func (app *Gui) filterOpenSearch(g *gocui.Gui, v *gocui.View) error {
 	prevQuery := app.state.filters.filterQuery
 	app.openInput("Search filters (/)", app.state.filters.filterQuery,
