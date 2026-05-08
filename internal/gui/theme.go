@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/akijakya/lazydir/internal/config"
+	"github.com/agntcy/lazydir/internal/config"
 	"github.com/jesseduffield/gocui"
 )
 

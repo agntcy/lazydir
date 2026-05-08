@@ -54,13 +54,13 @@ dirctl daemon start
 ## Installation
 
 ```bash
-go install github.com/akijakya/lazydir@latest
+go install github.com/agntcy/lazydir@latest
 ```
 
 Or build from source using `go build`:
 
 ```bash
-git clone https://github.com/akijakya/lazydir
+git clone https://github.com/agntcy/lazydir
 cd lazydir
 go build -o lazydir .
 ```
@@ -68,7 +68,7 @@ go build -o lazydir .
 Or using [Task](https://taskfile.dev):
 
 ```bash
-git clone https://github.com/akijakya/lazydir
+git clone https://github.com/agntcy/lazydir
 cd lazydir
 task build        # downloads deps and builds into .bin/lazydir
 ```

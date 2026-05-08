@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/akijakya/lazydir/internal/dirclient"
+	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
