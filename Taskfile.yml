@@ -66,12 +66,28 @@ tasks:
       - licensei cache
       - licensei check
 
+  test:
+    desc: Run all tests (unit)
+    cmds:
+      - task: test:unit
+
+  test:unit:
+    desc: Run unit tests
+    cmds:
+      - go test -count=1 ./...
+
+  test:cover:
+    desc: Run unit tests with coverage report
+    cmds:
+      - go test -race -coverprofile=coverage.out ./...
+
   check:
-    desc: Run all checks (fmt, vet, lint) then build
+    desc: Run all checks (fmt, vet, lint, test) then build
     cmds:
       - task: fmt
       - task: vet
       - task: lint
+      - task: test:unit
       - task: build
 
   deps:install:

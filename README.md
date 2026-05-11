@@ -1,6 +1,7 @@
 # lazydir
 
 [![CI](https://github.com/agntcy/lazydir/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agntcy/lazydir/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/agntcy/lazydir/branch/main/graph/badge.svg)](https://codecov.io/gh/agntcy/lazydir)
 [![License](https://img.shields.io/github/license/agntcy/lazydir)](./LICENSE.md)
 
 A terminal user interface (TUI) for browsing and managing records in [AGNTCY Directory](https://github.com/agntcy/dir) instances — inspired by [lazygit](https://github.com/jesseduffield/lazygit) and [lazydocker](https://github.com/jesseduffield/lazydocker).

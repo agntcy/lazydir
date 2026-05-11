@@ -105,11 +105,41 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: licensei check
 
+  test:
+    name: Unit Test
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Task
+        uses: go-task/setup-task@3be4020d41929789a01026e0e427a4321ce0ad44 # v2.0.0
+
+      - name: Run unit tests
+        run: task test:cover
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5.5.4
+        with:
+          files: coverage.out
+          flags: unit
+          codecov_yml_path: codecov.yml
+          use_oidc: true
+
   build:
     name: Build
     needs:
       - lint
       - license
+      - test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -134,6 +164,7 @@ jobs:
       - changes
       - lint
       - license
+      - test
       - build
     runs-on: ubuntu-latest
     steps:
@@ -142,5 +173,5 @@ jobs:
           if [[ "${{ needs.changes.outputs.code }}" == "true" ]]; then
             echo "::notice::Success! All code checks passed."
           else
-            echo "::notice::Success! No code changes detected."
+            echo "::notice::Success! No code changes detected, skipped builds and tests."
           fi
