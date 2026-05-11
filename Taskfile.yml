@@ -8,6 +8,8 @@ vars:
   BINARY: "{{ .BIN_DIR }}/lazydir"
   GOLANGCI_LINT_VERSION: "2.11.3"
   GOLANGCI_LINT_BIN: "{{ .BIN_DIR }}/golangci-lint-{{ .GOLANGCI_LINT_VERSION }}"
+  DIRCTL_VERSION: "1.3.0"
+  DIRCTL_BIN: "{{ .BIN_DIR }}/dirctl"
 
 tasks:
   default:
@@ -67,9 +69,10 @@ tasks:
       - licensei check
 
   test:
-    desc: Run all tests (unit)
+    desc: Run all tests
     cmds:
       - task: test:unit
+      - task: test:e2e
 
   test:unit:
     desc: Run unit tests
@@ -80,6 +83,29 @@ tasks:
     desc: Run unit tests with coverage report
     cmds:
       - go test -race -coverprofile=coverage.out ./...
+
+  test:e2e:
+    desc: Run end-to-end tests (starts dirctl daemon automatically)
+    deps:
+      - deps:dirctl
+    vars:
+      _DIRCTL: "{{ .ROOT_DIR }}/{{ .DIRCTL_BIN }}"
+    env:
+      DIRCTL_BIN: "{{ ._DIRCTL }}"
+    cmds:
+      - |
+        set -eu
+        cleanup() { "{{ ._DIRCTL }}" daemon stop >/dev/null 2>&1 || true; }
+        trap cleanup EXIT
+        "{{ ._DIRCTL }}" daemon stop >/dev/null 2>&1 || true
+        sleep 1
+        "{{ ._DIRCTL }}" daemon start >/dev/null 2>&1 &
+        for i in $(seq 1 30); do
+          "{{ ._DIRCTL }}" daemon status >/dev/null 2>&1 && break
+          sleep 1
+        done
+        "{{ ._DIRCTL }}" daemon status >/dev/null 2>&1 || { echo "ERROR: daemon failed to start" >&2; exit 1; }
+        cd tests/e2e && go test -v -count=1 -timeout 120s ./...
 
   check:
     desc: Run all checks (fmt, vet, lint, test) then build
@@ -103,6 +129,25 @@ tasks:
       - mkdir -p {{ .BIN_DIR }}
     status:
       - test -d {{ .BIN_DIR }}
+
+  deps:dirctl:
+    desc: Download dirctl binary
+    internal: true
+    deps:
+      - deps:bin-dir
+    vars:
+      DIRCTL_OS:
+        sh: uname -s | tr '[:upper:]' '[:lower:]'
+      DIRCTL_ARCH:
+        sh: uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/'
+    cmds:
+      - >-
+        curl -sSfL
+        "https://github.com/agntcy/dir/releases/download/v{{ .DIRCTL_VERSION }}/dirctl-{{ .DIRCTL_OS }}-{{ .DIRCTL_ARCH }}"
+        -o {{ .DIRCTL_BIN }}
+      - chmod +x {{ .DIRCTL_BIN }}
+    status:
+      - test -x {{ .DIRCTL_BIN }}
 
   deps:golangci-lint:
     desc: Install golangci-lint
