@@ -466,12 +466,14 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 // tryOIDCTokenRefresh attempts to silently refresh the OIDC token from the
 // local cache and reconnect with the new token. Returns true if the refresh
 // succeeded and the connection was re-established. Never wipes cached records.
-func (app *Gui) tryOIDCTokenRefresh(snap struct {
-	client    *dirclient.Client
-	cfg       *dirclient.Config
-	status    connStatus
-	activeDir config.DirectoryEntry
-}) bool {
+func (app *Gui) tryOIDCTokenRefresh(
+	snap struct {
+		client    *dirclient.Client
+		cfg       *dirclient.Config
+		status    connStatus
+		activeDir config.DirectoryEntry
+	},
+) bool {
 	token, err := dirclient.TryGetCachedToken()
 	if err != nil || token == "" {
 		return false

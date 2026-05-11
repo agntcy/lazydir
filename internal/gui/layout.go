@@ -463,11 +463,12 @@ func (app *Gui) updatePreviewDim(gui *gocui.Gui) {
 // popupRect computes popup frame coordinates (x0, y0, x1, y1) in the preview
 // (right) column, vertically anchored to the cursor row of sourcePanel. The
 // popup bottom is clamped so it does not exceed panelBottom.
-func popupRect(gui *gocui.Gui, sourcePanel string,
+func popupRect(
+	gui *gocui.Gui, sourcePanel string,
 	contentW, contentH int,
 	rightX0, maxX, panelBottom int,
-	dirY0, filtersY0, recordY0 int) (int, int, int, int) {
-
+	dirY0, filtersY0, recordY0 int,
+) (int, int, int, int) {
 	availW := maxX - 1 - rightX0
 	frameW := contentW + 2
 	if frameW > availW {
