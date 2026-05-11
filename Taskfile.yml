@@ -1,12 +1,19 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
 version: "3"
 
 vars:
-  BIN_DIR: .bin
-  BINARY: "{{.BIN_DIR}}/lazydir"
-  MODULE:
-    sh: go list -m
+  BIN_DIR: ./.bin
+  BINARY: "{{ .BIN_DIR }}/lazydir"
+  GOLANGCI_LINT_VERSION: "2.11.3"
+  GOLANGCI_LINT_BIN: "{{ .BIN_DIR }}/golangci-lint-{{ .GOLANGCI_LINT_VERSION }}"
 
 tasks:
+  default:
+    desc: Show available tasks
+    cmd: task --list
+
   deps:
     desc: Download Go module dependencies
     cmds:
@@ -19,20 +26,20 @@ tasks:
     desc: Build the lazydir binary into .bin/
     deps: [deps]
     cmds:
-      - mkdir -p {{.BIN_DIR}}
-      - go build -o {{.BINARY}} .
+      - mkdir -p {{ .BIN_DIR }}
+      - go build -o {{ .BINARY }} .
     sources:
       - "**/*.go"
       - go.mod
       - go.sum
     generates:
-      - "{{.BINARY}}"
+      - "{{ .BINARY }}"
 
   run:
     desc: Build and start lazydir for testing (pass extra args via CLI_ARGS)
     deps: [build]
     cmds:
-      - "{{.BINARY}} {{.CLI_ARGS}}"
+      - "{{ .BINARY }} {{ .CLI_ARGS }}"
 
   fmt:
     desc: Format Go source files
@@ -45,9 +52,19 @@ tasks:
       - go vet ./...
 
   lint:
-    desc: Run golangci-lint (install via https://golangci-lint.run/welcome/install)
+    desc: Run golangci-lint
+    deps:
+      - deps:golangci-lint
+    vars:
+      LINT_BIN: "{{ .ROOT_DIR }}/{{ .GOLANGCI_LINT_BIN }}"
     cmds:
-      - golangci-lint run ./...
+      - "{{ .LINT_BIN }} run ./..."
+
+  license:
+    desc: Run license check
+    cmds:
+      - licensei cache
+      - licensei check
 
   check:
     desc: Run all checks (fmt, vet, lint) then build
@@ -57,8 +74,33 @@ tasks:
       - task: lint
       - task: build
 
-  default:
-    desc: Show available tasks
+  deps:install:
+    desc: Install development dependencies and git hooks
     cmds:
-      - task --list
-    silent: true
+      - pre-commit install
+    status:
+      - test -f .git/hooks/pre-commit
+
+  deps:bin-dir:
+    internal: true
+    cmds:
+      - mkdir -p {{ .BIN_DIR }}
+    status:
+      - test -d {{ .BIN_DIR }}
+
+  deps:golangci-lint:
+    desc: Install golangci-lint
+    internal: true
+    deps:
+      - deps:bin-dir
+    cmds:
+      - curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b {{ .BIN_DIR }} v{{ .GOLANGCI_LINT_VERSION }}
+      - mv {{ .BIN_DIR }}/golangci-lint {{ .GOLANGCI_LINT_BIN }}
+      - chmod +x {{ .GOLANGCI_LINT_BIN }}
+    status:
+      - test -x {{ .GOLANGCI_LINT_BIN }}
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf {{ .BIN_DIR }}

@@ -1,0 +1,81 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigestsToSemver",
+    ":semanticCommitTypeAll(chore)",
+    ":dependencyDashboard"
+  ],
+  "configMigration": true,
+  "dependencyDashboardAutoclose": true,
+  "dependencyDashboardLabels": ["dependencies"],
+  "dependencyDashboardOSVVulnerabilitySummary": "all",
+  "enabled": true,
+  "minimumReleaseAge": "3 days",
+  "schedule": ["before 6am on Monday"],
+  "enabledManagers": [
+    "dockerfile",
+    "github-actions",
+    "gomod"
+  ],
+  "labels": ["dependencies"],
+  "osvVulnerabilityAlerts": true,
+  "lockFileMaintenance": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["major"],
+      "enabled": false,
+      "description": ["Ignore major dependency updates."]
+    },
+    {
+      "matchCategories": ["golang"],
+      "addLabels": ["go"],
+      "description": ["Add go label to PRs which bumps go dependencies."]
+    },
+    {
+      "groupName": "Go patches",
+      "groupSlug": "go-patches",
+      "matchDatasources": ["go"],
+      "matchUpdateTypes": ["patch"],
+      "description": ["Group Go dependency patch updates in single PR."]
+    },
+    {
+      "groupName": "Github Actions",
+      "groupSlug": "github-actions",
+      "matchDatasources": ["github-tags"],
+      "addLabels": ["ci"],
+      "description": [
+        "Add ci label to PRs which are related to Github Actions.",
+        "Group CI dependency updates in single PR."
+      ]
+    },
+    {
+      "matchJsonata": [
+        "$exists(vulnerabilityFixVersion) or isVulnerabilityAlert = true"
+      ],
+      "enabled": true,
+      "description": [
+        "Always allow vulnerability/security fixes, even when other rules disable majors or specific dependencies."
+      ]
+    }
+  ],
+  "postUpdateOptions": [
+    "gomodTidy",
+    "gomodUpdateImportPaths"
+  ],
+  "prConcurrentLimit": 20,
+  "prHourlyLimit": 10,
+  "printConfig": false,
+  "rebaseWhen": "behind-base-branch",
+  "reviewersFromCodeOwners": true,
+  "semanticCommits": "enabled",
+  "timezone": "Etc/UTC",
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"],
+    "minimumReleaseAge": null,
+    "schedule": ["at any time"]
+  }
+}

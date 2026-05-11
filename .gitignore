@@ -33,6 +33,9 @@ go.work.sum
 # Task checksum cache
 .task/
 
+# License cache
+.licensei.cache
+
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/

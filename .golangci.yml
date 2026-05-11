@@ -1,10 +1,82 @@
-version: "2"
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
 
+version: "2"
 linters:
-  default: standard
+  default: all
+  disable:
+    - contextcheck
+    - copyloopvar
+    - cyclop
+    - depguard
+    - embeddedstructfieldcheck
+    - err113
+    - exhaustive
+    - exhaustruct
+    - funcorder
+    - funlen
+    - gocognit
+    - gocyclo
+    - gochecknoglobals
+    - gochecknoinits
+    - gocritic
+    - godoclint
+    - godot
+    - godox
+    - gomoddirectives
+    - gosec
+    - inamedparam
+    - intrange
+    - ireturn
+    - lll
+    - maintidx
+    - mnd
+    - modernize
+    - nestif
+    - nilerr
+    - nlreturn
+    - noctx
+    - noinlineerr
+    - nolintlint
+    - nonamedreturns
+    - paralleltest
+    - predeclared
+    - perfsprint
+    - prealloc
+    - revive
+    - tagliatelle
+    - testpackage
+    - unparam
+    - varnamelen
+    - wrapcheck
+    - wsl
+    - wsl_v5
+  settings:
+    goheader:
+      values:
+        regexp:
+          YEAR: 202[4-6]
+      template: |-
+        Copyright AGNTCY Contributors (https://github.com/agntcy)
+        SPDX-License-Identifier: Apache-2.0
   exclusions:
+    generated: lax
     presets:
+      - comments
+      - common-false-positives
+      - legacy
       - std-error-handling
-    rules:
-      - linters: [errcheck]
-        text: "Error return value of `fmt\\.Fprint"
+    paths:
+      - third_party$
+      - builtin$
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
