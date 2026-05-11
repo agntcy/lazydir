@@ -1,3 +1,6 @@
+// Copyright AGNTCY Contributors (https://github.com/agntcy)
+// SPDX-License-Identifier: Apache-2.0
+
 package gui
 
 import (
@@ -5,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/akijakya/lazydir/internal/config"
+	"github.com/agntcy/lazydir/internal/config"
 	"github.com/jesseduffield/gocui"
 )
 

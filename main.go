@@ -1,13 +1,16 @@
+// Copyright AGNTCY Contributors (https://github.com/agntcy)
+// SPDX-License-Identifier: Apache-2.0
+
 package main
 
 import (
 	"fmt"
 	"os"
 
-	"github.com/akijakya/lazydir/internal/config"
-	"github.com/akijakya/lazydir/internal/dirclient"
-	"github.com/akijakya/lazydir/internal/gui"
-	"github.com/akijakya/lazydir/internal/oasf"
+	"github.com/agntcy/lazydir/internal/config"
+	"github.com/agntcy/lazydir/internal/dirclient"
+	"github.com/agntcy/lazydir/internal/gui"
+	"github.com/agntcy/lazydir/internal/oasf"
 )
 
 func main() {

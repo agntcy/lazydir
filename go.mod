@@ -1,4 +1,4 @@
-module github.com/akijakya/lazydir
+module github.com/agntcy/lazydir
 
 go 1.26.2
 
