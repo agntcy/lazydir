@@ -1,6 +1,7 @@
 # lazydir
 
 [![CI](https://github.com/agntcy/lazydir/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agntcy/lazydir/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/agntcy/lazydir/branch/main/graph/badge.svg)](https://codecov.io/gh/agntcy/lazydir)
 [![License](https://img.shields.io/github/license/agntcy/lazydir)](./LICENSE.md)
 
 A terminal user interface (TUI) for browsing and managing records in [AGNTCY Directory](https://github.com/agntcy/dir) instances — inspired by [lazygit](https://github.com/jesseduffield/lazygit) and [lazydocker](https://github.com/jesseduffield/lazydocker).
@@ -86,7 +87,11 @@ task build        # downloads deps and builds into .bin/lazydir
 | `task fmt` | Format Go source files (`gofmt -s`) |
 | `task vet` | Run `go vet` |
 | `task lint` | Run `golangci-lint` (must be [installed](https://golangci-lint.run/welcome/install/)) |
-| `task check` | Run fmt + vet + lint + build in one step |
+| `task test:unit` | Run unit/integration tests in `internal/*` (includes mocked OASF coverage) |
+| `task test:e2e` | Run end-to-end tests against a local DIR daemon |
+| `task check` | Run fmt + vet + lint + test:unit + test:e2e + build in one step |
+
+OASF behavior is validated in the `internal/oasf` test suite using a mocked server.
 
 ## Usage
 
