@@ -1,5 +1,8 @@
 # lazydir
 
+[![CI](https://github.com/agntcy/lazydir/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agntcy/lazydir/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/agntcy/lazydir)](./LICENSE.md)
+
 A terminal user interface (TUI) for browsing and managing records in [AGNTCY Directory](https://github.com/agntcy/dir) instances — inspired by [lazygit](https://github.com/jesseduffield/lazygit) and [lazydocker](https://github.com/jesseduffield/lazydocker).
 
 ## Overview
@@ -218,4 +221,4 @@ Pull requests and issues are welcome. Please open an issue first to discuss sign
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE.md).

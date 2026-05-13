@@ -1,40 +1,146 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
+---
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
+  packages: write
+  id-token: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  ci:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.result.outputs.code }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Check for code changes
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Dockerfile'
+              - '.golangci.yml'
+              - '.github/workflows/**'
+
+      - name: Determine result
+        id: result
+        run: |
+          echo "code=${{ steps.filter.outputs.code }}" >> "$GITHUB_OUTPUT"
+
+  lint:
+    name: Lint
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: actions/setup-go@v5
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+          cache: true
 
-      - name: Check formatting
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "::error::Files not formatted with gofmt:"
-            echo "$unformatted"
-            exit 1
-          fi
+      - name: Install Task
+        uses: go-task/setup-task@3be4020d41929789a01026e0e427a4321ce0ad44 # v2.0.0
 
-      - name: Vet
-        run: go vet ./...
+      - name: Run linters
+        run: task lint
 
-      - name: Lint
-        uses: golangci/golangci-lint-action@v7
+  license:
+    name: License
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          version: v2.10
+          go-version-file: go.mod
+          cache: true
 
-      - name: Build
-        run: go build ./...
+      - name: Setup license cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .licensei.cache
+          key: license-cache-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            license-cache-${{ runner.os }}-
+
+      - name: Install licensei
+        run: go install github.com/goph/licensei/cmd/licensei@latest
+
+      - name: License cache
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: licensei cache
+
+      - name: License check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: licensei check
+
+  build:
+    name: Build
+    needs:
+      - lint
+      - license
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Task
+        uses: go-task/setup-task@3be4020d41929789a01026e0e427a4321ce0ad44 # v2.0.0
+
+      - name: Build binary
+        run: task build
+
+  success:
+    name: Success
+    if: ${{ !cancelled() && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'failure') }}
+    needs:
+      - changes
+      - lint
+      - license
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Echo Success
+        run: |
+          if [[ "${{ needs.changes.outputs.code }}" == "true" ]]; then
+            echo "::notice::Success! All code checks passed."
+          else
+            echo "::notice::Success! No code changes detected."
+          fi

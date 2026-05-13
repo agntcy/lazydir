@@ -153,8 +153,10 @@ func (q Query) toRPC() *searchv1.RecordQuery {
 	return &searchv1.RecordQuery{Type: t, Value: q.Value}
 }
 
-const defaultFirstPageSize = 100
-const defaultBatchSize = 50
+const (
+	defaultFirstPageSize = 100
+	defaultBatchSize     = 50
+)
 
 func (c *Client) firstPageSize() int {
 	if c.FirstPageSize > 0 {
