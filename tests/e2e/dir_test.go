@@ -5,6 +5,8 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -64,6 +66,44 @@ func requireDaemon(t *testing.T) string {
 	return addr
 }
 
+func seedRecord(t *testing.T, ctx context.Context, addr, dirctl string) (string, string) {
+	t.Helper()
+
+	name := fmt.Sprintf("e2e-test-agent-%d", time.Now().UnixNano())
+	record := map[string]any{
+		"name":           name,
+		"version":        "0.0.1-test",
+		"schema_version": "1.0.0",
+		"description":    "lazydir e2e test record",
+		"authors":        []string{"lazydir-e2e"},
+		"skills": []map[string]string{
+			{"name": "natural_language_processing/analytical_reasoning"},
+		},
+		"created_at": "2025-01-01T00:00:00Z",
+	}
+
+	payload, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("json marshal record: %v", err)
+	}
+
+	cmd := exec.CommandContext(ctx, dirctl,
+		"push", "--server-addr", addr, "--stdin", "--output", "raw")
+	cmd.Stdin = strings.NewReader(string(payload))
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("dirctl push failed: %v\noutput: %s", err, out)
+	}
+
+	cid := strings.TrimSpace(string(out))
+	if cid == "" {
+		t.Fatal("dirctl push returned empty CID")
+	}
+
+	return cid, name
+}
+
 func TestDir_Ping(t *testing.T) {
 	addr := requireDaemon(t)
 
@@ -83,9 +123,12 @@ func TestDir_Ping(t *testing.T) {
 
 func TestDir_Stream_NoFilters(t *testing.T) {
 	addr := requireDaemon(t)
+	dirctl := dirctlBin(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
+
+	cid, _ := seedRecord(t, ctx, addr, dirctl)
 
 	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
 	if err != nil {
@@ -119,8 +162,31 @@ func TestDir_Stream_NoFilters(t *testing.T) {
 	}
 
 	total := len(firstPage)
+	containsSeedCID := false
+	for _, r := range firstPage {
+		if r.CID == cid {
+			containsSeedCID = true
+			break
+		}
+	}
 	for _, b := range batches {
 		total += len(b)
+		if containsSeedCID {
+			continue
+		}
+		for _, r := range b {
+			if r.CID == cid {
+				containsSeedCID = true
+				break
+			}
+		}
+	}
+
+	if total == 0 {
+		t.Fatal("expected at least one streamed record")
+	}
+	if !containsSeedCID {
+		t.Fatalf("seeded record CID %s not found in stream", cid)
 	}
 
 	t.Logf("streamed %d records (first page: %d, batches: %d)", total, len(firstPage), len(batches))
@@ -133,29 +199,7 @@ func TestDir_PushAndPull(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	record := `{
-		"name": "e2e-test-agent",
-		"version": "0.0.1-test",
-		"schema_version": "1.0.0",
-		"description": "lazydir e2e test record",
-		"authors": ["lazydir-e2e"],
-		"skills": [{"name": "natural_language_processing/analytical_reasoning"}],
-		"created_at": "2025-01-01T00:00:00Z"
-	}`
-
-	cmd := exec.CommandContext(ctx, dirctl,
-		"push", "--server-addr", addr, "--stdin", "--output", "raw")
-	cmd.Stdin = strings.NewReader(record)
-
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("dirctl push failed: %v\noutput: %s", err, out)
-	}
-
-	cid := strings.TrimSpace(string(out))
-	if cid == "" {
-		t.Fatal("dirctl push returned empty CID")
-	}
+	cid, _ := seedRecord(t, ctx, addr, dirctl)
 
 	t.Logf("pushed record, CID: %s", cid)
 
@@ -172,6 +216,13 @@ func TestDir_PushAndPull(t *testing.T) {
 
 	if jsonStr == "" || jsonStr == "{}" {
 		t.Errorf("PullJSON returned empty record for CID %s", cid)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(jsonStr), &payload); err != nil {
+		t.Fatalf("PullJSON(%s) returned invalid JSON: %v", cid, err)
+	}
+	if _, ok := payload["name"]; !ok {
+		t.Fatalf("PullJSON(%s) missing expected name field", cid)
 	}
 
 	t.Logf("pulled record JSON (first 200 chars): %.200s", jsonStr)
