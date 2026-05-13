@@ -1,5 +1,6 @@
 # lazydir
 
+![GitHub Release](https://img.shields.io/github/v/release/agntcy/lazydir)
 [![CI](https://github.com/agntcy/lazydir/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agntcy/lazydir/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/agntcy/lazydir/branch/main/graph/badge.svg)](https://codecov.io/gh/agntcy/lazydir)
 [![License](https://img.shields.io/github/license/agntcy/lazydir)](./LICENSE.md)
@@ -57,11 +58,22 @@ dirctl daemon start
 
 ## Installation
 
+### Homebrew
+
+```bash
+brew tap agntcy/lazydir https://github.com/agntcy/lazydir
+brew install lazydir
+```
+
+### Go install
+
 ```bash
 go install github.com/agntcy/lazydir@latest
 ```
 
-Or build from source using `go build`:
+### Build from source
+
+Using `go build`:
 
 ```bash
 git clone https://github.com/agntcy/lazydir

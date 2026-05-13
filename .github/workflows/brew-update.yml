@@ -1,0 +1,117 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
+---
+name: Brew formula update
+
+on:
+  release:
+    types: [released]
+
+  workflow_dispatch:
+    inputs:
+      latest_tag_override:
+        description: "Latest tag override for testing"
+        required: false
+        type: string
+        default: ""
+      dry-run:
+        description: "Dry run mode (skip PR creation)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  formula-update:
+    name: Update Formula
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.AGNTCY_BUILD_BOT_GH_TOKEN }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Download latest release info
+        id: release-infos
+        run: |
+          if [ -n "${{ inputs.latest_tag_override }}" ]; then
+            LATEST_VERSION="${{ inputs.latest_tag_override }}"
+          else
+            LATEST_VERSION=$(gh release view --json tagName --jq '.tagName')
+          fi
+
+          echo "LATEST_VERSION=$LATEST_VERSION" >> $GITHUB_OUTPUT
+
+          while IFS=$'\t' read -r name hash; do
+            case "$name" in
+              lazydir-darwin-arm64) echo "HASH_DARWIN_ARM=$hash" >> $GITHUB_OUTPUT ;;
+              lazydir-darwin-amd64) echo "HASH_DARWIN_AMD=$hash" >> $GITHUB_OUTPUT ;;
+              lazydir-linux-arm64)  echo "HASH_LINUX_ARM=$hash" >> $GITHUB_OUTPUT ;;
+              lazydir-linux-amd64)  echo "HASH_LINUX_AMD=$hash" >> $GITHUB_OUTPUT ;;
+            esac
+          done < <(
+            gh release view "$LATEST_VERSION" --json assets \
+              --jq '.assets[] | select(.name | startswith("lazydir-")) | "\(.name)\t\(.digest | sub("^sha256:"; ""))"'
+          )
+
+      - name: Update Brew formula
+        id: brew-formula
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git push origin --delete chore/brew-formula-update || true
+          git checkout -B chore/brew-formula-update origin/main
+
+          FORMULA=HomebrewFormula/lazydir.rb
+
+          sed -i "s/version \"v*.*.*\"/version \"${{ steps.release-infos.outputs.LATEST_VERSION }}\"/" "$FORMULA"
+
+          sed -i "/url \".*\/lazydir-darwin-arm64\"/ {N;s/sha256 \".*\"/sha256 \"${{ steps.release-infos.outputs.HASH_DARWIN_ARM }}\"/}" "$FORMULA"
+          sed -i "/url \".*\/lazydir-darwin-amd64\"/ {N;s/sha256 \".*\"/sha256 \"${{ steps.release-infos.outputs.HASH_DARWIN_AMD }}\"/}" "$FORMULA"
+          sed -i "/url \".*\/lazydir-linux-arm64\"/ {N;s/sha256 \".*\"/sha256 \"${{ steps.release-infos.outputs.HASH_LINUX_ARM }}\"/}" "$FORMULA"
+          sed -i "/url \".*\/lazydir-linux-amd64\"/ {N;s/sha256 \".*\"/sha256 \"${{ steps.release-infos.outputs.HASH_LINUX_AMD }}\"/}" "$FORMULA"
+
+          DIFF_FOUND=0
+          if ! git diff --exit-code; then
+            DIFF_FOUND=1
+          fi
+
+          echo "DIFF_FOUND=$DIFF_FOUND" >> $GITHUB_OUTPUT
+
+          if [ $DIFF_FOUND -eq 1 ]; then
+            git add "$FORMULA"
+            git commit --all -m "chore: update brew formula version" --signoff
+            git push --set-upstream origin chore/brew-formula-update
+          fi
+
+      - name: Test new formula
+        if: ${{ steps.brew-formula.outputs.DIFF_FOUND == 1 }}
+        run: |
+          apt update && apt install curl git -y
+
+          NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+
+          brew tap-new --no-git agntcy/lazydir-test
+
+          FORMULA_DIR="$(brew --repository)/Library/Taps/agntcy/homebrew-lazydir-test/Formula/"
+          cp ./HomebrewFormula/lazydir.rb "$FORMULA_DIR"
+
+          brew install agntcy/lazydir-test/lazydir --verbose
+
+          lazydir --version
+
+      - name: Create PR
+        if: ${{ steps.brew-formula.outputs.DIFF_FOUND == 1 && inputs.dry-run != true }}
+        run: |
+          gh pr create \
+            --title "chore(brew): update formula to ${{ steps.release-infos.outputs.LATEST_VERSION }}" \
+            --body "Automated PR created by brew-update workflow."
