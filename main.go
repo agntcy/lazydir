@@ -13,10 +13,19 @@ import (
 	"github.com/agntcy/lazydir/internal/oasf"
 )
 
+// Set at build time via -ldflags.
+var version = "dev"
+
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
-		printUsage()
-		os.Exit(0)
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--help", "-h":
+			printUsage()
+			os.Exit(0)
+		case "--version", "-v":
+			fmt.Fprintln(os.Stdout, "lazydir", version)
+			os.Exit(0)
+		}
 	}
 
 	userCfg := config.Load()
@@ -86,7 +95,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `lazydir - TUI for AGNTCY Directory
 
 Usage:
-  lazydir [-h|--help]
+  lazydir [-h|--help] [-v|--version]
 
 All configuration is read from ~/.config/lazydir/config.yml (or config.yaml).
 See config.example.yml for a complete annotated template.

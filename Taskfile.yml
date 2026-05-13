@@ -9,6 +9,9 @@ vars:
   GOLANGCI_LINT_VERSION: "2.11.3"
   GOLANGCI_LINT_BIN: "{{ .BIN_DIR }}/golangci-lint-{{ .GOLANGCI_LINT_VERSION }}"
 
+  VERSION_LDFLAGS: >-
+    -X main.version={{.VERSION | default "dev"}}
+
 tasks:
   default:
     desc: Show available tasks
@@ -34,6 +37,33 @@ tasks:
       - go.sum
     generates:
       - "{{ .BINARY }}"
+
+  compile:
+    desc: Compile a release binary for a specific OS/arch
+    deps: [deps]
+    vars:
+      GOOS: "{{ .GOOS | default OS }}"
+      GOARCH: "{{ .GOARCH | default ARCH }}"
+      BINARY_NAME: '{{ .BINARY_NAME | default "lazydir" }}'
+      OUT_BINARY: "{{ .BIN_DIR }}/{{ .BINARY_NAME }}"
+      LDFLAGS: '-s -w -extldflags -static {{ .VERSION_LDFLAGS }}'
+    cmds:
+      - mkdir -p {{ .BIN_DIR }}
+      - CGO_ENABLED=0 GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -ldflags="{{.LDFLAGS}}" -o "{{.OUT_BINARY}}" .
+
+  compile:all:
+    desc: Compile release binaries for all supported platforms
+    cmds:
+      - for:
+          matrix:
+            OS: [linux, darwin, windows]
+            ARCH: [amd64, arm64]
+        cmd: |
+          if [ "{{.ITEM.OS}}" = "windows" ] && [ "{{.ITEM.ARCH}}" = "arm64" ]; then
+            echo "Skipping unsupported platform: {{.ITEM.OS}}/{{.ITEM.ARCH}}"
+          else
+            GOOS={{.ITEM.OS}} GOARCH={{.ITEM.ARCH}} BINARY_NAME=lazydir-{{.ITEM.OS}}-{{.ITEM.ARCH}} task compile
+          fi
 
   run:
     desc: Build and start lazydir for testing (pass extra args via CLI_ARGS)
