@@ -108,12 +108,13 @@ tasks:
         cd tests/e2e && go test -v -count=1 -timeout 120s ./...
 
   check:
-    desc: Run all checks (fmt, vet, lint, test) then build
+    desc: Run all checks (fmt, vet, lint, unit+e2e tests) then build
     cmds:
       - task: fmt
       - task: vet
       - task: lint
       - task: test:unit
+      - task: test:e2e
       - task: build
 
   deps:install:
@@ -140,14 +141,51 @@ tasks:
         sh: uname -s | tr '[:upper:]' '[:lower:]'
       DIRCTL_ARCH:
         sh: uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/'
+      DIRCTL_SHA256:
+        sh: |
+          set -eu
+          case "{{ .DIRCTL_OS }}-{{ .DIRCTL_ARCH }}" in
+            darwin-amd64) echo "edca017b72bd6f6d6169413f2e95fe5b6f5e42b218f52de25e64346020e09a31" ;;
+            darwin-arm64) echo "f33ab1ef9ae600dc904c454bf8374acea00561abac5b3531e0045a3d124ecc14" ;;
+            linux-amd64) echo "311f6d56c0497282a922844fc7f7053204fec125297931de69f8b26e9ed8ee6d" ;;
+            linux-arm64) echo "b948525d729a80ff7101c77a3db69c4e537e34d392f000d8c7b5ed4f0a805776" ;;
+            windows-amd64) echo "4f3e7bcccbbbbf49ebd0b9c72a55d23ca17d8f6f2dbd595a979f4cd6929259c2" ;;
+            *)
+              echo "Unsupported dirctl target: {{ .DIRCTL_OS }}-{{ .DIRCTL_ARCH }}" >&2
+              exit 1
+              ;;
+          esac
     cmds:
       - >-
         curl -sSfL
         "https://github.com/agntcy/dir/releases/download/v{{ .DIRCTL_VERSION }}/dirctl-{{ .DIRCTL_OS }}-{{ .DIRCTL_ARCH }}"
-        -o {{ .DIRCTL_BIN }}
-      - chmod +x {{ .DIRCTL_BIN }}
+        -o "{{ .DIRCTL_BIN }}"
+      - |
+        set -eu
+        if command -v sha256sum >/dev/null 2>&1; then
+          actual="$(
+            sha256sum "{{ .DIRCTL_BIN }}" | awk '{print $1}'
+          )"
+        else
+          actual="$(
+            shasum -a 256 "{{ .DIRCTL_BIN }}" | awk '{print $1}'
+          )"
+        fi
+        if [ "$actual" != "{{ .DIRCTL_SHA256 }}" ]; then
+          rm -f "{{ .DIRCTL_BIN }}"
+          echo "ERROR: dirctl checksum mismatch for {{ .DIRCTL_OS }}-{{ .DIRCTL_ARCH }}" >&2
+          echo "expected {{ .DIRCTL_SHA256 }}, got $actual" >&2
+          exit 1
+        fi
+      - chmod +x "{{ .DIRCTL_BIN }}"
     status:
-      - test -x {{ .DIRCTL_BIN }}
+      - |
+        set -eu
+        if command -v sha256sum >/dev/null 2>&1; then
+          [ "$(sha256sum "{{ .DIRCTL_BIN }}" | awk '{print $1}')" = "{{ .DIRCTL_SHA256 }}" ]
+        else
+          [ "$(shasum -a 256 "{{ .DIRCTL_BIN }}" | awk '{print $1}')" = "{{ .DIRCTL_SHA256 }}" ]
+        fi
 
   deps:golangci-lint:
     desc: Install golangci-lint

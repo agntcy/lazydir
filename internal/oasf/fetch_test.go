@@ -35,7 +35,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 			ID:          2,
 			Name:        "code_generation",
 			Caption:     "Code Generation",
-			Description: "Code generation skills.",
+			Description: "",
 		},
 	}
 
@@ -186,12 +186,11 @@ func TestFetch_EmptyDescription(t *testing.T) {
 	srv := newTestServer(t)
 	c := newTestClient(t, srv.URL)
 
-	// Override test server to return item with empty description.
 	info, err := c.Fetch(context.Background(), ClassTypeSkill, "code_generation", "")
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	if info.Description != "Code generation skills." {
+	if info.Description != "No description available." {
 		t.Errorf("Description = %q", info.Description)
 	}
 }

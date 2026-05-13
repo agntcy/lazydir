@@ -89,7 +89,7 @@ task build        # downloads deps and builds into .bin/lazydir
 | `task lint` | Run `golangci-lint` (must be [installed](https://golangci-lint.run/welcome/install/)) |
 | `task test:unit` | Run unit/integration tests in `internal/*` (includes mocked OASF coverage) |
 | `task test:e2e` | Run end-to-end tests against a local DIR daemon |
-| `task check` | Run fmt + vet + lint + build in one step |
+| `task check` | Run fmt + vet + lint + test:unit + test:e2e + build in one step |
 
 OASF behavior is validated in the `internal/oasf` test suite using a mocked server.
 
