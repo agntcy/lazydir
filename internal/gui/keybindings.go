@@ -577,11 +577,18 @@ func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
 		app.autoPreviewRecord(g)
 		return nil
 	}
-	cid := row.record.CID
-	if cid == "" {
+	rec := row.record
+	if rec.CID == "" {
 		return nil
 	}
-	go app.pullRecord(cid)
+	subtitle := rec.Name
+	if subtitle == "" {
+		subtitle = rec.CID
+	}
+	if rec.Version != "" {
+		subtitle += " " + rec.Version
+	}
+	go app.pullRecord(subtitle, rec.CID)
 	return nil
 }
 
@@ -1266,7 +1273,7 @@ func (app *Gui) refresh(g *gocui.Gui, v *gocui.View) error {
 
 // ── Async actions ─────────────────────────────────────────────────────────────
 
-func (app *Gui) pullRecord(cid string) {
+func (app *Gui) pullRecord(subtitle, cid string) {
 	ctx := context.Background()
 	jsonStr, err := app.state.client.PullJSON(ctx, cid)
 	app.g.Update(func(g *gocui.Gui) error {
@@ -1274,7 +1281,7 @@ func (app *Gui) pullRecord(cid string) {
 			app.renderPreviewText(g, "Error", err.Error())
 			return nil
 		}
-		app.renderPreviewJSON(g, cid, jsonStr)
+		app.renderPreviewJSON(g, subtitle, jsonStr)
 		return nil
 	})
 }
@@ -1288,25 +1295,32 @@ func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
 		return
 	}
 	row := rows[app.state.recordCursor]
-	var cid string
+	var rec *dirclient.RecordSummary
 	if row.record != nil {
-		cid = row.record.CID
+		rec = row.record
 	} else {
-		cid = app.firstCIDInGroup(row.groupName)
+		rec = app.firstRecordInGroup(row.groupName)
 	}
-	if cid == "" {
+	if rec == nil || rec.CID == "" {
 		return
+	}
+	subtitle := rec.Name
+	if subtitle == "" {
+		subtitle = rec.CID
+	}
+	if rec.Version != "" {
+		subtitle += " " + rec.Version
 	}
 	if pv, err := g.View(viewPreview); err == nil {
 		_ = pv.SetOrigin(0, 0)
 	}
-	go app.pullRecord(cid)
+	go app.pullRecord(subtitle, rec.CID)
 }
 
-// firstCIDInGroup returns the CID of the latest-version record in the named
-// group. When expanded, the first child row is already the latest (sorted).
+// firstRecordInGroup returns the latest-version record in the named group.
+// When expanded, the first child row is already the latest (sorted).
 // When collapsed, it scans filteredRecords and picks the highest version.
-func (app *Gui) firstCIDInGroup(name string) string {
+func (app *Gui) firstRecordInGroup(name string) *dirclient.RecordSummary {
 	if app.state.recordGroupExpanded[name] {
 		found := false
 		for _, row := range app.state.recordDisplayRows {
@@ -1316,7 +1330,7 @@ func (app *Gui) firstCIDInGroup(name string) string {
 			}
 			if found {
 				if row.record != nil {
-					return row.record.CID
+					return row.record
 				}
 				break
 			}
@@ -1335,10 +1349,7 @@ func (app *Gui) firstCIDInGroup(name string) string {
 			best = r
 		}
 	}
-	if best != nil {
-		return best.CID
-	}
-	return ""
+	return best
 }
 
 // filterToggleInfo opens/closes the info popup for the currently highlighted
