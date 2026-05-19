@@ -169,6 +169,9 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Wrap = true
 		v.FrameRunes = roundedFrame
 		v.CanScrollPastBottom = true
+		v.Highlight = true
+		v.SelBgColor = g.theme.SelectedRowBg
+		v.SelFgColor = gocui.ColorDefault
 	}
 
 	// Bottom-left: options bar — properties set every layout call (no frame)

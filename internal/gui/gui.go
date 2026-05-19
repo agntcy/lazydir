@@ -140,8 +140,10 @@ type appState struct {
 
 	// preview dimming: stored content so we can toggle dim without refetching
 	previewSubtitle string
-	previewContent  string // rendered (ANSI-colored) content
-	previewDimmed   bool   // true when the preview is currently showing dimmed
+	previewContent  string    // rendered (ANSI-colored) content
+	previewDimmed   bool      // true when the preview is currently showing dimmed
+	previewTree     *jsonTree // collapsible JSON tree for the preview panel
+	previewCursor   int       // cursor line in the preview panel (for expand/collapse)
 }
 
 // Config bundles everything needed to start the GUI.
@@ -1096,6 +1098,7 @@ func (app *Gui) fetchClassEntries(schemaVersion string) {
 			}
 			app.state.classEntries[ct] = entries
 			app.renderFiltersView(g)
+			app.refreshPreviewTree(g)
 			return nil
 		})
 	}

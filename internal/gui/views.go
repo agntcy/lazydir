@@ -86,9 +86,9 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 		}
 
 		if r.option == "" {
-			triangle := "▶"
+			triangle := triangleCollapsed
 			if fs.expanded[r.category] || fs.filterQuery != "" {
-				triangle = "▼"
+				triangle = triangleExpanded
 			}
 			fmt.Fprintf(v, " %s %s\n", triangle, r.category.title())
 		} else {
@@ -184,9 +184,9 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		}
 
 		if row.record == nil {
-			triangle := "▶"
+			triangle := triangleCollapsed
 			if app.state.recordGroupExpanded[row.groupName] {
-				triangle = "▼"
+				triangle = triangleExpanded
 			}
 			name := row.groupName
 			if len(name) > nameW-2 {
@@ -228,19 +228,47 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 func (app *Gui) renderPreviewText(g *gocui.Gui, subtitle, content string) {
 	app.state.previewSubtitle = subtitle
 	app.state.previewContent = content
+	app.state.previewTree = nil
+	app.state.previewCursor = 0
+	app.setPreviewWrap(g, true)
 	app.writePreview(g, true)
 }
 
-// renderPreviewJSON sets syntax-highlighted JSON in the preview panel.
+// renderPreviewJSON parses JSON into a collapsible tree (root expanded by
+// default), syntax-highlights the visible lines, and writes them to the
+// preview panel.
 func (app *Gui) renderPreviewJSON(g *gocui.Gui, subtitle, jsonStr string) {
 	app.state.previewSubtitle = subtitle
-	app.state.previewContent = highlightJSON(jsonStr)
+	tree, err := parseJSONTree(jsonStr)
+	if err != nil {
+		app.state.previewTree = nil
+		app.state.previewContent = highlightJSON(jsonStr)
+		app.setPreviewWrap(g, true)
+	} else {
+		app.state.previewTree = tree
+		app.state.previewContent = app.highlightTree(tree)
+		app.setPreviewWrap(g, false)
+	}
+	app.state.previewCursor = 0
 	app.writePreview(g, true)
+}
+
+// setPreviewWrap enables or disables line wrapping on the preview view.
+// Wrapping is on for plain text and off for JSON trees so that the gocui
+// cursor row always maps 1:1 to the logical tree line index.
+func (app *Gui) setPreviewWrap(g *gocui.Gui, on bool) {
+	v, err := g.View(viewPreview)
+	if err != nil {
+		return
+	}
+	v.Wrap = on
 }
 
 // writePreview renders the stored preview content into the preview view.
 // When a right-column popup is active the content is dimmed so the popup
 // stands out visually. If resetScroll is true the view scrolls back to top.
+// The gocui cursor is positioned on previewCursor so the highlight row is
+// always visible regardless of which panel has focus.
 func (app *Gui) writePreview(g *gocui.Gui, resetScroll bool) {
 	v, err := g.View(viewPreview)
 	if err != nil {
@@ -268,6 +296,144 @@ func (app *Gui) writePreview(g *gocui.Gui, resetScroll bool) {
 		content = dimText(content, app.theme.DimCode)
 	}
 	fmt.Fprint(v, content)
+
+	if app.state.previewTree != nil {
+		app.positionPreviewCursor(v)
+	}
+}
+
+// positionPreviewCursor sets the gocui view cursor on the preview panel to
+// match previewCursor, scrolling the origin if needed. This makes the
+// highlight row visible even when the preview panel is not focused.
+func (app *Gui) positionPreviewCursor(v *gocui.View) {
+	cursor := app.state.previewCursor
+	_, viewH := v.Size()
+	_, oy := v.Origin()
+
+	if cursor < oy {
+		_ = v.SetOrigin(0, cursor)
+		oy = cursor
+	} else if cursor >= oy+viewH {
+		oy = cursor - viewH + 1
+		_ = v.SetOrigin(0, oy)
+	}
+	_ = v.SetCursor(0, cursor-oy)
+}
+
+// refreshPreviewTree re-renders the JSON tree after a toggle and writes the
+// result to the preview view, preserving the current scroll position.
+func (app *Gui) refreshPreviewTree(g *gocui.Gui) {
+	tree := app.state.previewTree
+	if tree == nil {
+		return
+	}
+	app.state.previewContent = app.highlightTree(tree)
+	app.writePreview(g, false)
+}
+
+// treeRenderCtx builds the render context for the JSON tree from the current
+// app state, providing OASF class entries and theme for caption enrichment.
+func (app *Gui) treeRenderCtx() *jsonRenderCtx {
+	return &jsonRenderCtx{
+		classEntries: app.state.classEntries,
+		theme:        &app.theme,
+	}
+}
+
+// highlightTree renders a JSON tree with syntax highlighting. Lines that
+// contain tree indicators (▶/▼) or OASF captions with ANSI codes are
+// highlighted per-segment so the indicators and captions keep their intended
+// colors instead of being painted red by the JSON lexer.
+func (app *Gui) highlightTree(tree *jsonTree) string {
+	raw := tree.renderLines(app.treeRenderCtx())
+	var sb strings.Builder
+	for _, line := range strings.Split(raw, "\n") {
+		sb.WriteString(highlightTreeLine(line))
+		sb.WriteByte('\n')
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// highlightTreeLine highlights a single tree line. Lines that contain
+// triangle indicators or pre-colored brackets (ANSI escapes) are split
+// so chroma only processes the plain JSON key/value portions, while
+// triangles, colored brackets, and OASF captions keep their styling.
+func highlightTreeLine(line string) string {
+	hasTriangle := false
+	for _, tri := range []string{triangleCollapsed, triangleExpanded} {
+		if strings.Contains(line, tri) {
+			hasTriangle = true
+			break
+		}
+	}
+	if !hasTriangle && !strings.Contains(line, "\033[") {
+		return highlightJSONInline(line)
+	}
+	return highlightMixedLine(line)
+}
+
+// highlightMixedLine processes a line that contains a mix of plain text and
+// ANSI-colored segments (brackets, captions, triangles). It highlights only
+// the plain-text spans with chroma and passes colored spans through as-is.
+func highlightMixedLine(line string) string {
+	const ansiReset = "\033[0m"
+
+	var sb strings.Builder
+	i := 0
+	plainStart := 0
+
+	for i < len(line) {
+		// Check for triangle indicators (multi-byte UTF-8).
+		foundTri := false
+		for _, tri := range []string{triangleCollapsed, triangleExpanded} {
+			if strings.HasPrefix(line[i:], tri) {
+				if i > plainStart {
+					sb.WriteString(highlightJSONInline(line[plainStart:i]))
+				}
+				sb.WriteString(tri)
+				i += len(tri)
+				plainStart = i
+				foundTri = true
+				break
+			}
+		}
+		if foundTri {
+			continue
+		}
+
+		// Check for ANSI escape sequence — copy everything from the
+		// opening \033[ through the matching \033[0m reset as one opaque
+		// span so chroma never sees the styled text.
+		if i+1 < len(line) && line[i] == '\033' && line[i+1] == '[' {
+			if i > plainStart {
+				sb.WriteString(highlightJSONInline(line[plainStart:i]))
+			}
+			end := strings.Index(line[i:], ansiReset)
+			if end >= 0 {
+				end = i + end + len(ansiReset)
+			} else {
+				end = len(line)
+			}
+			sb.WriteString(line[i:end])
+			i = end
+			plainStart = i
+			continue
+		}
+
+		i++
+	}
+
+	if plainStart < len(line) {
+		sb.WriteString(highlightJSONInline(line[plainStart:]))
+	}
+	return sb.String()
+}
+
+// highlightJSONInline applies chroma JSON highlighting to a fragment and
+// strips the trailing newline that chroma appends.
+func highlightJSONInline(s string) string {
+	h := highlightJSON(s)
+	return strings.TrimRight(h, "\n")
 }
 
 // dimText strips all ANSI escape sequences from s and wraps the plain text

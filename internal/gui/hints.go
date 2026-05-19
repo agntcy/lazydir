@@ -68,7 +68,10 @@ var perPanelBindings = map[string]panelBindings{
 	viewPreview: {
 		title: "[0] Preview",
 		bindings: []binding{
-			{"↑↓ / j k", "scroll", true},
+			{"↑↓ / j k", "navigate", true},
+			{"enter", "expand / collapse", true},
+			{"e", "expand all", true},
+			{"E", "collapse all", true},
 			{"wheel", "scroll", false},
 		},
 	},

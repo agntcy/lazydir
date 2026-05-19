@@ -210,14 +210,23 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 
 	// ── Preview panel ────────────────────────────────────────────────────────
 	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
-		if err := g.SetKeybinding(viewPreview, key, gocui.ModNone, app.previewScrollUp); err != nil {
+		if err := g.SetKeybinding(viewPreview, key, gocui.ModNone, app.previewCursorUp); err != nil {
 			return err
 		}
 	}
 	for _, key := range []interface{}{gocui.KeyArrowDown, 'j'} {
-		if err := g.SetKeybinding(viewPreview, key, gocui.ModNone, app.previewScrollDown); err != nil {
+		if err := g.SetKeybinding(viewPreview, key, gocui.ModNone, app.previewCursorDown); err != nil {
 			return err
 		}
+	}
+	if err := g.SetKeybinding(viewPreview, gocui.KeyEnter, gocui.ModNone, app.previewToggleNode); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewPreview, 'e', gocui.ModNone, app.previewExpandAll); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewPreview, 'E', gocui.ModNone, app.previewCollapseAll); err != nil {
+		return err
 	}
 	if err := g.SetKeybinding(viewPreview, gocui.MouseWheelUp, gocui.ModNone, app.previewScrollUp); err != nil {
 		return err
@@ -240,13 +249,16 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 		return err
 	}
 
-	// Mouse click focuses the clicked panel; records and filters get
-	// specialised handlers that also update the cursor / open categories.
-	for _, name := range []string{viewDirectory, viewPreview} {
+	// Mouse click focuses the clicked panel; records, filters, and preview
+	// get specialised handlers that also update the cursor / toggle nodes.
+	for _, name := range []string{viewDirectory} {
 		n := name
 		if err := g.SetKeybinding(n, gocui.MouseLeft, gocui.ModNone, app.focusView(n)); err != nil {
 			return err
 		}
+	}
+	if err := g.SetKeybinding(viewPreview, gocui.MouseLeft, gocui.ModNone, app.previewMouseClick); err != nil {
+		return err
 	}
 	if err := g.SetKeybinding(viewRecords, gocui.MouseLeft, gocui.ModNone, app.recordMouseClick); err != nil {
 		return err
@@ -317,7 +329,8 @@ var focusOrder = []string{viewDirectory, viewFilters, viewRecords, viewPreview}
 
 // focusTo sets the current view and updates highlight state on list panels.
 // When focus arrives at or leaves the records panel, the preview is refreshed
-// so it always shows the record under the cursor.
+// so it always shows the record under the cursor. Focusing the preview panel
+// itself does not re-fetch (which would reset the tree state).
 func (app *Gui) focusTo(g *gocui.Gui, name string) error {
 	_, err := g.SetCurrentView(name)
 	if err != nil {
@@ -325,7 +338,9 @@ func (app *Gui) focusTo(g *gocui.Gui, name string) error {
 	}
 	app.syncHighlight(g, name)
 	app.renderStatus(g)
-	app.autoPreviewRecord(g)
+	if name != viewPreview {
+		app.autoPreviewRecord(g)
+	}
 	return nil
 }
 
@@ -742,6 +757,111 @@ func (app *Gui) scrollViewDown(v *gocui.View) error {
 	_, oy := v.Origin()
 	_ = v.SetOrigin(0, oy+step)
 	return nil
+}
+
+// ── Preview panel: cursor navigation and tree interaction ─────────────────────
+
+// previewCursorUp moves the preview cursor up by one line and updates the
+// gocui cursor so the highlight row follows.
+func (app *Gui) previewCursorUp(g *gocui.Gui, v *gocui.View) error {
+	if app.state.previewTree == nil {
+		return app.scrollViewUp(v)
+	}
+	if app.state.previewCursor > 0 {
+		app.state.previewCursor--
+	}
+	app.positionPreviewCursor(v)
+	return nil
+}
+
+// previewCursorDown moves the preview cursor down by one line and updates the
+// gocui cursor so the highlight row follows.
+func (app *Gui) previewCursorDown(g *gocui.Gui, v *gocui.View) error {
+	if app.state.previewTree == nil {
+		return app.scrollViewDown(v)
+	}
+	maxLine := len(app.state.previewTree.lines) - 1
+	if maxLine < 0 {
+		return nil
+	}
+	if app.state.previewCursor < maxLine {
+		app.state.previewCursor++
+	}
+	app.positionPreviewCursor(v)
+	return nil
+}
+
+// previewToggleNode expands or collapses the JSON tree node on the current
+// cursor line.
+func (app *Gui) previewToggleNode(g *gocui.Gui, v *gocui.View) error {
+	tree := app.state.previewTree
+	if tree == nil {
+		return nil
+	}
+	if !tree.toggleLine(app.state.previewCursor) {
+		return nil
+	}
+	app.refreshPreviewTree(g)
+	clampPreviewCursor(app, tree)
+	return nil
+}
+
+func (app *Gui) previewExpandAll(g *gocui.Gui, v *gocui.View) error {
+	tree := app.state.previewTree
+	if tree == nil {
+		return nil
+	}
+	tree.expandAll()
+	app.refreshPreviewTree(g)
+	clampPreviewCursor(app, tree)
+	return nil
+}
+
+func (app *Gui) previewCollapseAll(g *gocui.Gui, v *gocui.View) error {
+	tree := app.state.previewTree
+	if tree == nil {
+		return nil
+	}
+	tree.collapseAll()
+	app.state.previewCursor = 0
+	app.refreshPreviewTree(g)
+	return nil
+}
+
+// previewMouseClick handles mouse clicks in the preview panel: focuses the
+// panel, moves the cursor to the clicked line, and toggles the node if it's
+// collapsible.
+func (app *Gui) previewMouseClick(g *gocui.Gui, v *gocui.View) error {
+	if err := app.focusTo(g, viewPreview); err != nil {
+		return err
+	}
+	tree := app.state.previewTree
+	if tree == nil {
+		return nil
+	}
+	_, cy := v.Cursor()
+	_, oy := v.Origin()
+	line := oy + cy
+	if line < 0 || line >= len(tree.lines) {
+		return nil
+	}
+	app.state.previewCursor = line
+	if tree.toggleLine(line) {
+		app.refreshPreviewTree(g)
+		clampPreviewCursor(app, tree)
+	} else {
+		app.positionPreviewCursor(v)
+	}
+	return nil
+}
+
+func clampPreviewCursor(app *Gui, tree *jsonTree) {
+	maxLine := len(tree.lines) - 1
+	if maxLine < 0 {
+		app.state.previewCursor = 0
+	} else if app.state.previewCursor > maxLine {
+		app.state.previewCursor = maxLine
+	}
 }
 
 // ── Connections: directory and OASF server dialogs ────────────────────────────
