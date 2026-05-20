@@ -173,11 +173,46 @@ func TestCollapseAll(t *testing.T) {
 	tree.expandAll()
 	tree.collapseAll()
 	out := tree.renderLines(nil)
-	if strings.Contains(out, triangleExpanded) {
-		t.Errorf("expected no expanded nodes after collapseAll, got:\n%s", out)
+
+	// collapseAll resets to the default state: root expanded, class arrays
+	// expanded (none here), everything else collapsed.
+	// { + "a" collapsed + "c" collapsed + } = 4 lines
+	if len(tree.lines) != 4 {
+		t.Errorf("expected 4 display lines after collapseAll (root expanded), got %d", len(tree.lines))
 	}
-	if len(tree.lines) != 1 {
-		t.Errorf("expected 1 display line when fully collapsed, got %d", len(tree.lines))
+	if !tree.root.expanded {
+		t.Error("expected root to be expanded after collapseAll")
+	}
+	for _, child := range tree.root.children {
+		if child.expanded {
+			t.Errorf("expected child %q to be collapsed after collapseAll", child.key)
+		}
+	}
+	_ = out
+}
+
+func TestCollapseAllWithClassArrays(t *testing.T) {
+	t.Parallel()
+	tree, err := parseJSONTree(`{"skills": [{"name": "nlp"}], "other": {"x": 1}}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	tree.expandAll()
+	tree.collapseAll()
+
+	// Root expanded, skills array re-expanded, other collapsed.
+	skillsNode := tree.root.children[1] // keys sorted: "other" < "skills"
+	if skillsNode.key != "skills" {
+		skillsNode = tree.root.children[0]
+	}
+	if !skillsNode.expanded {
+		t.Error("expected skills array to be re-expanded after collapseAll")
+	}
+	for _, child := range skillsNode.children {
+		if child.expanded {
+			t.Error("expected skills child objects to be collapsed after collapseAll")
+		}
 	}
 }
 

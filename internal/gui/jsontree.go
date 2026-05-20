@@ -378,10 +378,13 @@ func expandNode(n *jsonNode) {
 	}
 }
 
-// collapseAll recursively collapses all nodes in the tree.
+// collapseAll resets the tree to its default expand state: root expanded,
+// skills/domains/modules arrays expanded, everything else collapsed.
 func (t *jsonTree) collapseAll() {
 	if t.root != nil {
 		collapseNode(t.root)
+		t.root.expanded = true
+		autoExpandClassArrays(t.root)
 	}
 }
 
