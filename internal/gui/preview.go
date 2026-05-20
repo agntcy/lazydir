@@ -266,7 +266,11 @@ func (app *Gui) scrollViewUp(v *gocui.View) error {
 	step := app.scrollStep()
 	_, oy := v.Origin()
 	if oy > 0 {
-		_ = v.SetOrigin(0, oy-step)
+		newOY := oy - step
+		if newOY < 0 {
+			newOY = 0
+		}
+		_ = v.SetOrigin(0, newOY)
 	}
 	return nil
 }
