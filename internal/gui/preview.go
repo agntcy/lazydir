@@ -34,6 +34,26 @@ var lazydirStyle = func() *chroma.Style {
 	return s
 }()
 
+// jsonLexer and termFormatter are cached at package level so that
+// highlightJSON avoids re-creating them on every call.
+var (
+	jsonLexer     chroma.Lexer
+	termFormatter chroma.Formatter
+)
+
+func init() {
+	l := lexers.Get("json")
+	if l == nil {
+		l = lexers.Fallback
+	}
+	jsonLexer = chroma.Coalesce(l)
+	f := formatters.Get("terminal16")
+	if f == nil {
+		f = formatters.Fallback
+	}
+	termFormatter = f
+}
+
 // ── Preview panel: data fetching ──────────────────────────────────────────────
 
 func (app *Gui) pullRecord(subtitle, cid string) {
@@ -390,31 +410,66 @@ func clampPreviewCursor(app *Gui, tree *jsonTree) {
 
 // ── Preview panel: syntax highlighting ────────────────────────────────────────
 
-// highlightTree renders a JSON tree with syntax highlighting. Lines that
-// contain tree indicators or OASF captions with ANSI codes are highlighted
-// per-segment so the indicators and captions keep their intended colors.
+// highlightTree renders a JSON tree with syntax highlighting. Plain JSON
+// lines (no triangles or ANSI escapes) are batched into a single chroma
+// call for performance. Mixed lines are highlighted per-segment so that
+// triangles, colored brackets, and OASF captions keep their styling.
 func (app *Gui) highlightTree(tree *jsonTree) string {
 	raw := tree.renderLines(app.treeRenderCtx())
-	var sb strings.Builder
-	for _, line := range strings.Split(raw, "\n") {
-		sb.WriteString(highlightTreeLine(line))
-		sb.WriteByte('\n')
-	}
-	return strings.TrimRight(sb.String(), "\n")
-}
+	lines := strings.Split(raw, "\n")
 
-func highlightTreeLine(line string) string {
-	hasTriangle := false
-	for _, tri := range []string{triangleCollapsed, triangleExpanded} {
-		if strings.Contains(line, tri) {
-			hasTriangle = true
-			break
+	isMixed := make([]bool, len(lines))
+	var plainBatch []string
+
+	for i, line := range lines {
+		if isMixedLine(line) {
+			isMixed[i] = true
+		} else {
+			plainBatch = append(plainBatch, line)
 		}
 	}
-	if !hasTriangle && !strings.Contains(line, "\033[") {
-		return highlightJSONInline(line)
+
+	// Highlight all plain lines in one chroma pass and split back.
+	var highlighted []string
+	if len(plainBatch) > 0 {
+		joined := highlightJSON(strings.Join(plainBatch, "\n"))
+		highlighted = strings.Split(joined, "\n")
+		// Chroma may append a trailing newline producing an extra empty
+		// element — trim it so the count matches.
+		if len(highlighted) > len(plainBatch) {
+			if highlighted[len(highlighted)-1] == "" {
+				highlighted = highlighted[:len(highlighted)-1]
+			}
+		}
 	}
-	return highlightMixedLine(line)
+
+	var sb strings.Builder
+	pi := 0
+	for i, line := range lines {
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		if isMixed[i] {
+			sb.WriteString(highlightMixedLine(line))
+		} else if pi < len(highlighted) {
+			sb.WriteString(highlighted[pi])
+			pi++
+		} else {
+			sb.WriteString(line)
+		}
+	}
+	return sb.String()
+}
+
+// isMixedLine returns true when the line contains triangle indicators or
+// pre-colored ANSI escape sequences that require per-segment highlighting.
+func isMixedLine(line string) bool {
+	for _, tri := range []string{triangleCollapsed, triangleExpanded} {
+		if strings.Contains(line, tri) {
+			return true
+		}
+	}
+	return strings.Contains(line, "\033[")
 }
 
 // highlightMixedLine processes a line that contains a mix of plain text and
@@ -476,24 +531,13 @@ func highlightJSONInline(s string) string {
 }
 
 func highlightJSON(src string) string {
-	lexer := lexers.Get("json")
-	if lexer == nil {
-		lexer = lexers.Fallback
-	}
-	lexer = chroma.Coalesce(lexer)
-
-	formatter := formatters.Get("terminal16")
-	if formatter == nil {
-		formatter = formatters.Fallback
-	}
-
-	iter, err := lexer.Tokenise(nil, src)
+	iter, err := jsonLexer.Tokenise(nil, src)
 	if err != nil {
 		return src
 	}
 
 	var buf bytes.Buffer
-	if err := formatter.Format(&buf, lazydirStyle, iter); err != nil {
+	if err := termFormatter.Format(&buf, lazydirStyle, iter); err != nil {
 		return src
 	}
 
