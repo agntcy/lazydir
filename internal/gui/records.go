@@ -219,6 +219,85 @@ func formatRecordInfo(info *dirclient.RecordInfo, t Theme) string {
 	return sb.String()
 }
 
+// recordDelete opens a confirmation popup for the currently selected record.
+// On confirmation, it issues a Delete RPC and removes the record from local
+// caches so the UI updates immediately without a full refresh.
+func (app *Gui) recordDelete(g *gocui.Gui, v *gocui.View) error {
+	r := app.cursorRecord()
+	if r == nil || r.CID == "" {
+		return nil
+	}
+	if app.state.client == nil {
+		return nil
+	}
+
+	name := r.Name
+	if name == "" {
+		name = r.CID
+	}
+	version := ""
+	if r.Version != "" {
+		version = " " + r.Version
+	}
+
+	body := fmt.Sprintf("Delete %s%s?\n\n  %sy%s  confirm   %sn / esc%s  cancel",
+		name, version,
+		app.theme.Color2, app.theme.Reset,
+		app.theme.Color2, app.theme.Reset)
+
+	cid := r.CID
+	app.openConfirmPopup(g, "Delete record", body, func() {
+		go app.deleteRecord(cid)
+	})
+	return nil
+}
+
+func (app *Gui) deleteRecord(cid string) {
+	client := app.state.client
+	if client == nil {
+		return
+	}
+
+	err := client.Delete(context.Background(), cid)
+	app.g.Update(func(g *gocui.Gui) error {
+		if err != nil {
+			app.renderPreviewText(g, "Error", "Failed to delete record: "+err.Error())
+			return nil
+		}
+		app.removeRecordFromState(cid)
+		app.renderRecordsView(g)
+		app.renderFiltersView(g)
+		app.autoPreviewRecord(g)
+		return nil
+	})
+}
+
+// removeRecordFromState purges a record by CID from fullCache, records,
+// and filteredRecords, rebuilds display rows, and refreshes active filter
+// values so the Filters panel stays consistent.
+func (app *Gui) removeRecordFromState(cid string) {
+	app.state.fullCache = removeRecordByCID(app.state.fullCache, cid)
+	app.state.records = removeRecordByCID(app.state.records, cid)
+	app.state.filteredRecords = removeRecordByCID(app.state.filteredRecords, cid)
+	if app.state.activeFilterValues != nil {
+		app.rebuildActiveFilterValues()
+	}
+	app.buildRecordDisplayRows()
+	if max := len(app.state.recordDisplayRows) - 1; app.state.recordCursor > max && max >= 0 {
+		app.state.recordCursor = max
+	}
+}
+
+func removeRecordByCID(records []*dirclient.RecordSummary, cid string) []*dirclient.RecordSummary {
+	out := make([]*dirclient.RecordSummary, 0, len(records))
+	for _, r := range records {
+		if r.CID != cid {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 func (app *Gui) clearRecordInlineDesc() {
 	app.state.recordInfoCID = ""
 	app.state.recordInfoText = ""

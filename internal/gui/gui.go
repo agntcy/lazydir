@@ -138,6 +138,10 @@ type appState struct {
 	popupPrevView  string // view to restore focus to when any popup closes
 	infoPopupPanel string // which panel opened the info popup (viewDirectory/viewFilters/viewRecords)
 
+	// confirmation popup state
+	confirmPopupText string // rendered text shown inside the confirm popup
+	onConfirmAction  func() // action to run when the user confirms
+
 	// preview dimming: stored content so we can toggle dim without refetching
 	previewSubtitle string
 	previewContent  string    // rendered (ANSI-colored) content

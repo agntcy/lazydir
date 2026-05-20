@@ -394,6 +394,14 @@ func (c *Client) PullInfo(ctx context.Context, cid string) (*RecordInfo, error) 
 	return info, nil
 }
 
+// Delete removes a record from the directory by CID.
+func (c *Client) Delete(ctx context.Context, cid string) error {
+	if err := c.c.Delete(ctx, &corev1.RecordRef{Cid: cid}); err != nil {
+		return fmt.Errorf("deleting record %s: %w", cid, err)
+	}
+	return nil
+}
+
 // extractSummary pulls name/version/skills/domains/modules from a raw record.
 func extractSummary(record *corev1.Record) *RecordSummary {
 	cid := record.GetCid()

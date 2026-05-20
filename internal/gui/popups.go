@@ -231,6 +231,40 @@ func (app *Gui) fetchAndCopyJSON(cid string) {
 	_ = writeClipboard(jsonStr)
 }
 
+// ── Confirmation popup ────────────────────────────────────────────────────────
+
+func (app *Gui) openConfirmPopup(g *gocui.Gui, title, body string, onConfirm func()) {
+	app.state.confirmPopupText = body
+	app.state.onConfirmAction = onConfirm
+
+	cv, err := g.View(viewConfirmPopup)
+	if err != nil {
+		return
+	}
+	cv.Clear()
+	cv.Title = " " + title + " "
+	fmt.Fprint(cv, body)
+	app.showPopup(g, viewConfirmPopup)
+}
+
+func (app *Gui) closeConfirmPopup(g *gocui.Gui, v *gocui.View) error {
+	app.state.onConfirmAction = nil
+	app.state.confirmPopupText = ""
+	app.hidePopup(g, viewConfirmPopup)
+	return nil
+}
+
+func (app *Gui) confirmPopupYes(g *gocui.Gui, v *gocui.View) error {
+	cb := app.state.onConfirmAction
+	app.state.onConfirmAction = nil
+	app.state.confirmPopupText = ""
+	app.hidePopup(g, viewConfirmPopup)
+	if cb != nil {
+		cb()
+	}
+	return nil
+}
+
 func writeClipboard(text string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
