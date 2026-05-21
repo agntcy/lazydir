@@ -261,7 +261,13 @@ func (app *Gui) deleteRecord(cid string) {
 	err := client.Delete(context.Background(), cid)
 	app.g.Update(func(g *gocui.Gui) error {
 		if err != nil {
-			app.renderPreviewText(g, "Error", "Failed to delete record: "+err.Error())
+			app.state.recordInfoCID = cid
+			app.state.recordInfoText = err.Error()
+			app.state.recordInfoError = true
+			app.state.recordInfoLoading = false
+			app.openInfoPopup(g, viewRecords)
+			_, _ = g.SetCurrentView(viewInfoPopup)
+			app.renderInfoPopup(g)
 			return nil
 		}
 		app.removeRecordFromState(cid)
