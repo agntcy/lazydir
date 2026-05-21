@@ -61,7 +61,7 @@ func (app *Gui) pullRecord(subtitle, cid string) {
 	jsonStr, err := app.state.client.PullJSON(ctx, cid)
 	app.g.Update(func(g *gocui.Gui) error {
 		if err != nil {
-			app.renderPreviewText(g, "Error", err.Error())
+			app.renderPreviewError(g, err.Error())
 			return nil
 		}
 		app.renderPreviewJSON(g, subtitle, jsonStr)
@@ -137,13 +137,66 @@ func (app *Gui) firstRecordInGroup(name string) *dirclient.RecordSummary {
 
 // ── Preview panel: rendering ──────────────────────────────────────────────────
 
-// renderPreviewText sets plain text content in the preview panel.
-func (app *Gui) renderPreviewText(g *gocui.Gui, subtitle, content string) {
-	app.state.previewSubtitle = subtitle
-	app.state.previewContent = content
+// renderPreviewError renders an error message centered in the preview panel
+// inside a Unicode box with red borders.
+func (app *Gui) renderPreviewError(g *gocui.Gui, message string) {
+	v, err := g.View(viewPreview)
+	if err != nil {
+		return
+	}
+	viewW, viewH := v.Size()
+
+	maxTextW := viewW - 8
+	if maxTextW < 16 {
+		maxTextW = 16
+	}
+	lines := wrapText(message, maxTextW)
+
+	longest := 0
+	for _, line := range lines {
+		if len(line) > longest {
+			longest = len(line)
+		}
+	}
+	innerW := longest
+	if innerW < 16 {
+		innerW = 16
+	}
+	if innerW > maxTextW {
+		innerW = maxTextW
+	}
+
+	boxW := innerW + 4
+	boxH := len(lines) + 2
+	padLeft := (viewW - boxW) / 2
+	padTop := (viewH - boxH) / 2
+	if padLeft < 0 {
+		padLeft = 0
+	}
+	if padTop < 0 {
+		padTop = 0
+	}
+
+	red := app.theme.Color6
+	reset := app.theme.Reset
+	lpad := strings.Repeat(" ", padLeft)
+
+	var sb strings.Builder
+	for i := 0; i < padTop; i++ {
+		sb.WriteByte('\n')
+	}
+	sb.WriteString(lpad + red + "┌" + strings.Repeat("─", innerW+2) + "┐" + reset + "\n")
+	for _, line := range lines {
+		padding := innerW - len(line)
+		sb.WriteString(lpad + red + "│" + reset + " " + line + strings.Repeat(" ", padding) + " " + red + "│" + reset + "\n")
+	}
+	sb.WriteString(lpad + red + "└" + strings.Repeat("─", innerW+2) + "┘" + reset)
+
+	app.state.previewSubtitle = "Error"
+	app.state.previewContent = sb.String()
 	app.state.previewTree = nil
 	app.state.previewCursor = 0
-	app.setPreviewWrap(g, true)
+	app.setPreviewWrap(g, false)
 	app.writePreview(g, true)
 }
 
