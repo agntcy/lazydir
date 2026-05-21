@@ -223,7 +223,13 @@ func (app *Gui) fetchAndCopyJSON(cid string) {
 	jsonStr, err := app.state.client.PullJSON(ctx, cid)
 	if err != nil {
 		app.g.Update(func(g *gocui.Gui) error {
-			app.renderPreviewText(g, "Error", "Failed to fetch record: "+err.Error())
+			app.state.recordInfoCID = cid
+			app.state.recordInfoText = "Failed to fetch record: " + err.Error()
+			app.state.recordInfoError = true
+			app.state.recordInfoLoading = false
+			app.openInfoPopup(g, viewRecords)
+			_, _ = g.SetCurrentView(viewInfoPopup)
+			app.renderInfoPopup(g)
 			return nil
 		})
 		return
