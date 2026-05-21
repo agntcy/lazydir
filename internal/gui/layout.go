@@ -11,17 +11,18 @@ import (
 )
 
 const (
-	viewDirectory  = "directory"
-	viewFilters    = "filters"
-	viewRecords    = "records"
-	viewPreview    = "preview"
-	viewOptions    = "options"    // bottom bar: context keybindings (like lazygit)
-	viewInput      = "input"      // shared editable prompt view, shown on demand
-	viewHelp       = "help"       // ? popup overlay, shown on demand
-	viewCopyMenu   = "copymenu"   // copy-options popup, shown on demand
-	viewInfoPopup  = "infopopup"  // info popup, shown on demand (i key)
-	viewServerMenu = "servermenu" // server selection popup, shown on demand (c key)
-	viewAuthPopup  = "authpopup"  // OIDC auth popup, shown during device flow
+	viewDirectory    = "directory"
+	viewFilters      = "filters"
+	viewRecords      = "records"
+	viewPreview      = "preview"
+	viewOptions      = "options"      // bottom bar: context keybindings (like lazygit)
+	viewInput        = "input"        // shared editable prompt view, shown on demand
+	viewHelp         = "help"         // ? popup overlay, shown on demand
+	viewCopyMenu     = "copymenu"     // copy-options popup, shown on demand
+	viewInfoPopup    = "infopopup"    // info popup, shown on demand (i key)
+	viewServerMenu   = "servermenu"   // server selection popup, shown on demand (c key)
+	viewAuthPopup    = "authpopup"    // OIDC auth popup, shown during device flow
+	viewConfirmPopup = "confirmpopup" // confirmation popup, shown for destructive actions
 )
 
 // roundedFrame is a 6-rune set that gives every panel rounded corners: ╭─╮╰─╯
@@ -31,7 +32,7 @@ var roundedFrame = []rune{'─', '│', '╭', '╮', '╰', '╯'}
 var listViews = []string{viewDirectory, viewFilters, viewRecords}
 
 // rightColumnPopups are popup views rendered over the preview panel.
-var rightColumnPopups = []string{viewInfoPopup, viewCopyMenu, viewServerMenu, viewAuthPopup}
+var rightColumnPopups = []string{viewInfoPopup, viewCopyMenu, viewServerMenu, viewAuthPopup, viewConfirmPopup}
 
 // layout is the gocui Manager — called on every redraw/resize.
 func (g *Gui) layout(gui *gocui.Gui) error {
@@ -242,6 +243,27 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.FrameRunes = roundedFrame
 		v.Wrap = false
 		v.Visible = false
+	}
+
+	// Confirmation popup — positioned in the right column.
+	{
+		cfX0, cfY0, cfX1, cfY1 := 0, -6, 40, -1
+		if cfv, _ := gui.View(viewConfirmPopup); cfv != nil && cfv.Visible {
+			cfMaxW := maxX - 1 - rightX0 - 2
+			cfCW, cfCH := popupContentSize(g.state.confirmPopupText, cfMaxW)
+			cfX0, cfY0, cfX1, cfY1 = popupRect(gui, viewRecords,
+				cfCW, cfCH, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
+		}
+		if v, err := gui.SetView(viewConfirmPopup, cfX0, cfY0, cfX1, cfY1, 0); err != nil {
+			if !gocui.IsUnknownView(err) {
+				return err
+			}
+			v.Title = " Confirm "
+			v.Frame = true
+			v.FrameRunes = roundedFrame
+			v.Wrap = true
+			v.Visible = false
+		}
 	}
 
 	// Server selection popup — positioned in the right column.
