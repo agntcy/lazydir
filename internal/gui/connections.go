@@ -201,18 +201,13 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	if entry.OIDCIssuer != "" {
 		go app.connectWithOIDC(entry)
 	} else {
-		authMode := app.state.authMode
-		if authMode == "" {
-			authMode = "insecure"
-		}
 		cfg := dirclient.Config{
 			ServerAddress: entry.Address,
-			AuthMode:      authMode,
+			AuthMode:      "insecure",
 			TLSSkipVerify: app.cfg.Directory.TLSSkipVerify,
 			TLSCAFile:     app.cfg.Directory.TLSCAFile,
 			TLSCertFile:   app.cfg.Directory.TLSCertFile,
 			TLSKeyFile:    app.cfg.Directory.TLSKeyFile,
-			AuthToken:     app.cfg.Directory.AuthToken,
 		}
 		go app.connect(cfg)
 	}
