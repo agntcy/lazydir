@@ -182,7 +182,6 @@ func (app *Gui) filterToggleInfo(g *gocui.Gui, v *gocui.View) error {
 	fs.inlineDescText = ""
 	fs.inlineDescLoading = true
 	app.openInfoPopup(g, viewFilters)
-	_, _ = g.SetCurrentView(viewInfoPopup)
 
 	go app.fetchInlineDesc(ct, name)
 	return nil

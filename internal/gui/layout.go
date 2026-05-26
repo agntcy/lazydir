@@ -565,22 +565,28 @@ func popupContentSize(text string, maxW int) (int, int) {
 // infoPopupText returns the current text content for the info popup,
 // used by the layout manager to compute popup dimensions.
 func (g *Gui) infoPopupText() string {
+	var text string
+	hasError := false
 	switch g.state.infoPopupPanel {
 	case viewDirectory:
-		text, _ := g.connInfoText()
-		return text
+		text, hasError = g.connInfoText()
 	case viewFilters:
 		if g.state.filters.inlineDescLoading {
 			return "loading…"
 		}
-		return g.state.filters.inlineDescText
+		text = g.state.filters.inlineDescText
+		hasError = g.state.filters.inlineDescError
 	case viewRecords:
 		if g.state.recordInfoLoading {
 			return "loading…"
 		}
-		return g.state.recordInfoText
+		text = g.state.recordInfoText
+		hasError = g.state.recordInfoError
 	}
-	return ""
+	if hasError {
+		text += "\n\n  y  copy error   i / esc  close"
+	}
+	return text
 }
 
 // wrappedLineCount counts visual lines a string occupies at a given width.

@@ -87,6 +87,7 @@ func (app *Gui) openInfoPopup(g *gocui.Gui, sourcePanel string) {
 	ipv.Visible = true
 	app.renderInfoPopup(g)
 	_, _ = g.SetViewOnTop(viewInfoPopup)
+	_, _ = g.SetCurrentView(viewInfoPopup)
 }
 
 func (app *Gui) closeInfoPopup(g *gocui.Gui, v *gocui.View) error {
@@ -138,6 +139,9 @@ func (app *Gui) renderInfoPopup(g *gocui.Gui) {
 	}
 
 	if hasError {
+		fmt.Fprintf(ipv, "\n\n  %sy%s  copy error   %si / esc%s  close",
+			app.theme.Color2, app.theme.Reset,
+			app.theme.Color2, app.theme.Reset)
 		ipv.FrameColor = gocui.ColorRed
 		ipv.TitleColor = gocui.ColorRed
 	} else {
@@ -146,6 +150,40 @@ func (app *Gui) renderInfoPopup(g *gocui.Gui) {
 	}
 	g.SelFrameColor = ipv.FrameColor
 	g.SelFgColor = ipv.TitleColor
+}
+
+// infoPopupCopyError copies the current error message to the system clipboard.
+func (app *Gui) infoPopupCopyError(g *gocui.Gui, v *gocui.View) error {
+	ipv, _ := g.View(viewInfoPopup)
+	if ipv == nil || !ipv.Visible {
+		return nil
+	}
+	var errText string
+	switch app.state.infoPopupPanel {
+	case viewDirectory:
+		if app.state.connCursor == 0 {
+			errText = app.state.dirError
+		} else {
+			errText = app.state.oasfError
+		}
+	case viewFilters:
+		if app.state.filters.inlineDescError {
+			errText = app.state.filters.inlineDescText
+		}
+	case viewRecords:
+		if app.state.recordInfoError {
+			errText = app.state.recordInfoText
+		}
+	}
+	if errText == "" {
+		return nil
+	}
+	if err := writeClipboard(stripANSI(errText)); err != nil {
+		ipv.Clear()
+		fmt.Fprintf(ipv, "%sFailed to copy:%s %v", app.theme.Color6, app.theme.Reset, err)
+		return nil
+	}
+	return app.infoPopupClose(g, v)
 }
 
 // ── Help popup ────────────────────────────────────────────────────────────────
@@ -201,7 +239,14 @@ func (app *Gui) copyCID(g *gocui.Gui, v *gocui.View) error {
 	if r == nil || r.CID == "" {
 		return app.closeCopyMenu(g, v)
 	}
-	_ = writeClipboard(r.CID)
+	if err := writeClipboard(r.CID); err != nil {
+		cv, _ := g.View(viewCopyMenu)
+		if cv != nil {
+			cv.Clear()
+			fmt.Fprintf(cv, "  %sFailed to copy:%s %v", app.theme.Color6, app.theme.Reset, err)
+		}
+		return nil
+	}
 	return app.closeCopyMenu(g, v)
 }
 
@@ -228,13 +273,20 @@ func (app *Gui) fetchAndCopyJSON(cid string) {
 			app.state.recordInfoError = true
 			app.state.recordInfoLoading = false
 			app.openInfoPopup(g, viewRecords)
-			_, _ = g.SetCurrentView(viewInfoPopup)
-			app.renderInfoPopup(g)
 			return nil
 		})
 		return
 	}
-	_ = writeClipboard(jsonStr)
+	if err := writeClipboard(jsonStr); err != nil {
+		app.g.Update(func(g *gocui.Gui) error {
+			app.state.recordInfoCID = cid
+			app.state.recordInfoText = "Failed to copy: " + err.Error()
+			app.state.recordInfoError = true
+			app.state.recordInfoLoading = false
+			app.openInfoPopup(g, viewRecords)
+			return nil
+		})
+	}
 }
 
 // ── Confirmation popup ────────────────────────────────────────────────────────
