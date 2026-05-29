@@ -280,15 +280,14 @@ func (app *Gui) recordDeleteSync(g *gocui.Gui) error {
 }
 
 func (app *Gui) cancelSync() {
-	if app.state.syncCancelFunc != nil {
-		app.state.syncCancelFunc()
-	}
-
-	if app.state.syncID != "" && app.state.client != nil {
-		_ = app.state.client.DeleteSync(context.Background(), app.state.syncID)
-	}
+	var cancelFn context.CancelFunc
+	var syncID string
+	var client *dirclient.Client
 
 	app.g.Update(func(g *gocui.Gui) error {
+		cancelFn = app.state.syncCancelFunc
+		syncID = app.state.syncID
+		client = app.state.client
 		app.removeRecordsByStatus(dirclient.StatusSyncing)
 		app.removeRecordsByStatus(dirclient.StatusReconciling)
 		app.clearSyncState()
@@ -296,6 +295,13 @@ func (app *Gui) cancelSync() {
 		app.renderStatus(g)
 		return nil
 	})
+
+	if cancelFn != nil {
+		cancelFn()
+	}
+	if syncID != "" && client != nil {
+		_ = client.DeleteSync(context.Background(), syncID)
+	}
 }
 
 func (app *Gui) deleteRecord(cid string) {
