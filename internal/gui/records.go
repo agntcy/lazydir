@@ -437,11 +437,21 @@ func (app *Gui) clipboardPaste(g *gocui.Gui, v *gocui.View) error {
 
 	count := len(app.state.clipboard)
 
+	entries := make([]*dirclient.RecordSummary, 0, count)
+	for _, r := range app.state.clipboard {
+		entries = append(entries, r)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Name != entries[j].Name {
+			return entries[i].Name < entries[j].Name
+		}
+		return entries[i].Version < entries[j].Version
+	})
+
 	var body strings.Builder
 	fmt.Fprintf(&body, "Sync %d record(s) from %s?\n\n", count, app.state.clipboardSource)
-	shown := 0
-	for _, r := range app.state.clipboard {
-		if shown >= 5 {
+	for i, r := range entries {
+		if i >= 5 {
 			fmt.Fprintf(&body, "  … and %d more\n", count-5)
 			break
 		}
@@ -450,7 +460,6 @@ func (app *Gui) clipboardPaste(g *gocui.Gui, v *gocui.View) error {
 			label += "@" + r.Version
 		}
 		fmt.Fprintf(&body, "  • %s\n", label)
-		shown++
 	}
 	fmt.Fprintf(&body, "\n  %sy%s  confirm   %sn / esc%s  cancel",
 		app.theme.Color2, app.theme.Reset,
