@@ -383,7 +383,8 @@ func (g *Gui) renderStatus(gui *gocui.Gui) {
 
 	if v, err := gui.View(viewOptions); err == nil {
 		v.Clear()
-		fmt.Fprintf(v, "%s%s%s", g.theme.Color5, optionsBarText(focused, v.InnerWidth()), g.theme.Reset)
+		syncingCount, reconcilingCount := g.syncCounts()
+		fmt.Fprintf(v, "%s%s%s", g.theme.Color5, optionsBarText(focused, v.InnerWidth(), len(g.state.clipboard), syncingCount, reconcilingCount), g.theme.Reset)
 	}
 }
 

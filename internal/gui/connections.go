@@ -179,6 +179,10 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 		app.state.cancelLoad()
 		app.state.cancelLoad = nil
 	}
+	if app.state.client != nil {
+		app.state.client.Close()
+		app.state.client = nil
+	}
 	app.state.activeDir = entry
 	app.state.serverAddr = entry.Address
 	app.state.dirStatus = connTrying

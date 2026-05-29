@@ -151,14 +151,35 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		app.state.recordCursor = len(rows) - 1
 	}
 
+	clipBg := "\033[41m"
+	reset := "\033[0m"
+	yellow := "\033[33m"
+	red := "\033[31m"
+
+	// Precompute which group names have non-local children.
+	groupSyncStatus := map[string]dirclient.RecordStatus{}
+	for _, r := range app.state.filteredRecords {
+		if r.Status == dirclient.StatusLocal {
+			continue
+		}
+		name := r.Name
+		if name == "" {
+			name = r.CID
+		}
+		if cur, ok := groupSyncStatus[name]; !ok || r.Status > cur {
+			groupSyncStatus[name] = r.Status
+		}
+	}
+
 	lineNum := 0
 	targetLine := 0
+
 	for i, row := range rows {
 		if i == app.state.recordCursor {
 			targetLine = lineNum
 		}
 
-		if row.record == nil {
+		if row.groupName != "" {
 			triangle := triangleCollapsed
 			if app.state.recordGroupExpanded[row.groupName] {
 				triangle = triangleExpanded
@@ -167,8 +188,18 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 			if len(name) > nameW-2 {
 				name = name[:nameW-3] + "…"
 			}
-			fmt.Fprintf(v, " %s %s\n", triangle, name)
-		} else {
+			if gs, ok := groupSyncStatus[row.groupName]; ok {
+				color := yellow
+				if gs == dirclient.StatusFailed {
+					color = red
+				}
+				line := fmt.Sprintf(" %s %s", triangle, name)
+				fmt.Fprintf(v, "%s%-*s%s\n", color, viewW, line, reset)
+			} else {
+				fmt.Fprintf(v, " %s %s\n", triangle, name)
+			}
+		} else if row.record != nil {
+			_, inClip := app.state.clipboard[row.record.CID]
 			name := row.record.Name
 			if name == "" {
 				name = row.record.CID
@@ -177,13 +208,38 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 			if version == "" {
 				version = "n/a"
 			}
+
+			statusColor := ""
+			switch row.record.Status {
+			case dirclient.StatusSyncing, dirclient.StatusReconciling:
+				statusColor = yellow
+			case dirclient.StatusFailed:
+				statusColor = red
+			}
+
 			if row.grouped {
-				fmt.Fprintf(v, "%s%s\n", indent1, version)
+				if statusColor != "" {
+					line := fmt.Sprintf("%s%s", indent1, version)
+					fmt.Fprintf(v, "%s%-*s%s\n", statusColor, viewW, line, reset)
+				} else if inClip {
+					line := fmt.Sprintf("%s%s", indent1, version)
+					fmt.Fprintf(v, "%s%-*s%s\n", clipBg, viewW, line, reset)
+				} else {
+					fmt.Fprintf(v, "%s%s\n", indent1, version)
+				}
 			} else {
 				if len(name) > nameW {
 					name = name[:nameW-1] + "…"
 				}
-				fmt.Fprintf(v, " %-*s  %s\n", nameW, name, version)
+				if statusColor != "" {
+					line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
+					fmt.Fprintf(v, "%s%-*s%s\n", statusColor, viewW, line, reset)
+				} else if inClip {
+					line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
+					fmt.Fprintf(v, "%s%-*s%s\n", clipBg, viewW, line, reset)
+				} else {
+					fmt.Fprintf(v, " %-*s  %s\n", nameW, name, version)
+				}
 			}
 		}
 		lineNum++
