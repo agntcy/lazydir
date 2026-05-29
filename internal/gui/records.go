@@ -631,13 +631,7 @@ func (app *Gui) pollReconcile(ctx context.Context) {
 				return
 			}
 		case <-timeout:
-			app.g.Update(func(g *gocui.Gui) error {
-				app.removeRecordsByStatus(dirclient.StatusReconciling)
-				app.clearSyncState()
-				app.applyFiltersSilent()
-				app.renderStatus(g)
-				return nil
-			})
+			app.syncFailed("Reconciliation timed out — records were synced but the indexer has not picked them up yet. They may appear after a manual refresh (r).")
 			return
 		}
 	}
