@@ -16,6 +16,8 @@ import (
 	"github.com/jesseduffield/gocui"
 )
 
+const authModeInsecure = "insecure"
+
 // ── Connections panel cursor ──────────────────────────────────────────────────
 
 func (app *Gui) connCursorUp(g *gocui.Gui, v *gocui.View) error {
@@ -205,13 +207,18 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	if entry.OIDCIssuer != "" {
 		go app.connectWithOIDC(entry)
 	} else {
+		authMode := entry.AuthMode
+		if authMode == "" {
+			authMode = authModeInsecure
+		}
 		cfg := dirclient.Config{
 			ServerAddress: entry.Address,
-			AuthMode:      "insecure",
-			TLSSkipVerify: app.cfg.Directory.TLSSkipVerify,
-			TLSCAFile:     app.cfg.Directory.TLSCAFile,
-			TLSCertFile:   app.cfg.Directory.TLSCertFile,
-			TLSKeyFile:    app.cfg.Directory.TLSKeyFile,
+			AuthMode:      authMode,
+			AuthToken:     entry.AuthToken,
+			TLSSkipVerify: entry.TLSSkipVerify,
+			TLSCAFile:     entry.TLSCAFile,
+			TLSCertFile:   entry.TLSCertFile,
+			TLSKeyFile:    entry.TLSKeyFile,
 		}
 		go app.connect(cfg)
 	}

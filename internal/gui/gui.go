@@ -237,7 +237,7 @@ func New(cfg Config) error {
 	} else {
 		dirCfg := cfg.Directory
 		if dirCfg.AuthMode == "" {
-			dirCfg.AuthMode = "insecure"
+			dirCfg.AuthMode = authModeInsecure
 		}
 		go app.connect(dirCfg)
 	}

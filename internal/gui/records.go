@@ -401,7 +401,7 @@ func (app *Gui) sourceURL() string {
 	if strings.Contains(addr, "://") {
 		return addr
 	}
-	if app.state.authMode == "insecure" {
+	if app.state.authMode == authModeInsecure {
 		return "http://" + addr
 	}
 	return "https://" + addr
