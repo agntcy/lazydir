@@ -40,7 +40,6 @@ func (app *Gui) connToggleInfo(g *gocui.Gui, v *gocui.View) error {
 		return app.focusTo(g, viewDirectory)
 	}
 	app.openInfoPopup(g, viewDirectory)
-	_, _ = g.SetCurrentView(viewInfoPopup)
 	return nil
 }
 

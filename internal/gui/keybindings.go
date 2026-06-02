@@ -69,6 +69,9 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewDirectory, 'i', gocui.ModNone, app.connToggleInfo); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding(viewDirectory, 'y', gocui.ModNone, app.infoPopupCopyError); err != nil {
+		return err
+	}
 	if err := g.SetKeybinding(viewDirectory, gocui.KeyEsc, gocui.ModNone, app.connDismissInfo); err != nil {
 		return err
 	}
@@ -173,6 +176,9 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 		return err
 	}
 	if err := g.SetKeybinding(viewInfoPopup, 'i', gocui.ModNone, app.infoPopupClose); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewInfoPopup, 'y', gocui.ModNone, app.infoPopupCopyError); err != nil {
 		return err
 	}
 	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {

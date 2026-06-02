@@ -154,7 +154,6 @@ func (app *Gui) recordToggleInfo(g *gocui.Gui, v *gocui.View) error {
 	app.state.recordInfoText = ""
 	app.state.recordInfoLoading = true
 	app.openInfoPopup(g, viewRecords)
-	_, _ = g.SetCurrentView(viewInfoPopup)
 
 	go app.fetchRecordInfo(cid)
 	return nil
@@ -266,8 +265,6 @@ func (app *Gui) deleteRecord(cid string) {
 			app.state.recordInfoError = true
 			app.state.recordInfoLoading = false
 			app.openInfoPopup(g, viewRecords)
-			_, _ = g.SetCurrentView(viewInfoPopup)
-			app.renderInfoPopup(g)
 			return nil
 		}
 		app.removeRecordFromState(cid)
