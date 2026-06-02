@@ -426,7 +426,7 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 		// refresh the token before reconnecting so we don't reuse a stale one.
 		cfg := *snap.cfg
 		if cfg.OIDCIssuer != "" {
-			token, err := dirclient.TryGetCachedToken()
+			token, err := dirclient.TryGetCachedToken(context.Background(), cfg.OIDCIssuer, cfg.OIDCClientID)
 			if err != nil || token == "" {
 				// No valid cached token — trigger interactive re-auth.
 				app.g.Update(func(g *gocui.Gui) error {
@@ -490,7 +490,7 @@ func (app *Gui) tryOIDCTokenRefresh(
 		activeDir config.DirectoryEntry
 	},
 ) bool {
-	token, err := dirclient.TryGetCachedToken()
+	token, err := dirclient.TryGetCachedToken(context.Background(), snap.cfg.OIDCIssuer, snap.cfg.OIDCClientID)
 	if err != nil || token == "" {
 		return false
 	}
