@@ -132,9 +132,6 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 			title += fmt.Sprintf(" (%d)", total)
 		}
 	}
-	if app.state.stream == streamErrored {
-		title += " (error)"
-	}
 	if app.state.filterQuery != "" {
 		title += fmt.Sprintf("  /: %s", app.state.filterQuery)
 	}

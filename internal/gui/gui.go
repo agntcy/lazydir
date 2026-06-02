@@ -712,6 +712,11 @@ func (app *Gui) startRecordsStream() {
 					app.state.streamErr = err.Error()
 					app.state.dirStatus = connFailed
 					app.state.dirError = err.Error()
+					app.state.recordInfoCID = ""
+					app.state.recordInfoText = err.Error()
+					app.state.recordInfoError = true
+					app.state.recordInfoLoading = false
+					app.openInfoPopup(g, viewRecords)
 					app.renderDirectory(g)
 					app.startReconnectLoop()
 				} else {
@@ -843,6 +848,11 @@ func (app *Gui) applyFiltersServerSide() {
 				if err != nil {
 					app.state.stream = streamErrored
 					app.state.streamErr = err.Error()
+					app.state.recordInfoCID = ""
+					app.state.recordInfoText = err.Error()
+					app.state.recordInfoError = true
+					app.state.recordInfoLoading = false
+					app.openInfoPopup(g, viewRecords)
 				} else {
 					app.rebuildActiveFilterValues()
 					app.renderFiltersView(g)
