@@ -721,6 +721,11 @@ func (app *Gui) startRecordsStream() {
 					app.startReconnectLoop()
 				} else {
 					app.state.stream = streamDone
+					if app.state.dirStatus == connTrying {
+						app.state.dirStatus = connOK
+						app.state.dirLastConnected = time.Now()
+						app.state.dirError = ""
+					}
 					app.startReconnectLoop()
 				}
 				app.renderRecordsView(g)
