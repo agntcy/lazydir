@@ -60,6 +60,8 @@ var perPanelBindings = map[string]panelBindings{
 			{"/", "filter by name", true},
 			{"i", "toggle record info", true},
 			{"y", "yank/copy options", true},
+			{"C", "clipboard toggle", true},
+			{"V", "paste records", true},
 			{"d", "delete record", true},
 			{"esc", "clear filter", false},
 			{"enter", "confirm filter", false},
@@ -81,8 +83,18 @@ var perPanelBindings = map[string]panelBindings{
 // optionsBarText returns the keybinding hints for the bottom-left options bar,
 // truncated with "…" if they don't fit in availableWidth.
 // Format matches lazygit: "description: key | description: key"
-func optionsBarText(focused string, availableWidth int) string {
+func optionsBarText(focused string, availableWidth int, clipboardCount, syncingCount, reconcilingCount int) string {
 	var items []string
+
+	if clipboardCount > 0 {
+		items = append(items, fmt.Sprintf("%d copied", clipboardCount))
+	}
+	if syncingCount > 0 {
+		items = append(items, fmt.Sprintf("%d syncing", syncingCount))
+	}
+	if reconcilingCount > 0 {
+		items = append(items, fmt.Sprintf("%d reconciling", reconcilingCount))
+	}
 
 	if pb, ok := perPanelBindings[focused]; ok {
 		for _, b := range pb.bindings {

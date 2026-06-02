@@ -167,6 +167,12 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewRecords, 'd', gocui.ModNone, app.recordDelete); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding(viewRecords, 'C', gocui.ModNone, app.clipboardToggle); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewRecords, 'V', gocui.ModNone, app.clipboardPaste); err != nil {
+		return err
+	}
 
 	// ── Info popup ──────────────────────────────────────────────────────────
 	if err := g.SetKeybinding(viewInfoPopup, gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {

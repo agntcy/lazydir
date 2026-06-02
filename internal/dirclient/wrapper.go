@@ -28,6 +28,18 @@ type Config struct {
 	OIDCClientID  string
 }
 
+// RecordStatus describes the lifecycle state of a record from the TUI's
+// perspective. The zero value (StatusLocal) means the record is fully
+// available on the connected server.
+type RecordStatus int
+
+const (
+	StatusLocal       RecordStatus = iota // fully synced / native record
+	StatusSyncing                         // CreateSync in progress
+	StatusReconciling                     // sync done, waiting for indexer
+	StatusFailed                          // sync failed
+)
+
 // RecordSummary is a lightweight representation of a directory record. It
 // exposes only the fields the TUI renders or filters on; everything else from
 // the wire record is discarded by extractSummary.
@@ -40,6 +52,8 @@ type RecordSummary struct {
 	Skills        []string
 	Domains       []string
 	Modules       []string
+	Status        RecordStatus // lifecycle state; zero = StatusLocal
+	StatusError   string       // error message when Status == StatusFailed
 }
 
 // Client wraps the agntcy/dir gRPC client.
@@ -398,6 +412,58 @@ func (c *Client) PullInfo(ctx context.Context, cid string) (*RecordInfo, error) 
 func (c *Client) Delete(ctx context.Context, cid string) error {
 	if err := c.c.Delete(ctx, &corev1.RecordRef{Cid: cid}); err != nil {
 		return fmt.Errorf("deleting record %s: %w", cid, err)
+	}
+	return nil
+}
+
+// CreateSync instructs the server to pull the given CIDs from remoteURL.
+// It returns the sync ID which can be polled with GetSyncStatus.
+func (c *Client) CreateSync(ctx context.Context, remoteURL string, cids []string) (string, error) {
+	syncID, err := c.c.CreateSync(ctx, remoteURL, cids)
+	if err != nil {
+		return "", fmt.Errorf("creating sync from %s: %w", remoteURL, err)
+	}
+	return syncID, nil
+}
+
+// SyncStatus represents the state of a sync operation.
+type SyncStatus int
+
+const (
+	SyncPending    SyncStatus = 1
+	SyncInProgress SyncStatus = 2
+	SyncFailed     SyncStatus = 3
+	SyncCompleted  SyncStatus = 6
+)
+
+// SyncInfo holds the response from a GetSync call with all available context.
+type SyncInfo struct {
+	SyncID             string
+	Status             SyncStatus
+	RemoteDirectoryURL string
+	CreatedTime        string
+	LastUpdateTime     string
+}
+
+// GetSyncInfo returns the full status info for a sync operation.
+func (c *Client) GetSyncInfo(ctx context.Context, syncID string) (*SyncInfo, error) {
+	resp, err := c.c.GetSync(ctx, syncID)
+	if err != nil {
+		return nil, fmt.Errorf("getting sync status: %w", err)
+	}
+	return &SyncInfo{
+		SyncID:             resp.GetSyncId(),
+		Status:             SyncStatus(resp.GetStatus()),
+		RemoteDirectoryURL: resp.GetRemoteDirectoryUrl(),
+		CreatedTime:        resp.GetCreatedTime(),
+		LastUpdateTime:     resp.GetLastUpdateTime(),
+	}, nil
+}
+
+// DeleteSync cancels/deletes a sync operation.
+func (c *Client) DeleteSync(ctx context.Context, syncID string) error {
+	if err := c.c.DeleteSync(ctx, syncID); err != nil {
+		return fmt.Errorf("deleting sync %s: %w", syncID, err)
 	}
 	return nil
 }

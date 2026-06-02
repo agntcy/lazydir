@@ -142,6 +142,16 @@ type appState struct {
 	confirmPopupText string // rendered text shown inside the confirm popup
 	onConfirmAction  func() // action to run when the user confirms
 
+	// clipboard for copy-paste between nodes (issue #20)
+	clipboard          map[string]*dirclient.RecordSummary // CID → full summary snapshot
+	clipboardSource    string                              // display address of source server
+	clipboardSourceURL string                              // full URL of source (used in CreateSync)
+
+	// active sync operation state (for cancellation)
+	syncID         string             // active sync operation ID
+	syncCancelFunc context.CancelFunc // cancels pollSync/pollReconcile goroutines
+	syncCIDs       []string           // CIDs involved in the active sync
+
 	// preview dimming: stored content so we can toggle dim without refetching
 	previewSubtitle string
 	previewContent  string    // rendered (ANSI-colored) content
@@ -227,7 +237,7 @@ func New(cfg Config) error {
 	} else {
 		dirCfg := cfg.Directory
 		if dirCfg.AuthMode == "" {
-			dirCfg.AuthMode = "insecure"
+			dirCfg.AuthMode = authModeInsecure
 		}
 		go app.connect(dirCfg)
 	}
@@ -716,14 +726,28 @@ func (app *Gui) startRecordsStream() {
 	})
 }
 
-// applyFilters narrows fullCache into records using the current filter
+// applyFilters narrows state.records from fullCache according to the active
 // selections (skills, domains, modules, version, schema version, author),
 // then chains into applyNameFilter for the local name query. Trusted/Verified
 // filters are not applicable client-side (they require server evaluation), so
 // when those are active a fresh server stream is issued instead.
 //
+// When resetCursor is true the selection resets to the first row and the
+// preview updates (used after explicit user actions). When false the cursor
+// is clamped to remain valid without jumping (used during background sync).
+//
 // Must be called from the GUI goroutine (g.Update callback or key handler).
 func (app *Gui) applyFilters() {
+	app.applyFiltersOpts(true)
+}
+
+// applyFiltersSilent is like applyFilters but preserves the cursor position.
+// Used during background sync reconciliation to avoid resetting the user's selection.
+func (app *Gui) applyFiltersSilent() {
+	app.applyFiltersOpts(false)
+}
+
+func (app *Gui) applyFiltersOpts(resetCursor bool) {
 	applied := app.state.filters.applied
 
 	if len(applied[filterTrustedVerified]) > 0 {
@@ -744,11 +768,22 @@ func (app *Gui) applyFilters() {
 		app.state.records = out
 		app.rebuildActiveFilterValues()
 	}
-	app.state.recordCursor = 0
+
+	if resetCursor {
+		app.state.recordCursor = 0
+	}
 	app.applyNameFilter()
+	if !resetCursor {
+		if max := len(app.state.recordDisplayRows) - 1; app.state.recordCursor > max && max >= 0 {
+			app.state.recordCursor = max
+		}
+	}
+
 	app.renderRecordsView(app.g)
 	app.renderFiltersView(app.g)
-	app.autoPreviewRecord(app.g)
+	if resetCursor {
+		app.autoPreviewRecord(app.g)
+	}
 }
 
 // applyFiltersServerSide falls back to a server-side stream when filters
@@ -896,6 +931,39 @@ func (app *Gui) applyNameFilter() {
 	app.buildRecordDisplayRows()
 }
 
+// syncCounts returns the number of records in fullCache that are syncing vs reconciling.
+func (app *Gui) syncCounts() (syncing, reconciling int) {
+	for _, r := range app.state.fullCache {
+		switch r.Status {
+		case dirclient.StatusSyncing:
+			syncing++
+		case dirclient.StatusReconciling:
+			reconciling++
+		}
+	}
+	return
+}
+
+// hasSyncingRecords returns true if any record in fullCache is still syncing or reconciling.
+func (app *Gui) hasSyncingRecords() bool {
+	s, r := app.syncCounts()
+	return s+r > 0
+}
+
+// clearSyncState resets all sync-related tracking fields.
+func (app *Gui) clearSyncState() {
+	app.state.syncID = ""
+	app.state.syncCancelFunc = nil
+	app.state.syncCIDs = nil
+}
+
+// clearClipboard resets all clipboard-related fields.
+func (app *Gui) clearClipboard() {
+	app.state.clipboard = nil
+	app.state.clipboardSource = ""
+	app.state.clipboardSourceURL = ""
+}
+
 // buildRecordDisplayRows computes the grouped display rows from
 // filteredRecords. Records sharing the same Name are grouped together with a
 // collapsible header (similar to filter categories). Groups with a single
@@ -911,7 +979,7 @@ func (app *Gui) buildRecordDisplayRows() {
 		app.state.recordGroupExpanded = map[string]bool{}
 	}
 
-	// Build ordered groups preserving first-seen order.
+	// Build groups keyed by name, then sort alphabetically.
 	type group struct {
 		name    string
 		records []*dirclient.RecordSummary
@@ -930,6 +998,9 @@ func (app *Gui) buildRecordDisplayRows() {
 			groups = append(groups, group{name: name, records: []*dirclient.RecordSummary{r}})
 		}
 	}
+	sort.Slice(groups, func(i, j int) bool {
+		return strings.ToLower(groups[i].name) < strings.ToLower(groups[j].name)
+	})
 
 	var rows []recordDisplayRow
 	for _, g := range groups {
@@ -947,6 +1018,7 @@ func (app *Gui) buildRecordDisplayRows() {
 			}
 		}
 	}
+
 	app.state.recordDisplayRows = rows
 }
 

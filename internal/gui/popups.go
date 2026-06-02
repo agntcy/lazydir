@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/jesseduffield/gocui"
 )
 
@@ -104,7 +105,26 @@ func (app *Gui) closeInfoPopup(g *gocui.Gui, v *gocui.View) error {
 	app.clearInlineDesc()
 	app.state.popupPrevView = ""
 	app.state.infoPopupPanel = ""
+	app.clearFailedSyncRecords(g)
 	return nil
+}
+
+// clearFailedSyncRecords removes records with StatusFailed from fullCache
+// when the error popup is dismissed.
+func (app *Gui) clearFailedSyncRecords(g *gocui.Gui) {
+	hasFailed := false
+	for _, r := range app.state.fullCache {
+		if r.Status == dirclient.StatusFailed {
+			hasFailed = true
+			break
+		}
+	}
+	if !hasFailed {
+		return
+	}
+	app.removeRecordsByStatus(dirclient.StatusFailed)
+	app.applyFiltersSilent()
+	app.renderStatus(g)
 }
 
 func (app *Gui) renderInfoPopup(g *gocui.Gui) {
