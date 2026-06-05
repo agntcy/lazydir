@@ -8,7 +8,7 @@ vars:
   BINARY: "{{ .BIN_DIR }}/lazydir"
   GOLANGCI_LINT_VERSION: "2.11.3"
   GOLANGCI_LINT_BIN: "{{ .BIN_DIR }}/golangci-lint-{{ .GOLANGCI_LINT_VERSION }}"
-  DIRCTL_VERSION: "1.3.0"
+  DIRCTL_VERSION: "1.4.0"
   DIRCTL_BIN: "{{ .BIN_DIR }}/dirctl"
 
   VERSION_LDFLAGS: >-
@@ -175,11 +175,11 @@ tasks:
         sh: |
           set -eu
           case "{{ .DIRCTL_OS }}-{{ .DIRCTL_ARCH }}" in
-            darwin-amd64) echo "edca017b72bd6f6d6169413f2e95fe5b6f5e42b218f52de25e64346020e09a31" ;;
-            darwin-arm64) echo "f33ab1ef9ae600dc904c454bf8374acea00561abac5b3531e0045a3d124ecc14" ;;
-            linux-amd64) echo "311f6d56c0497282a922844fc7f7053204fec125297931de69f8b26e9ed8ee6d" ;;
-            linux-arm64) echo "b948525d729a80ff7101c77a3db69c4e537e34d392f000d8c7b5ed4f0a805776" ;;
-            windows-amd64) echo "4f3e7bcccbbbbf49ebd0b9c72a55d23ca17d8f6f2dbd595a979f4cd6929259c2" ;;
+            darwin-amd64) echo "4a190bcc4f2eac24ee5b3d00e0ab25efe3954b62c1ed5fb1814ec870dfa65299" ;;
+            darwin-arm64) echo "d46c4104247d7f90bc4a2acea2ad4fb62a65ab2b392870784f1ea6554de31431" ;;
+            linux-amd64) echo "229ec5391032b577cd1056dd67970d92191bc27fb6988300a5d3d9e114226124" ;;
+            linux-arm64) echo "069c9ec217ef749acefab5ca31db3ba864b9daf2f673d867e1eefbcce11baae6" ;;
+            windows-amd64) echo "4863c97a8c402b001ec2a6c54da2aeac31ff3c2654c619d322eb798e6390fcc7" ;;
             *)
               echo "Unsupported dirctl target: {{ .DIRCTL_OS }}-{{ .DIRCTL_ARCH }}" >&2
               exit 1

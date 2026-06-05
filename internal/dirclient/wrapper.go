@@ -419,7 +419,7 @@ func (c *Client) Delete(ctx context.Context, cid string) error {
 // CreateSync instructs the server to pull the given CIDs from remoteURL.
 // It returns the sync ID which can be polled with GetSyncStatus.
 func (c *Client) CreateSync(ctx context.Context, remoteURL string, cids []string) (string, error) {
-	syncID, err := c.c.CreateSync(ctx, remoteURL, cids)
+	syncID, err := c.c.CreateSync(ctx, remoteURL, cids, nil)
 	if err != nil {
 		return "", fmt.Errorf("creating sync from %s: %w", remoteURL, err)
 	}
