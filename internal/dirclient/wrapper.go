@@ -93,32 +93,43 @@ func (c *Client) Close() {
 	}
 }
 
-// Ping verifies the server is reachable by issuing a minimal search RPC and
-// waiting for the first response (or stream completion). It does not wait for
-// the entire result set, making it suitable as a lightweight health check.
+// Ping verifies the server is reachable by issuing a lightweight SearchCIDs
+// RPC (database-only, no OCI store pull) and waiting for the first response or
+// stream completion. This avoids server-side log noise from store pulls being
+// interrupted by context cancellation.
 func (c *Client) Ping(ctx context.Context) error {
-	req := &searchv1.SearchRecordsRequest{}
-	result, err := c.c.SearchRecords(ctx, req)
+	rpcCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	limit := uint32(1)
+	req := &searchv1.SearchCIDsRequest{Limit: &limit}
+	result, err := c.c.SearchCIDs(rpcCtx, req)
 	if err != nil {
 		return err
 	}
-	// Wait for the first record, an error, or stream end — whichever comes
-	// first. Then drain the rest in the background so the stream is not leaked.
-	select {
-	case _, ok := <-result.ResCh():
-		if ok {
-			go func() {
-				for range result.ResCh() {
-				}
-			}()
+
+	resCh := result.ResCh()
+	errCh := result.ErrCh()
+	for {
+		select {
+		case _, ok := <-resCh:
+			if ok {
+				return nil
+			}
+			resCh = nil
+		case err, ok := <-errCh:
+			if !ok {
+				errCh = nil
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		case <-result.DoneCh():
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-		return nil
-	case err := <-result.ErrCh():
-		return err
-	case <-result.DoneCh():
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
 	}
 }
 
