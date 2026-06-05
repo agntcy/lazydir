@@ -172,6 +172,7 @@ Config-file defaults for server addresses and timeouts. CLI flags and environmen
 
 ```yaml
 server:
+  # dirctlConfigPath: "~/.config/dirctl/config.yaml"  # import contexts from dirctl (opt-in)
   directoryServers:
     - address: "localhost:8888"
     - address: "dir.example.com:443"
@@ -183,6 +184,17 @@ server:
 ```
 
 Servers with `oidcIssuer` and `oidcClientID` trigger an OIDC device-flow login when no cached token is available. The TUI displays the authorization URL and code inline.
+
+### Importing dirctl contexts
+
+If you use [dirctl](https://github.com/agntcy/dir), you can point `dirctlConfigPath` at your dirctl config file to import its named contexts as directory server entries. This avoids duplicating server definitions across both tools.
+
+```yaml
+server:
+  dirctlConfigPath: "~/.config/dirctl/config.yaml"
+```
+
+Imported contexts appear in the server selection popup with their context name as a label (e.g. `prod (ads.outshift.io:443)`). Manually configured `directoryServers` are appended after the imported entries, so they can extend or override as needed. If the dirctl file is missing or unreadable, lazydir logs a warning and continues with only the manually configured servers.
 
 ### Stream tuning
 
@@ -202,7 +214,8 @@ lazydir/
 ├── go.mod / go.sum
 ├── internal/
 │   ├── config/
-│   │   └── config.go              # Config file loading; color name resolution
+│   │   ├── config.go              # Config file loading; color name resolution
+│   │   └── dirctl.go              # Parsing dirctl contexts into DirectoryEntry list
 │   ├── gui/
 │   │   ├── gui.go                 # Top-level Gui struct; gocui init; async helpers
 │   │   ├── theme.go               # Color palette (Theme); defaults; config integration

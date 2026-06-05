@@ -58,10 +58,17 @@ type DirectoryEntry struct {
 	TLSSkipVerify bool   `yaml:"tlsSkipVerify"`
 	OIDCIssuer    string `yaml:"oidcIssuer"`
 	OIDCClientID  string `yaml:"oidcClientID"`
+
+	// ContextName is set for entries imported from a dirctl config file.
+	ContextName string `yaml:"-"`
 }
 
 // Label returns a human-readable label for display in the server popup.
+// For entries imported from dirctl, the context name is shown as a prefix.
 func (e DirectoryEntry) Label() string {
+	if e.ContextName != "" {
+		return e.ContextName + " (" + e.Address + ")"
+	}
 	return e.Address
 }
 
@@ -69,6 +76,7 @@ func (e DirectoryEntry) Label() string {
 // predefined servers the user can switch between in the TUI; the first
 // entry in each list is used as the initial/default connection target.
 type ServerConfig struct {
+	DirctlConfigPath string           `yaml:"dirctlConfigPath"`
 	DirectoryServers []DirectoryEntry `yaml:"directoryServers"`
 	OASFServers      []string         `yaml:"oasfServers"`
 	OASFTimeout      int              `yaml:"oasfTimeout"`
@@ -78,11 +86,24 @@ type ServerConfig struct {
 	OASFAddress      string `yaml:"oasfAddress"`
 }
 
-// ResolveDirectoryServers returns the effective directory server list,
-// promoting the deprecated single-address field if the list is empty.
+// ResolveDirectoryServers returns the effective directory server list.
+// When DirctlConfigPath is set, imported contexts are prepended before
+// the manually configured entries. The deprecated single-address field
+// is promoted if no other entries exist.
 func (s ServerConfig) ResolveDirectoryServers() []DirectoryEntry {
-	if len(s.DirectoryServers) > 0 {
-		return s.DirectoryServers
+	var merged []DirectoryEntry
+
+	if s.DirctlConfigPath != "" {
+		imported, err := LoadDirctlContexts(s.DirctlConfigPath)
+		if err == nil {
+			merged = append(merged, imported...)
+		}
+	}
+
+	merged = append(merged, s.DirectoryServers...)
+
+	if len(merged) > 0 {
+		return merged
 	}
 	if s.DirectoryAddress != "" {
 		return []DirectoryEntry{{Address: s.DirectoryAddress}}
