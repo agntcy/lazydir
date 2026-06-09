@@ -46,10 +46,14 @@ func LoadDirctlContexts(path string) ([]DirectoryEntry, error) {
 	}
 
 	contextsNode := findMapValue(&root, "contexts")
-	if contextsNode == nil || contextsNode.Kind != yaml.MappingNode {
+	if contextsNode == nil {
 		return nil, nil
 	}
+	if contextsNode.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("parsing dirctl config: \"contexts\" is not a mapping")
+	}
 
+	var warnings []string
 	entries := make([]DirectoryEntry, 0, len(contextsNode.Content)/2)
 	for i := 0; i+1 < len(contextsNode.Content); i += 2 {
 		keyNode := contextsNode.Content[i]
@@ -59,9 +63,11 @@ func LoadDirctlContexts(path string) ([]DirectoryEntry, error) {
 
 		var ctx dirctlContext
 		if err := valNode.Decode(&ctx); err != nil {
+			warnings = append(warnings, fmt.Sprintf("context %q: %v", name, err))
 			continue
 		}
 		if ctx.ServerAddress == "" {
+			warnings = append(warnings, fmt.Sprintf("context %q: missing server_address", name))
 			continue
 		}
 
@@ -79,7 +85,11 @@ func LoadDirctlContexts(path string) ([]DirectoryEntry, error) {
 		})
 	}
 
-	return entries, nil
+	var warnErr error
+	if len(warnings) > 0 {
+		warnErr = fmt.Errorf("dirctl config: %s", strings.Join(warnings, "; "))
+	}
+	return entries, warnErr
 }
 
 // findMapValue walks a yaml.Node tree to locate the value node for a given

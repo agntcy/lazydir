@@ -107,8 +107,8 @@ contexts:
 	}
 
 	entries, err := LoadDirctlContexts(path)
-	if err != nil {
-		t.Fatalf("LoadDirctlContexts() error = %v", err)
+	if err == nil {
+		t.Error("expected warning error for empty server_address, got nil")
 	}
 
 	if len(entries) != 1 {
