@@ -90,12 +90,19 @@ type ServerConfig struct {
 // When DirctlConfigPath is set, imported contexts are prepended before
 // the manually configured entries. The deprecated single-address field
 // is promoted if no other entries exist.
-func (s ServerConfig) ResolveDirectoryServers() []DirectoryEntry {
+//
+// If importing dirctl contexts fails, the error is returned alongside
+// whatever servers could be resolved (manual entries still work).
+// Callers should log the error as a warning rather than treating it as fatal.
+func (s ServerConfig) ResolveDirectoryServers() ([]DirectoryEntry, error) {
 	var merged []DirectoryEntry
+	var dirctlErr error
 
 	if s.DirctlConfigPath != "" {
 		imported, err := LoadDirctlContexts(s.DirctlConfigPath)
-		if err == nil {
+		if err != nil {
+			dirctlErr = err
+		} else {
 			merged = append(merged, imported...)
 		}
 	}
@@ -103,12 +110,12 @@ func (s ServerConfig) ResolveDirectoryServers() []DirectoryEntry {
 	merged = append(merged, s.DirectoryServers...)
 
 	if len(merged) > 0 {
-		return merged
+		return merged, dirctlErr
 	}
 	if s.DirectoryAddress != "" {
-		return []DirectoryEntry{{Address: s.DirectoryAddress}}
+		return []DirectoryEntry{{Address: s.DirectoryAddress}}, dirctlErr
 	}
-	return nil
+	return nil, dirctlErr
 }
 
 // ResolveOASFServers returns the effective OASF server list, promoting

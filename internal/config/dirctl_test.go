@@ -215,7 +215,10 @@ contexts:
 		DirectoryServers: []DirectoryEntry{{Address: "manual.example.com:443"}},
 	}
 
-	got := s.ResolveDirectoryServers()
+	got, err := s.ResolveDirectoryServers()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(got) != 2 {
 		t.Fatalf("expected 2 entries, got %d: %+v", len(got), got)
 	}
@@ -235,9 +238,12 @@ func TestResolveDirectoryServers_DirctlMissing(t *testing.T) {
 		DirectoryServers: []DirectoryEntry{{Address: "fallback.example.com:443"}},
 	}
 
-	got := s.ResolveDirectoryServers()
+	got, err := s.ResolveDirectoryServers()
+	if err == nil {
+		t.Error("expected error for missing dirctl config, got nil")
+	}
 	if len(got) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(got))
+		t.Fatalf("expected 1 entry despite error, got %d", len(got))
 	}
 	if got[0].Address != "fallback.example.com:443" {
 		t.Errorf("expected fallback entry, got %+v", got[0])

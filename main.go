@@ -38,7 +38,10 @@ func main() {
 }
 
 func buildConfig(userCfg config.Config) gui.Config {
-	dirServers := userCfg.Server.ResolveDirectoryServers()
+	dirServers, dirctlErr := userCfg.Server.ResolveDirectoryServers()
+	if dirctlErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", dirctlErr)
+	}
 	if len(dirServers) == 0 {
 		dirServers = []config.DirectoryEntry{{Address: "localhost:8888"}}
 	}
