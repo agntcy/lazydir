@@ -57,6 +57,7 @@ var perPanelBindings = map[string]panelBindings{
 		title: "[3] Records",
 		bindings: []binding{
 			{"↑↓ / j k", "navigate", true},
+			{"enter", "expand / open preview", true},
 			{"/", "filter by name", true},
 			{"i", "toggle record info", true},
 			{"y", "yank/copy options", true},
@@ -64,7 +65,6 @@ var perPanelBindings = map[string]panelBindings{
 			{"V", "paste records", true},
 			{"d", "delete record", true},
 			{"esc", "clear filter", false},
-			{"enter", "confirm filter", false},
 			{"wheel", "scroll", false},
 		},
 	},
@@ -75,6 +75,7 @@ var perPanelBindings = map[string]panelBindings{
 			{"enter", "expand / collapse", true},
 			{"e", "expand all", true},
 			{"E", "collapse all", true},
+			{"esc", "back to records", true},
 			{"wheel", "scroll", false},
 		},
 	},

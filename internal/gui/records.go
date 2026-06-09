@@ -92,7 +92,7 @@ func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
 		subtitle += " " + rec.Version
 	}
 	go app.pullRecord(subtitle, rec.CID)
-	return nil
+	return app.focusTo(g, viewPreview)
 }
 
 func (app *Gui) openFilterDialog(g *gocui.Gui, v *gocui.View) error {
