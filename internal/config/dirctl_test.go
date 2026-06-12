@@ -299,7 +299,7 @@ contexts:
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(got) != 3 {
-		t.Fatalf("expected 3 entries (2 imported, 1 shared overridden, 1 extra), got %d: %+v", len(got), got)
+		t.Fatalf("expected 3 entries (1 overridden + 1 imported-only + 1 manual-only), got %d: %+v", len(got), got)
 	}
 	if got[0].Address != "shared.example.com:443" || got[0].AuthMode != "oidc" {
 		t.Errorf("entries[0] should be overridden manual entry, got %+v", got[0])

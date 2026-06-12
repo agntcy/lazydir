@@ -107,7 +107,16 @@ func checkRootIsMapping(root *yaml.Node) error {
 		n = n.Content[0]
 	}
 	if n.Kind != yaml.MappingNode {
-		return fmt.Errorf("expected a YAML mapping at root, got kind %d", n.Kind)
+		name := "unknown"
+		switch n.Kind {
+		case yaml.ScalarNode:
+			name = "scalar"
+		case yaml.SequenceNode:
+			name = "sequence"
+		case yaml.AliasNode:
+			name = "alias"
+		}
+		return fmt.Errorf("expected a YAML mapping at root, got %s", name)
 	}
 	return nil
 }
