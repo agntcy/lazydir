@@ -194,7 +194,7 @@ server:
   dirctlConfigPath: "~/.config/dirctl/config.yaml"
 ```
 
-Imported contexts appear in the server selection popup with their context name as a label (e.g. `prod (ads.outshift.io:443)`). Manually configured `directoryServers` are appended after the imported entries, so they can extend or override as needed. If the dirctl file is missing or unreadable, lazydir logs a warning and continues with only the manually configured servers.
+Imported contexts appear in the server selection popup with their context name as a label (e.g. `prod (ads.outshift.io:443)`). If a manually configured entry in `directoryServers` has the same address as an imported context, it replaces the imported version in-place (keeping the imported ordering); entries with new addresses are appended after the imported ones. If the dirctl file is missing or unreadable, lazydir prints a warning to stderr and continues with only the manually configured servers.
 
 ### Stream tuning
 
