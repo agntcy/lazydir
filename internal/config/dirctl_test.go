@@ -230,6 +230,44 @@ contexts:
 	}
 }
 
+func TestResolveDirectoryServers_DirctlPartialWarning(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	data := []byte(`
+contexts:
+  good:
+    server_address: good.example.com:443
+    auth_mode: tls
+  bad:
+    server_address: ""
+    auth_mode: insecure
+`)
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := ServerConfig{
+		DirctlConfigPath: path,
+		DirectoryServers: []DirectoryEntry{{Address: "manual.example.com:443"}},
+	}
+
+	got, err := s.ResolveDirectoryServers()
+	if err == nil {
+		t.Fatal("expected warning error for skipped context, got nil")
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 entries (1 imported + 1 manual), got %d: %+v", len(got), got)
+	}
+	if got[0].ContextName != "good" || got[0].Address != "good.example.com:443" {
+		t.Errorf("entries[0] = %+v, want imported 'good' context first", got[0])
+	}
+	if got[1].Address != "manual.example.com:443" {
+		t.Errorf("entries[1].Address = %q, want %q", got[1].Address, "manual.example.com:443")
+	}
+}
+
 func TestResolveDirectoryServers_DirctlMissing(t *testing.T) {
 	t.Parallel()
 

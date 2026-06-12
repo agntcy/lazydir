@@ -21,7 +21,7 @@ gui:
   inputDebounceDelay: 150 # ms before live filter fires
 
 server:
-  dirctlConfigPath: "~/.config/dirctl/config.yaml" # import named contexts from dirctl
+  # dirctlConfigPath: "~/.config/dirctl/config.yaml" # import named contexts from dirctl
   directoryServers: # predefined servers shown in popup (first = default)
     - address: "localhost:8888"
     - address: "dir.example.com:443"

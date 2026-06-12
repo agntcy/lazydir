@@ -102,9 +102,8 @@ func (s ServerConfig) ResolveDirectoryServers() ([]DirectoryEntry, error) {
 		imported, err := LoadDirctlContexts(s.DirctlConfigPath)
 		if err != nil {
 			dirctlErr = err
-		} else {
-			merged = append(merged, imported...)
 		}
+		merged = append(merged, imported...)
 	}
 
 	merged = append(merged, s.DirectoryServers...)
