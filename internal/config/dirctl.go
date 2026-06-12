@@ -45,6 +45,10 @@ func LoadDirctlContexts(path string) ([]DirectoryEntry, error) {
 		return nil, fmt.Errorf("parsing dirctl config: %w", err)
 	}
 
+	if err := checkRootIsMapping(&root); err != nil {
+		return nil, fmt.Errorf("parsing dirctl config: %w", err)
+	}
+
 	contextsNode := findMapValue(&root, "contexts")
 	if contextsNode == nil {
 		return nil, nil
@@ -92,13 +96,29 @@ func LoadDirctlContexts(path string) ([]DirectoryEntry, error) {
 	return entries, warnErr
 }
 
+// checkRootIsMapping unwraps a document node and returns an error if the
+// root element is not a YAML mapping (e.g. a sequence or scalar).
+func checkRootIsMapping(root *yaml.Node) error {
+	if root == nil {
+		return nil
+	}
+	n := root
+	if n.Kind == yaml.DocumentNode && len(n.Content) > 0 {
+		n = n.Content[0]
+	}
+	if n.Kind != yaml.MappingNode {
+		return fmt.Errorf("expected a YAML mapping at root, got kind %d", n.Kind)
+	}
+	return nil
+}
+
 // findMapValue walks a yaml.Node tree to locate the value node for a given
-// top-level mapping key.
+// top-level mapping key. Returns nil when the key is not present.
+// Callers should validate the root structure with checkRootIsMapping first.
 func findMapValue(root *yaml.Node, key string) *yaml.Node {
 	if root == nil {
 		return nil
 	}
-	// Unwrap document node.
 	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
 		root = root.Content[0]
 	}

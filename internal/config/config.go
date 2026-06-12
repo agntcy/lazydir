@@ -88,8 +88,10 @@ type ServerConfig struct {
 
 // ResolveDirectoryServers returns the effective directory server list.
 // When DirctlConfigPath is set, imported contexts are prepended before
-// the manually configured entries. The deprecated single-address field
-// is promoted if no other entries exist.
+// the manually configured entries. Manual entries with the same Address
+// as an imported context replace the imported version, allowing explicit
+// config to override dirctl defaults. The deprecated single-address
+// field is promoted if no other entries exist.
 //
 // If importing dirctl contexts fails, the error is returned alongside
 // whatever servers could be resolved (manual entries still work).
@@ -106,7 +108,23 @@ func (s ServerConfig) ResolveDirectoryServers() ([]DirectoryEntry, error) {
 		merged = append(merged, imported...)
 	}
 
-	merged = append(merged, s.DirectoryServers...)
+	seen := make(map[string]bool, len(merged))
+	for _, e := range merged {
+		seen[e.Address] = true
+	}
+	for _, e := range s.DirectoryServers {
+		if seen[e.Address] {
+			for i, m := range merged {
+				if m.Address == e.Address {
+					merged[i] = e
+					break
+				}
+			}
+		} else {
+			merged = append(merged, e)
+			seen[e.Address] = true
+		}
+	}
 
 	if len(merged) > 0 {
 		return merged, dirctlErr

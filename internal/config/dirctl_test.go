@@ -268,6 +268,68 @@ contexts:
 	}
 }
 
+func TestResolveDirectoryServers_ManualOverridesImported(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	data := []byte(`
+contexts:
+  shared:
+    server_address: shared.example.com:443
+    auth_mode: insecure
+  unique:
+    server_address: unique.example.com:443
+    auth_mode: tls
+`)
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := ServerConfig{
+		DirctlConfigPath: path,
+		DirectoryServers: []DirectoryEntry{
+			{Address: "shared.example.com:443", AuthMode: "oidc"},
+			{Address: "extra.example.com:443"},
+		},
+	}
+
+	got, err := s.ResolveDirectoryServers()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 entries (2 imported, 1 shared overridden, 1 extra), got %d: %+v", len(got), got)
+	}
+	if got[0].Address != "shared.example.com:443" || got[0].AuthMode != "oidc" {
+		t.Errorf("entries[0] should be overridden manual entry, got %+v", got[0])
+	}
+	if got[0].ContextName != "" {
+		t.Errorf("overridden entry should lose ContextName, got %q", got[0].ContextName)
+	}
+	if got[1].Address != "unique.example.com:443" {
+		t.Errorf("entries[1].Address = %q, want %q", got[1].Address, "unique.example.com:443")
+	}
+	if got[2].Address != "extra.example.com:443" {
+		t.Errorf("entries[2].Address = %q, want %q", got[2].Address, "extra.example.com:443")
+	}
+}
+
+func TestLoadDirctlContexts_NonMappingRoot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("- item1\n- item2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadDirctlContexts(path)
+	if err == nil {
+		t.Error("expected error for non-mapping root YAML, got nil")
+	}
+}
+
 func TestResolveDirectoryServers_DirctlMissing(t *testing.T) {
 	t.Parallel()
 
