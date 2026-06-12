@@ -93,8 +93,8 @@ func (app *Gui) openServerSelectPopup(g *gocui.Gui, v *gocui.View) error {
 	var items []string
 	if app.state.connCursor == 0 {
 		for _, entry := range app.cfg.DirectoryServers {
-			label := entry.Address
-			if entry.OIDCIssuer != "" {
+			label := entry.Label()
+			if entry.OIDCIssuer != "" && entry.ContextName == "" {
 				label += " (oidc)"
 			}
 			items = append(items, label)
