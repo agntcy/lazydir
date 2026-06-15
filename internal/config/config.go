@@ -108,21 +108,16 @@ func (s ServerConfig) ResolveDirectoryServers() ([]DirectoryEntry, error) {
 		merged = append(merged, imported...)
 	}
 
-	seen := make(map[string]bool, len(merged))
-	for _, e := range merged {
-		seen[e.Address] = true
+	index := make(map[string]int, len(merged))
+	for i, e := range merged {
+		index[e.Address] = i
 	}
 	for _, e := range s.DirectoryServers {
-		if seen[e.Address] {
-			for i, m := range merged {
-				if m.Address == e.Address {
-					merged[i] = e
-					break
-				}
-			}
+		if idx, ok := index[e.Address]; ok {
+			merged[idx] = e
 		} else {
+			index[e.Address] = len(merged)
 			merged = append(merged, e)
-			seen[e.Address] = true
 		}
 	}
 

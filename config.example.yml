@@ -36,7 +36,7 @@ server:
     #   tlsSkipVerify: false
     # - address: "ci.example.com:443"
     #   authMode: "jwt"
-    #   authToken: ""             # or use DIRECTORY_CLIENT_SERVER_ADDRESS env var
+    #   authToken: ""
   oasfServers: # predefined OASF servers (first = default)
     - "https://schema.oasf.outshift.com"
   oasfTimeout: 10 # seconds for OASF HTTP requests
