@@ -109,6 +109,10 @@ func checkRootIsMapping(root *yaml.Node) error {
 	if n.Kind != yaml.MappingNode {
 		name := "unknown"
 		switch n.Kind {
+		case 0:
+			name = "empty document"
+		case yaml.DocumentNode:
+			name = "empty document"
 		case yaml.ScalarNode:
 			name = "scalar"
 		case yaml.SequenceNode:
