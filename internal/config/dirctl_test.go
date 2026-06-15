@@ -166,24 +166,27 @@ contexts: {}
 }
 
 func TestLoadDirctlContexts_TildeExpansion(t *testing.T) {
-	fakeHome := t.TempDir()
-	dirctlDir := filepath.Join(fakeHome, ".config", "dirctl")
-	if err := os.MkdirAll(dirctlDir, 0o755); err != nil {
-		t.Fatal(err)
+	t.Parallel()
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("cannot determine home directory: %v", err)
 	}
+
+	const uniqueName = ".lazydir-test-tilde-expansion.yaml"
+	absPath := filepath.Join(home, uniqueName)
 	data := []byte(`
 contexts:
   tilde-test:
     server_address: tilde.example.com:443
     auth_mode: insecure
 `)
-	if err := os.WriteFile(filepath.Join(dirctlDir, "config.yaml"), data, 0o644); err != nil {
-		t.Fatal(err)
+	if err := os.WriteFile(absPath, data, 0o644); err != nil {
+		t.Fatalf("writing temp file: %v", err)
 	}
+	t.Cleanup(func() { os.Remove(absPath) })
 
-	t.Setenv("HOME", fakeHome)
-
-	entries, err := LoadDirctlContexts("~/.config/dirctl/config.yaml")
+	entries, err := LoadDirctlContexts("~/" + uniqueName)
 	if err != nil {
 		t.Fatalf("LoadDirctlContexts() error = %v", err)
 	}
