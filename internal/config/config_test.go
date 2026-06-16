@@ -100,7 +100,10 @@ func TestResolveDirectoryServers(t *testing.T) {
 			DirectoryServers: []DirectoryEntry{{Address: "a:1"}, {Address: "b:2"}},
 			DirectoryAddress: "c:3",
 		}
-		got := s.ResolveDirectoryServers()
+		got, err := s.ResolveDirectoryServers()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if len(got) != 2 || got[0].Address != "a:1" {
 			t.Errorf("expected list servers, got %+v", got)
 		}
@@ -109,7 +112,10 @@ func TestResolveDirectoryServers(t *testing.T) {
 	t.Run("deprecated fallback", func(t *testing.T) {
 		t.Parallel()
 		s := ServerConfig{DirectoryAddress: "legacy:8888"}
-		got := s.ResolveDirectoryServers()
+		got, err := s.ResolveDirectoryServers()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if len(got) != 1 || got[0].Address != "legacy:8888" {
 			t.Errorf("expected deprecated address, got %+v", got)
 		}
@@ -118,7 +124,11 @@ func TestResolveDirectoryServers(t *testing.T) {
 	t.Run("empty returns nil", func(t *testing.T) {
 		t.Parallel()
 		s := ServerConfig{}
-		if got := s.ResolveDirectoryServers(); got != nil {
+		got, err := s.ResolveDirectoryServers()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != nil {
 			t.Errorf("expected nil, got %+v", got)
 		}
 	})

@@ -58,10 +58,17 @@ type DirectoryEntry struct {
 	TLSSkipVerify bool   `yaml:"tlsSkipVerify"`
 	OIDCIssuer    string `yaml:"oidcIssuer"`
 	OIDCClientID  string `yaml:"oidcClientID"`
+
+	// ContextName is set for entries imported from a dirctl config file.
+	ContextName string `yaml:"-"`
 }
 
 // Label returns a human-readable label for display in the server popup.
+// For entries imported from dirctl, the context name is shown as a prefix.
 func (e DirectoryEntry) Label() string {
+	if e.ContextName != "" {
+		return e.ContextName + " (" + e.Address + ")"
+	}
 	return e.Address
 }
 
@@ -69,6 +76,7 @@ func (e DirectoryEntry) Label() string {
 // predefined servers the user can switch between in the TUI; the first
 // entry in each list is used as the initial/default connection target.
 type ServerConfig struct {
+	DirctlConfigPath string           `yaml:"dirctlConfigPath"`
 	DirectoryServers []DirectoryEntry `yaml:"directoryServers"`
 	OASFServers      []string         `yaml:"oasfServers"`
 	OASFTimeout      int              `yaml:"oasfTimeout"`
@@ -78,16 +86,48 @@ type ServerConfig struct {
 	OASFAddress      string `yaml:"oasfAddress"`
 }
 
-// ResolveDirectoryServers returns the effective directory server list,
-// promoting the deprecated single-address field if the list is empty.
-func (s ServerConfig) ResolveDirectoryServers() []DirectoryEntry {
-	if len(s.DirectoryServers) > 0 {
-		return s.DirectoryServers
+// ResolveDirectoryServers returns the effective directory server list.
+// When DirctlConfigPath is set, imported contexts are prepended before
+// the manually configured entries. Manual entries with the same Address
+// as an imported context replace the imported version, allowing explicit
+// config to override dirctl defaults. The deprecated single-address
+// field is promoted if no other entries exist.
+//
+// If importing dirctl contexts fails, the error is returned alongside
+// whatever servers could be resolved (manual entries still work).
+// Callers should log the error as a warning rather than treating it as fatal.
+func (s ServerConfig) ResolveDirectoryServers() ([]DirectoryEntry, error) {
+	var merged []DirectoryEntry
+	var dirctlErr error
+
+	if s.DirctlConfigPath != "" {
+		imported, err := LoadDirctlContexts(s.DirctlConfigPath)
+		if err != nil {
+			dirctlErr = err
+		}
+		merged = append(merged, imported...)
+	}
+
+	index := make(map[string]int, len(merged))
+	for i, e := range merged {
+		index[e.Address] = i
+	}
+	for _, e := range s.DirectoryServers {
+		if idx, ok := index[e.Address]; ok {
+			merged[idx] = e
+		} else {
+			index[e.Address] = len(merged)
+			merged = append(merged, e)
+		}
+	}
+
+	if len(merged) > 0 {
+		return merged, dirctlErr
 	}
 	if s.DirectoryAddress != "" {
-		return []DirectoryEntry{{Address: s.DirectoryAddress}}
+		return []DirectoryEntry{{Address: s.DirectoryAddress}}, dirctlErr
 	}
-	return nil
+	return nil, dirctlErr
 }
 
 // ResolveOASFServers returns the effective OASF server list, promoting

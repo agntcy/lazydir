@@ -3,30 +3,31 @@
 
 gui:
   theme:
-    color1: "yellow"        # skills, annotations
-    color2: "cyan"          # domains, class tree, accents
-    color3: "magenta"       # modules, timestamps
-    color4: "green"         # connected indicator, OASF version, loading
-    color5: "blue"          # version filter, options bar, section headers
-    color6: "red"           # disconnected indicator
-    color7: "brightRed"     # author filter
-    color8: "brightYellow"  # trusted filter
-    color9: "brightGreen"   # verified filter
-    color10: "brightBlack"  # dim/muted text (IDs)
-    activeBorderColor: "green"    # focused panel border + cursor
-    selectedRowBgColor: "8"       # highlighted row background (256-color)
-  dimLevel: 0.6                   # preview dimming when a popup is open (0 = off, 1 = invisible)
-  scrollStep: 3                   # lines per scroll keypress
-  splitRatio: 0.33                # left panel width as fraction of terminal
-  inputDebounceDelay: 150         # ms before live filter fires
+    color1: "yellow" # skills, annotations
+    color2: "cyan" # domains, class tree, accents
+    color3: "magenta" # modules, timestamps
+    color4: "green" # connected indicator, OASF version, loading
+    color5: "blue" # version filter, options bar, section headers
+    color6: "red" # disconnected indicator
+    color7: "brightRed" # author filter
+    color8: "brightYellow" # trusted filter
+    color9: "brightGreen" # verified filter
+    color10: "brightBlack" # dim/muted text (IDs)
+    activeBorderColor: "green" # focused panel border + cursor
+    selectedRowBgColor: "8" # highlighted row background (256-color)
+  dimLevel: 0.6 # preview dimming when a popup is open (0 = off, 1 = invisible)
+  scrollStep: 3 # lines per scroll keypress
+  splitRatio: 0.33 # left panel width as fraction of terminal
+  inputDebounceDelay: 150 # ms before live filter fires
 
 server:
-  directoryServers:               # predefined servers shown in popup (first = default)
+  # dirctlConfigPath: "~/.config/dirctl/config.yaml" # import named contexts from dirctl
+  directoryServers: # predefined servers shown in popup (first = default)
     - address: "localhost:8888"
-    # - address: "dir.example.com:443"
-    #   authMode: "oidc"          # insecure | tls | oidc | jwt | x509
-    #   oidcIssuer: "https://auth.example.com"
-    #   oidcClientID: "lazydir"
+    - address: "dir.example.com:443"
+      authMode: "oidc" # insecure | tls | oidc | jwt | x509
+      oidcIssuer: "https://auth.example.com"
+      oidcClientID: "lazydir"
     # - address: "secure.example.com:443"
     #   authMode: "tls"
     #   tlsCAFile: "/path/to/ca.pem"
@@ -35,10 +36,10 @@ server:
     #   tlsSkipVerify: false
     # - address: "ci.example.com:443"
     #   authMode: "jwt"
-    #   authToken: ""             # or use DIRECTORY_CLIENT_SERVER_ADDRESS env var
-  oasfServers:                    # predefined OASF servers (first = default)
+    #   authToken: ""
+  oasfServers: # predefined OASF servers (first = default)
     - "https://schema.oasf.outshift.com"
-  oasfTimeout: 10                 # seconds for OASF HTTP requests
+  oasfTimeout: 10 # seconds for OASF HTTP requests
 
 stream:
   firstPageSize: 100
