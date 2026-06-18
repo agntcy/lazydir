@@ -181,6 +181,13 @@ func (app *Gui) clearFilter(g *gocui.Gui, v *gocui.View) error {
 		app.renderRecordsView(g)
 		return nil
 	}
+	rows := app.state.recordDisplayRows
+	if app.state.recordCursor < len(rows) {
+		row := rows[app.state.recordCursor]
+		if row.grouped || (row.groupName != "" && app.state.recordGroupExpanded[row.groupName]) {
+			return app.recordCollapse(g, v)
+		}
+	}
 	if len(app.state.clipboard) > 0 {
 		return app.clipboardClear(g, v)
 	}

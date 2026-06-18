@@ -151,7 +151,8 @@ func (app *Gui) filterCollapse(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-// filterEsc clears the search query when active.
+// filterEsc clears the search query when active, or collapses the current
+// category if the cursor is on a child option row.
 func (app *Gui) filterEsc(g *gocui.Gui, v *gocui.View) error {
 	if app.state.filters.filterQuery != "" {
 		app.state.filters.filterQuery = ""
@@ -159,7 +160,7 @@ func (app *Gui) filterEsc(g *gocui.Gui, v *gocui.View) error {
 		app.renderFiltersView(g)
 		return nil
 	}
-	return nil
+	return app.filterCollapse(g, v)
 }
 
 // filterOpenSearch opens the input prompt to search filter options across all
