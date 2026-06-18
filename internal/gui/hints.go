@@ -85,6 +85,22 @@ var perPanelBindings = map[string]panelBindings{
 			{"wheel", "scroll", false},
 		},
 	},
+	viewCopyMenu: {
+		title: "Copy options",
+		bindings: []binding{
+			{"↑↓ / j k", "navigate", true},
+			{"enter", "select", true},
+			{"esc", "close", true},
+		},
+	},
+	viewConfirmPopup: {
+		title: "Confirm",
+		bindings: []binding{
+			{"↑↓ / j k", "navigate", true},
+			{"enter", "select", true},
+			{"esc", "close", true},
+		},
+	},
 }
 
 // optionsBarText returns the keybinding hints for the bottom-left options bar,

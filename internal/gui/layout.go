@@ -243,6 +243,9 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.FrameRunes = roundedFrame
 		v.Wrap = false
 		v.Visible = false
+		v.Highlight = true
+		v.SelBgColor = g.theme.SelectedRowBg
+		v.SelFgColor = gocui.ColorDefault
 	}
 
 	// Confirmation popup — positioned in the right column.
@@ -251,6 +254,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		if cfv, _ := gui.View(viewConfirmPopup); cfv != nil && cfv.Visible {
 			cfMaxW := maxX - 1 - rightX0 - 2
 			cfCW, cfCH := popupContentSize(g.state.confirmPopupText, cfMaxW)
+			cfCH += 1 + len(g.state.menu.options)
 			cfX0, cfY0, cfX1, cfY1 = popupRect(gui, viewRecords,
 				cfCW, cfCH, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
 		}
@@ -263,6 +267,9 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 			v.FrameRunes = roundedFrame
 			v.Wrap = true
 			v.Visible = false
+			v.Highlight = true
+			v.SelBgColor = g.theme.SelectedRowBg
+			v.SelFgColor = gocui.ColorDefault
 		}
 	}
 

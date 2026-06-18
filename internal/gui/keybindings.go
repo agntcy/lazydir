@@ -211,13 +211,20 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	}
 
 	// ── Copy menu popup ─────────────────────────────────────────────────────
-	if err := g.SetKeybinding(viewCopyMenu, 'c', gocui.ModNone, app.copyCID); err != nil {
+	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
+		if err := g.SetKeybinding(viewCopyMenu, key, gocui.ModNone, app.menuCursorUp); err != nil {
+			return err
+		}
+	}
+	for _, key := range []interface{}{gocui.KeyArrowDown, 'j'} {
+		if err := g.SetKeybinding(viewCopyMenu, key, gocui.ModNone, app.menuCursorDown); err != nil {
+			return err
+		}
+	}
+	if err := g.SetKeybinding(viewCopyMenu, gocui.KeyEnter, gocui.ModNone, app.menuSelect); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewCopyMenu, 'a', gocui.ModNone, app.copyRecordJSON); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(viewCopyMenu, gocui.KeyEsc, gocui.ModNone, app.closeCopyMenu); err != nil {
+	if err := g.SetKeybinding(viewCopyMenu, gocui.KeyEsc, gocui.ModNone, app.menuClose); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewCopyMenu, gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
@@ -225,16 +232,20 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	}
 
 	// ── Confirmation popup ─────────────────────────────────────────────────
-	if err := g.SetKeybinding(viewConfirmPopup, 'y', gocui.ModNone, app.confirmPopupYes); err != nil {
+	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
+		if err := g.SetKeybinding(viewConfirmPopup, key, gocui.ModNone, app.confirmMenuUp); err != nil {
+			return err
+		}
+	}
+	for _, key := range []interface{}{gocui.KeyArrowDown, 'j'} {
+		if err := g.SetKeybinding(viewConfirmPopup, key, gocui.ModNone, app.confirmMenuDown); err != nil {
+			return err
+		}
+	}
+	if err := g.SetKeybinding(viewConfirmPopup, gocui.KeyEnter, gocui.ModNone, app.confirmMenuSelect); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewConfirmPopup, gocui.KeyEnter, gocui.ModNone, app.confirmPopupYes); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(viewConfirmPopup, 'n', gocui.ModNone, app.closeConfirmPopup); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(viewConfirmPopup, gocui.KeyEsc, gocui.ModNone, app.closeConfirmPopup); err != nil {
+	if err := g.SetKeybinding(viewConfirmPopup, gocui.KeyEsc, gocui.ModNone, app.confirmMenuClose); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewConfirmPopup, gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {

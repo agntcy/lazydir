@@ -304,10 +304,7 @@ func (app *Gui) recordDelete(g *gocui.Gui, v *gocui.View) error {
 		version = " " + r.Version
 	}
 
-	body := fmt.Sprintf("Delete %s%s?\n\n  %sy%s  confirm   %sn / esc%s  cancel",
-		name, version,
-		app.theme.Color2, app.theme.Reset,
-		app.theme.Color2, app.theme.Reset)
+	body := fmt.Sprintf("Delete %s%s?", name, version)
 
 	cid := r.CID
 	app.openConfirmPopup(g, "Delete record", body, func() {
@@ -321,10 +318,7 @@ func (app *Gui) recordDelete(g *gocui.Gui, v *gocui.View) error {
 func (app *Gui) recordDeleteSync(g *gocui.Gui) error {
 	syncing, reconciling := app.syncCounts()
 	total := syncing + reconciling
-	body := fmt.Sprintf("Cancel sync? This will cancel all %d record(s) currently being synced.\n\n  %sy%s  confirm   %sn / esc%s  cancel",
-		total,
-		app.theme.Color2, app.theme.Reset,
-		app.theme.Color2, app.theme.Reset)
+	body := fmt.Sprintf("Cancel sync? This will cancel all %d record(s) currently being synced.", total)
 
 	app.openConfirmPopup(g, "Cancel sync", body, func() {
 		go app.cancelSync()
@@ -478,9 +472,7 @@ func (app *Gui) clipboardPaste(g *gocui.Gui, v *gocui.View) error {
 
 	if app.state.clipboardSource == app.state.serverAddr {
 		app.openConfirmPopup(g, "Paste records",
-			fmt.Sprintf("Cannot paste: source and target are the same server\n(%s)\n\n  %sesc%s  dismiss",
-				app.state.serverAddr,
-				app.theme.Color2, app.theme.Reset),
+			fmt.Sprintf("Cannot paste: source and target are the same server\n(%s)", app.state.serverAddr),
 			nil,
 		)
 		return nil
@@ -512,10 +504,6 @@ func (app *Gui) clipboardPaste(g *gocui.Gui, v *gocui.View) error {
 		}
 		fmt.Fprintf(&body, "  • %s\n", label)
 	}
-	fmt.Fprintf(&body, "\n  %sy%s  confirm   %sn / esc%s  cancel",
-		app.theme.Color2, app.theme.Reset,
-		app.theme.Color2, app.theme.Reset)
-
 	app.openConfirmPopup(g, "Sync records", body.String(), func() {
 		app.startSync(g)
 	})

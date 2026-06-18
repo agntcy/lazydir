@@ -29,6 +29,7 @@ func (app *Gui) showPopup(g *gocui.Gui, name string) {
 	v.Visible = true
 	_, _ = g.SetViewOnTop(name)
 	_, _ = g.SetCurrentView(name)
+	app.renderStatus(g)
 }
 
 // hidePopup hides a popup view and restores focus to the previously active view.
@@ -45,6 +46,79 @@ func (app *Gui) hidePopup(g *gocui.Gui, name string) {
 		target = viewRecords
 	}
 	_, _ = g.SetCurrentView(target)
+	app.renderStatus(g)
+}
+
+// ── Generic option menu ───────────────────────────────────────────────────────
+
+// openMenu populates the shared menu state, renders options into the named
+// view, and shows it as a popup with the cursor on the first row.
+func (app *Gui) openMenu(g *gocui.Gui, viewName, title string, options []menuOption) {
+	v, err := g.View(viewName)
+	if err != nil {
+		return
+	}
+	app.state.menu = menuState{
+		cursor:  0,
+		options: options,
+		view:    viewName,
+	}
+	v.Title = " " + title + " "
+	app.renderMenu(g)
+	app.showPopup(g, viewName)
+}
+
+// renderMenu redraws the option labels and positions the gocui cursor.
+func (app *Gui) renderMenu(g *gocui.Gui) {
+	ms := &app.state.menu
+	v, err := g.View(ms.view)
+	if err != nil {
+		return
+	}
+	v.Clear()
+	for _, opt := range ms.options {
+		fmt.Fprintf(v, " %s\n", opt.label)
+	}
+	_ = v.SetCursor(0, ms.cursor)
+}
+
+func (app *Gui) menuCursorUp(g *gocui.Gui, v *gocui.View) error {
+	ms := &app.state.menu
+	if ms.cursor > 0 {
+		ms.cursor--
+		app.renderMenu(g)
+	}
+	return nil
+}
+
+func (app *Gui) menuCursorDown(g *gocui.Gui, v *gocui.View) error {
+	ms := &app.state.menu
+	if ms.cursor < len(ms.options)-1 {
+		ms.cursor++
+		app.renderMenu(g)
+	}
+	return nil
+}
+
+func (app *Gui) menuSelect(g *gocui.Gui, v *gocui.View) error {
+	ms := &app.state.menu
+	if ms.cursor >= len(ms.options) {
+		return nil
+	}
+	action := ms.options[ms.cursor].action
+	app.hidePopup(g, ms.view)
+	app.state.menu = menuState{}
+	if action != nil {
+		action()
+	}
+	return nil
+}
+
+func (app *Gui) menuClose(g *gocui.Gui, v *gocui.View) error {
+	ms := &app.state.menu
+	app.hidePopup(g, ms.view)
+	app.state.menu = menuState{}
+	return nil
 }
 
 // ── Info popup ────────────────────────────────────────────────────────────────
@@ -238,49 +312,36 @@ func (app *Gui) openCopyMenu(g *gocui.Gui, v *gocui.View) error {
 	if app.cursorRecord() == nil {
 		return nil
 	}
-	cv, err := g.View(viewCopyMenu)
-	if err != nil {
-		return nil
-	}
-	cv.Clear()
-	fmt.Fprintf(cv, "  %sc%s  copy CID\n", app.theme.Color2, app.theme.Reset)
-	fmt.Fprintf(cv, "  %sa%s  copy record JSON", app.theme.Color2, app.theme.Reset)
-	app.showPopup(g, viewCopyMenu)
+	app.openMenu(g, viewCopyMenu, "Copy options", []menuOption{
+		{label: "copy CID", action: app.doCopyCID},
+		{label: "copy record JSON", action: app.doCopyRecordJSON},
+	})
 	return nil
 }
 
-func (app *Gui) closeCopyMenu(g *gocui.Gui, v *gocui.View) error {
-	app.hidePopup(g, viewCopyMenu)
-	return nil
-}
-
-func (app *Gui) copyCID(g *gocui.Gui, v *gocui.View) error {
+func (app *Gui) doCopyCID() {
 	r := app.cursorRecord()
 	if r == nil || r.CID == "" {
-		return app.closeCopyMenu(g, v)
+		return
 	}
 	if err := writeClipboard(r.CID); err != nil {
-		cv, _ := g.View(viewCopyMenu)
-		if cv != nil {
-			cv.Clear()
-			fmt.Fprintf(cv, "  %sFailed to copy:%s %v", app.theme.Color6, app.theme.Reset, err)
-		}
-		return nil
+		app.g.Update(func(g *gocui.Gui) error {
+			app.state.recordInfoCID = r.CID
+			app.state.recordInfoText = "Failed to copy: " + err.Error()
+			app.state.recordInfoError = true
+			app.state.recordInfoLoading = false
+			app.openInfoPopup(g, viewRecords)
+			return nil
+		})
 	}
-	return app.closeCopyMenu(g, v)
 }
 
-func (app *Gui) copyRecordJSON(g *gocui.Gui, v *gocui.View) error {
+func (app *Gui) doCopyRecordJSON() {
 	r := app.cursorRecord()
 	if r == nil || r.CID == "" {
-		return app.closeCopyMenu(g, v)
+		return
 	}
-	cid := r.CID
-	if err := app.closeCopyMenu(g, v); err != nil {
-		return err
-	}
-	go app.fetchAndCopyJSON(cid)
-	return nil
+	go app.fetchAndCopyJSON(r.CID)
 }
 
 func (app *Gui) fetchAndCopyJSON(cid string) {
@@ -311,35 +372,99 @@ func (app *Gui) fetchAndCopyJSON(cid string) {
 
 // ── Confirmation popup ────────────────────────────────────────────────────────
 
+// openConfirmPopup shows a confirmation dialog with body text and navigable
+// "confirm" / "cancel" option rows (or just "dismiss" when onConfirm is nil).
 func (app *Gui) openConfirmPopup(g *gocui.Gui, title, body string, onConfirm func()) {
 	app.state.confirmPopupText = body
-	app.state.onConfirmAction = onConfirm
+
+	var options []menuOption
+	if onConfirm != nil {
+		options = []menuOption{
+			{label: "confirm", action: onConfirm},
+			{label: "cancel", action: nil},
+		}
+	} else {
+		options = []menuOption{
+			{label: "dismiss", action: nil},
+		}
+	}
+
+	app.state.menu = menuState{
+		cursor:  0,
+		options: options,
+		view:    viewConfirmPopup,
+	}
 
 	cv, err := g.View(viewConfirmPopup)
 	if err != nil {
 		return
 	}
-	cv.Clear()
 	cv.Title = " " + title + " "
-	fmt.Fprint(cv, body)
+	app.renderConfirmPopup(g)
 	app.showPopup(g, viewConfirmPopup)
 }
 
-func (app *Gui) closeConfirmPopup(g *gocui.Gui, v *gocui.View) error {
-	app.state.onConfirmAction = nil
-	app.state.confirmPopupText = ""
-	app.hidePopup(g, viewConfirmPopup)
+// renderConfirmPopup redraws the confirm popup body text and appended menu
+// options, positioning the gocui cursor on the selected option row.
+func (app *Gui) renderConfirmPopup(g *gocui.Gui) {
+	ms := &app.state.menu
+	cv, err := g.View(ms.view)
+	if err != nil {
+		return
+	}
+	cv.Clear()
+	body := app.state.confirmPopupText
+	fmt.Fprint(cv, body)
+
+	bodyLines := strings.Count(body, "\n")
+	if body != "" && !strings.HasSuffix(body, "\n") {
+		bodyLines++
+	}
+	fmt.Fprint(cv, "\n")
+
+	for _, opt := range ms.options {
+		fmt.Fprintf(cv, " %s\n", opt.label)
+	}
+	_ = cv.SetCursor(0, bodyLines+ms.cursor)
+}
+
+func (app *Gui) confirmMenuUp(g *gocui.Gui, v *gocui.View) error {
+	ms := &app.state.menu
+	if ms.cursor > 0 {
+		ms.cursor--
+		app.renderConfirmPopup(g)
+	}
 	return nil
 }
 
-func (app *Gui) confirmPopupYes(g *gocui.Gui, v *gocui.View) error {
-	cb := app.state.onConfirmAction
-	app.state.onConfirmAction = nil
+func (app *Gui) confirmMenuDown(g *gocui.Gui, v *gocui.View) error {
+	ms := &app.state.menu
+	if ms.cursor < len(ms.options)-1 {
+		ms.cursor++
+		app.renderConfirmPopup(g)
+	}
+	return nil
+}
+
+func (app *Gui) confirmMenuSelect(g *gocui.Gui, v *gocui.View) error {
+	ms := &app.state.menu
+	if ms.cursor >= len(ms.options) {
+		return nil
+	}
+	action := ms.options[ms.cursor].action
 	app.state.confirmPopupText = ""
 	app.hidePopup(g, viewConfirmPopup)
-	if cb != nil {
-		cb()
+	app.state.menu = menuState{}
+	if action != nil {
+		action()
 	}
+	return nil
+}
+
+func (app *Gui) confirmMenuClose(g *gocui.Gui, v *gocui.View) error {
+	app.state.confirmPopupText = ""
+	app.hidePopup(g, viewConfirmPopup)
+	app.state.menu = menuState{}
 	return nil
 }
 
