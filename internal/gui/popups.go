@@ -29,6 +29,7 @@ func (app *Gui) showPopup(g *gocui.Gui, name string) {
 	v.Visible = true
 	_, _ = g.SetViewOnTop(name)
 	_, _ = g.SetCurrentView(name)
+	app.syncHighlight(g, name)
 	app.renderStatus(g)
 }
 
@@ -46,6 +47,7 @@ func (app *Gui) hidePopup(g *gocui.Gui, name string) {
 		target = viewRecords
 	}
 	_, _ = g.SetCurrentView(target)
+	app.syncHighlight(g, target)
 	app.renderStatus(g)
 }
 
@@ -325,14 +327,11 @@ func (app *Gui) doCopyCID() {
 		return
 	}
 	if err := writeClipboard(r.CID); err != nil {
-		app.g.Update(func(g *gocui.Gui) error {
-			app.state.recordInfoCID = r.CID
-			app.state.recordInfoText = "Failed to copy: " + err.Error()
-			app.state.recordInfoError = true
-			app.state.recordInfoLoading = false
-			app.openInfoPopup(g, viewRecords)
-			return nil
-		})
+		app.state.recordInfoCID = r.CID
+		app.state.recordInfoText = "Failed to copy: " + err.Error()
+		app.state.recordInfoError = true
+		app.state.recordInfoLoading = false
+		app.openInfoPopup(app.g, viewRecords)
 	}
 }
 
@@ -413,14 +412,20 @@ func (app *Gui) renderConfirmPopup(g *gocui.Gui) {
 		return
 	}
 	cv.Clear()
-	body := app.state.confirmPopupText
-	fmt.Fprint(cv, body)
+	body := strings.TrimRight(app.state.confirmPopupText, "\n")
 
-	bodyLines := strings.Count(body, "\n")
-	if body != "" && !strings.HasSuffix(body, "\n") {
+	viewW, _ := cv.Size()
+	bodyLines := 0
+	if body != "" {
+		fmt.Fprint(cv, body)
+		if viewW > 0 {
+			bodyLines = wrappedLineCount(body, viewW)
+		} else {
+			bodyLines = strings.Count(body, "\n") + 1
+		}
+		fmt.Fprint(cv, "\n")
 		bodyLines++
 	}
-	fmt.Fprint(cv, "\n")
 
 	for _, opt := range ms.options {
 		fmt.Fprintf(cv, " %s\n", opt.label)

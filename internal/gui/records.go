@@ -67,24 +67,21 @@ func (app *Gui) recordCursorDown(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-// recordExpand expands the group header under the cursor. On a non-group
-// record row it behaves like recordSelect (focus preview).
+// recordExpand expands the group header under the cursor. On non-group rows
+// it is a no-op.
 func (app *Gui) recordExpand(g *gocui.Gui, v *gocui.View) error {
 	rows := app.state.recordDisplayRows
 	if app.state.recordCursor >= len(rows) {
 		return nil
 	}
 	row := rows[app.state.recordCursor]
-	if row.groupName != "" {
-		if !app.state.recordGroupExpanded[row.groupName] {
-			app.state.recordGroupExpanded[row.groupName] = true
-			app.buildRecordDisplayRows()
-			app.renderRecordsView(g)
-			app.autoPreviewRecord(g)
-		}
-		return nil
+	if row.groupName != "" && !app.state.recordGroupExpanded[row.groupName] {
+		app.state.recordGroupExpanded[row.groupName] = true
+		app.buildRecordDisplayRows()
+		app.renderRecordsView(g)
+		app.autoPreviewRecord(g)
 	}
-	return app.recordSelect(g, v)
+	return nil
 }
 
 // recordCollapse collapses the current group. When the cursor is on a child

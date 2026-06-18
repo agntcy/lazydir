@@ -406,6 +406,7 @@ func (app *Gui) previewExpandNode(g *gocui.Gui, v *gocui.View) error {
 		node.expanded = true
 		app.refreshPreviewTree(g)
 		clampPreviewCursor(app, tree)
+		app.positionPreviewCursor(v)
 	}
 	return nil
 }
@@ -427,12 +428,14 @@ func (app *Gui) previewCollapseNode(g *gocui.Gui, v *gocui.View) error {
 		node.expanded = false
 		app.refreshPreviewTree(g)
 		clampPreviewCursor(app, tree)
+		app.positionPreviewCursor(v)
 		return nil
 	}
 	depth := tree.lines[line].depth
 	for i := line - 1; i >= 0; i-- {
 		ln := tree.lines[i]
-		if ln.depth < depth && ln.node != nil && ln.node.expanded {
+		isParent := (node == nil && ln.depth == depth) || (node != nil && ln.depth < depth)
+		if isParent && ln.node != nil && ln.node.expanded {
 			ln.node.expanded = false
 			app.refreshPreviewTree(g)
 			clampPreviewCursor(app, tree)

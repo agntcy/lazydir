@@ -228,11 +228,21 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Visible = false
 	}
 
-	// Copy-menu popup — positioned in the right column.
+	// Copy-menu popup — positioned in the right column, sized from menu options.
 	cmX0, cmY0, cmX1, cmY1 := 0, -6, 28, -1
 	if cmv, _ := gui.View(viewCopyMenu); cmv != nil && cmv.Visible {
+		cmCW := 16
+		for _, opt := range g.state.menu.options {
+			if l := len(opt.label) + 2; l > cmCW {
+				cmCW = l
+			}
+		}
+		cmCH := len(g.state.menu.options)
+		if cmCH < 1 {
+			cmCH = 1
+		}
 		cmX0, cmY0, cmX1, cmY1 = popupRect(gui, viewRecords,
-			24, 2, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
+			cmCW, cmCH, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
 	}
 	if v, err := gui.SetView(viewCopyMenu, cmX0, cmY0, cmX1, cmY1, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
