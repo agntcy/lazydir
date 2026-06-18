@@ -122,6 +122,12 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewFilters, gocui.KeyEnter, gocui.ModNone, app.filterEnter); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding(viewFilters, 'l', gocui.ModNone, app.filterExpand); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewFilters, 'h', gocui.ModNone, app.filterCollapse); err != nil {
+		return err
+	}
 	if err := g.SetKeybinding(viewFilters, gocui.KeySpace, gocui.ModNone, app.filterToggleOption); err != nil {
 		return err
 	}
@@ -150,6 +156,12 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 		}
 	}
 	if err := g.SetKeybinding(viewRecords, gocui.KeyEnter, gocui.ModNone, app.recordSelect); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewRecords, 'l', gocui.ModNone, app.recordExpand); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewRecords, 'h', gocui.ModNone, app.recordCollapse); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewRecords, '/', gocui.ModNone, app.openFilterDialog); err != nil {
@@ -244,6 +256,12 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 		return err
 	}
 	if err := g.SetKeybinding(viewPreview, gocui.KeyEnter, gocui.ModNone, app.previewToggleNode); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewPreview, 'l', gocui.ModNone, app.previewExpandNode); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewPreview, 'h', gocui.ModNone, app.previewCollapseNode); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewPreview, 'e', gocui.ModNone, app.previewExpandAll); err != nil {

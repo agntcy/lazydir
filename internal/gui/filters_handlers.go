@@ -106,6 +106,51 @@ func (app *Gui) filterClearAll(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
+// filterExpand expands the category header under the cursor. On an option
+// row it is a no-op (the option is already "inside" an expanded category).
+func (app *Gui) filterExpand(g *gocui.Gui, v *gocui.View) error {
+	rows := app.filteredListRows()
+	if app.state.filters.listCursor >= len(rows) {
+		return nil
+	}
+	row := rows[app.state.filters.listCursor]
+	if row.option != "" {
+		return nil
+	}
+	if !app.state.filters.expanded[row.category] {
+		app.state.filters.expanded[row.category] = true
+		app.clearInlineDesc()
+		app.renderFiltersView(g)
+	}
+	return nil
+}
+
+// filterCollapse collapses the current category. When the cursor is on an
+// option row it collapses the parent category and moves the cursor to it.
+func (app *Gui) filterCollapse(g *gocui.Gui, v *gocui.View) error {
+	rows := app.filteredListRows()
+	if app.state.filters.listCursor >= len(rows) {
+		return nil
+	}
+	row := rows[app.state.filters.listCursor]
+
+	if row.option != "" {
+		for i := app.state.filters.listCursor - 1; i >= 0; i-- {
+			if rows[i].option == "" {
+				app.state.filters.listCursor = i
+				row = rows[i]
+				break
+			}
+		}
+	}
+	if row.option == "" && app.state.filters.expanded[row.category] {
+		app.state.filters.expanded[row.category] = false
+		app.clearInlineDesc()
+		app.renderFiltersView(g)
+	}
+	return nil
+}
+
 // filterEsc clears the search query when active.
 func (app *Gui) filterEsc(g *gocui.Gui, v *gocui.View) error {
 	if app.state.filters.filterQuery != "" {

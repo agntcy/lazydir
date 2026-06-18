@@ -388,6 +388,67 @@ func (app *Gui) previewCursorDown(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
+// previewExpandNode expands the JSON tree node on the current cursor line.
+func (app *Gui) previewExpandNode(g *gocui.Gui, v *gocui.View) error {
+	tree := app.state.previewTree
+	if tree == nil {
+		return nil
+	}
+	line := app.state.previewCursor
+	if line < 0 || line >= len(tree.lines) {
+		return nil
+	}
+	node := tree.lines[line].node
+	if node == nil || node.nodeType == jsonPrimitive || len(node.children) == 0 {
+		return nil
+	}
+	if !node.expanded {
+		node.expanded = true
+		app.refreshPreviewTree(g)
+		clampPreviewCursor(app, tree)
+	}
+	return nil
+}
+
+// previewCollapseNode collapses the JSON tree node on the current cursor line.
+// On a closing bracket, primitive, or already-collapsed node it walks backward
+// to find the nearest expanded parent container and collapses that instead.
+func (app *Gui) previewCollapseNode(g *gocui.Gui, v *gocui.View) error {
+	tree := app.state.previewTree
+	if tree == nil {
+		return nil
+	}
+	line := app.state.previewCursor
+	if line < 0 || line >= len(tree.lines) {
+		return nil
+	}
+	node := tree.lines[line].node
+	if node != nil && node.expanded && len(node.children) > 0 {
+		node.expanded = false
+		app.refreshPreviewTree(g)
+		clampPreviewCursor(app, tree)
+		return nil
+	}
+	depth := tree.lines[line].depth
+	for i := line - 1; i >= 0; i-- {
+		ln := tree.lines[i]
+		if ln.depth < depth && ln.node != nil && ln.node.expanded {
+			ln.node.expanded = false
+			app.refreshPreviewTree(g)
+			clampPreviewCursor(app, tree)
+			for j, rl := range tree.lines {
+				if rl.node == ln.node {
+					app.state.previewCursor = j
+					app.positionPreviewCursor(v)
+					break
+				}
+			}
+			break
+		}
+	}
+	return nil
+}
+
 // previewToggleNode expands or collapses the JSON tree node on the current
 // cursor line.
 func (app *Gui) previewToggleNode(g *gocui.Gui, v *gocui.View) error {
