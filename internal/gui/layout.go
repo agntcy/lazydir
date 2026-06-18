@@ -29,7 +29,7 @@ const (
 var roundedFrame = []rune{'─', '│', '╭', '╮', '╰', '╯'}
 
 // listViews are the panels that show a highlighted cursor row.
-var listViews = []string{viewDirectory, viewFilters, viewRecords}
+var listViews = []string{viewDirectory, viewFilters, viewRecords, viewPreview}
 
 // rightColumnPopups are popup views rendered over the preview panel.
 var rightColumnPopups = []string{viewInfoPopup, viewCopyMenu, viewServerMenu, viewAuthPopup, viewConfirmPopup}
@@ -170,7 +170,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Wrap = true
 		v.FrameRunes = roundedFrame
 		v.CanScrollPastBottom = true
-		v.Highlight = true
+		v.Highlight = false
 		v.SelBgColor = g.theme.SelectedRowBg
 		v.SelFgColor = gocui.ColorDefault
 	}
