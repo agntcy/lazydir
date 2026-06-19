@@ -42,5 +42,5 @@ server:
   oasfTimeout: 10 # seconds for OASF HTTP requests
 
 stream:
-  firstPageSize: 100
-  batchSize: 50
+  firstPageSize: 50
+  batchSize: 100

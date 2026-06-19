@@ -122,6 +122,12 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewFilters, gocui.KeyEnter, gocui.ModNone, app.filterEnter); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding(viewFilters, 'l', gocui.ModNone, app.filterExpand); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewFilters, 'h', gocui.ModNone, app.filterCollapse); err != nil {
+		return err
+	}
 	if err := g.SetKeybinding(viewFilters, gocui.KeySpace, gocui.ModNone, app.filterToggleOption); err != nil {
 		return err
 	}
@@ -150,6 +156,12 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 		}
 	}
 	if err := g.SetKeybinding(viewRecords, gocui.KeyEnter, gocui.ModNone, app.recordSelect); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewRecords, 'l', gocui.ModNone, app.recordExpand); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewRecords, 'h', gocui.ModNone, app.recordCollapse); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewRecords, '/', gocui.ModNone, app.openFilterDialog); err != nil {
@@ -199,13 +211,20 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	}
 
 	// ── Copy menu popup ─────────────────────────────────────────────────────
-	if err := g.SetKeybinding(viewCopyMenu, 'c', gocui.ModNone, app.copyCID); err != nil {
+	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
+		if err := g.SetKeybinding(viewCopyMenu, key, gocui.ModNone, app.menuCursorUp); err != nil {
+			return err
+		}
+	}
+	for _, key := range []interface{}{gocui.KeyArrowDown, 'j'} {
+		if err := g.SetKeybinding(viewCopyMenu, key, gocui.ModNone, app.menuCursorDown); err != nil {
+			return err
+		}
+	}
+	if err := g.SetKeybinding(viewCopyMenu, gocui.KeyEnter, gocui.ModNone, app.menuSelect); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewCopyMenu, 'a', gocui.ModNone, app.copyRecordJSON); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(viewCopyMenu, gocui.KeyEsc, gocui.ModNone, app.closeCopyMenu); err != nil {
+	if err := g.SetKeybinding(viewCopyMenu, gocui.KeyEsc, gocui.ModNone, app.menuClose); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewCopyMenu, gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
@@ -213,16 +232,20 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	}
 
 	// ── Confirmation popup ─────────────────────────────────────────────────
-	if err := g.SetKeybinding(viewConfirmPopup, 'y', gocui.ModNone, app.confirmPopupYes); err != nil {
+	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
+		if err := g.SetKeybinding(viewConfirmPopup, key, gocui.ModNone, app.confirmMenuUp); err != nil {
+			return err
+		}
+	}
+	for _, key := range []interface{}{gocui.KeyArrowDown, 'j'} {
+		if err := g.SetKeybinding(viewConfirmPopup, key, gocui.ModNone, app.confirmMenuDown); err != nil {
+			return err
+		}
+	}
+	if err := g.SetKeybinding(viewConfirmPopup, gocui.KeyEnter, gocui.ModNone, app.confirmMenuSelect); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewConfirmPopup, gocui.KeyEnter, gocui.ModNone, app.confirmPopupYes); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(viewConfirmPopup, 'n', gocui.ModNone, app.closeConfirmPopup); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(viewConfirmPopup, gocui.KeyEsc, gocui.ModNone, app.closeConfirmPopup); err != nil {
+	if err := g.SetKeybinding(viewConfirmPopup, gocui.KeyEsc, gocui.ModNone, app.confirmMenuClose); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewConfirmPopup, gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
@@ -240,7 +263,16 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 			return err
 		}
 	}
+	if err := g.SetKeybinding(viewPreview, gocui.KeyEsc, gocui.ModNone, app.previewEsc); err != nil {
+		return err
+	}
 	if err := g.SetKeybinding(viewPreview, gocui.KeyEnter, gocui.ModNone, app.previewToggleNode); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewPreview, 'l', gocui.ModNone, app.previewExpandNode); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewPreview, 'h', gocui.ModNone, app.previewCollapseNode); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewPreview, 'e', gocui.ModNone, app.previewExpandAll); err != nil {
@@ -367,6 +399,18 @@ func (app *Gui) focusView(name string) func(*gocui.Gui, *gocui.View) error {
 	return func(g *gocui.Gui, v *gocui.View) error {
 		return app.focusTo(g, name)
 	}
+}
+
+// previewEsc returns focus to the records panel without re-fetching the
+// preview content (avoids an unnecessary RPC and preview tree reset).
+func (app *Gui) previewEsc(g *gocui.Gui, v *gocui.View) error {
+	_, err := g.SetCurrentView(viewRecords)
+	if err != nil {
+		return err
+	}
+	app.syncHighlight(g, viewRecords)
+	app.renderStatus(g)
+	return nil
 }
 
 func (app *Gui) cycleFocusForward(g *gocui.Gui, v *gocui.View) error {

@@ -29,7 +29,7 @@ const (
 var roundedFrame = []rune{'─', '│', '╭', '╮', '╰', '╯'}
 
 // listViews are the panels that show a highlighted cursor row.
-var listViews = []string{viewDirectory, viewFilters, viewRecords}
+var listViews = []string{viewDirectory, viewFilters, viewRecords, viewPreview}
 
 // rightColumnPopups are popup views rendered over the preview panel.
 var rightColumnPopups = []string{viewInfoPopup, viewCopyMenu, viewServerMenu, viewAuthPopup, viewConfirmPopup}
@@ -170,7 +170,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Wrap = true
 		v.FrameRunes = roundedFrame
 		v.CanScrollPastBottom = true
-		v.Highlight = true
+		v.Highlight = false
 		v.SelBgColor = g.theme.SelectedRowBg
 		v.SelFgColor = gocui.ColorDefault
 	}
@@ -228,11 +228,21 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Visible = false
 	}
 
-	// Copy-menu popup — positioned in the right column.
+	// Copy-menu popup — positioned in the right column, sized from menu options.
 	cmX0, cmY0, cmX1, cmY1 := 0, -6, 28, -1
 	if cmv, _ := gui.View(viewCopyMenu); cmv != nil && cmv.Visible {
+		cmCW := 16
+		for _, opt := range g.state.menu.options {
+			if l := len(opt.label) + 2; l > cmCW {
+				cmCW = l
+			}
+		}
+		cmCH := len(g.state.menu.options)
+		if cmCH < 1 {
+			cmCH = 1
+		}
 		cmX0, cmY0, cmX1, cmY1 = popupRect(gui, viewRecords,
-			24, 2, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
+			cmCW, cmCH, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
 	}
 	if v, err := gui.SetView(viewCopyMenu, cmX0, cmY0, cmX1, cmY1, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
@@ -243,6 +253,9 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.FrameRunes = roundedFrame
 		v.Wrap = false
 		v.Visible = false
+		v.Highlight = true
+		v.SelBgColor = g.theme.SelectedRowBg
+		v.SelFgColor = gocui.ColorDefault
 	}
 
 	// Confirmation popup — positioned in the right column.
@@ -251,6 +264,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		if cfv, _ := gui.View(viewConfirmPopup); cfv != nil && cfv.Visible {
 			cfMaxW := maxX - 1 - rightX0 - 2
 			cfCW, cfCH := popupContentSize(g.state.confirmPopupText, cfMaxW)
+			cfCH += 1 + len(g.state.menu.options)
 			cfX0, cfY0, cfX1, cfY1 = popupRect(gui, viewRecords,
 				cfCW, cfCH, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
 		}
@@ -263,6 +277,9 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 			v.FrameRunes = roundedFrame
 			v.Wrap = true
 			v.Visible = false
+			v.Highlight = true
+			v.SelBgColor = g.theme.SelectedRowBg
+			v.SelFgColor = gocui.ColorDefault
 		}
 	}
 

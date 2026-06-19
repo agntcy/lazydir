@@ -67,6 +67,50 @@ func (app *Gui) recordCursorDown(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
+// recordExpand expands the group header under the cursor. On non-group rows
+// it is a no-op.
+func (app *Gui) recordExpand(g *gocui.Gui, v *gocui.View) error {
+	rows := app.state.recordDisplayRows
+	if app.state.recordCursor >= len(rows) {
+		return nil
+	}
+	row := rows[app.state.recordCursor]
+	if row.groupName != "" && !app.state.recordGroupExpanded[row.groupName] {
+		app.state.recordGroupExpanded[row.groupName] = true
+		app.buildRecordDisplayRows()
+		app.renderRecordsView(g)
+		app.autoPreviewRecord(g)
+	}
+	return nil
+}
+
+// recordCollapse collapses the current group. When the cursor is on a child
+// record it collapses the parent group and moves the cursor to its header.
+func (app *Gui) recordCollapse(g *gocui.Gui, v *gocui.View) error {
+	rows := app.state.recordDisplayRows
+	if app.state.recordCursor >= len(rows) {
+		return nil
+	}
+	row := rows[app.state.recordCursor]
+
+	if row.grouped {
+		for i := app.state.recordCursor - 1; i >= 0; i-- {
+			if rows[i].groupName != "" {
+				app.state.recordCursor = i
+				row = rows[i]
+				break
+			}
+		}
+	}
+	if row.groupName != "" && app.state.recordGroupExpanded[row.groupName] {
+		app.state.recordGroupExpanded[row.groupName] = false
+		app.buildRecordDisplayRows()
+		app.renderRecordsView(g)
+		app.autoPreviewRecord(g)
+	}
+	return nil
+}
+
 func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
 	rows := app.state.recordDisplayRows
 	if app.state.recordCursor >= len(rows) {
@@ -92,7 +136,7 @@ func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
 		subtitle += " " + rec.Version
 	}
 	go app.pullRecord(subtitle, rec.CID)
-	return nil
+	return app.focusTo(g, viewPreview)
 }
 
 func (app *Gui) openFilterDialog(g *gocui.Gui, v *gocui.View) error {
@@ -133,6 +177,13 @@ func (app *Gui) clearFilter(g *gocui.Gui, v *gocui.View) error {
 		app.applyNameFilter()
 		app.renderRecordsView(g)
 		return nil
+	}
+	rows := app.state.recordDisplayRows
+	if app.state.recordCursor < len(rows) {
+		row := rows[app.state.recordCursor]
+		if row.grouped || (row.groupName != "" && app.state.recordGroupExpanded[row.groupName]) {
+			return app.recordCollapse(g, v)
+		}
 	}
 	if len(app.state.clipboard) > 0 {
 		return app.clipboardClear(g, v)
@@ -250,10 +301,7 @@ func (app *Gui) recordDelete(g *gocui.Gui, v *gocui.View) error {
 		version = " " + r.Version
 	}
 
-	body := fmt.Sprintf("Delete %s%s?\n\n  %sy%s  confirm   %sn / esc%s  cancel",
-		name, version,
-		app.theme.Color2, app.theme.Reset,
-		app.theme.Color2, app.theme.Reset)
+	body := fmt.Sprintf("Delete %s%s?", name, version)
 
 	cid := r.CID
 	app.openConfirmPopup(g, "Delete record", body, func() {
@@ -267,10 +315,7 @@ func (app *Gui) recordDelete(g *gocui.Gui, v *gocui.View) error {
 func (app *Gui) recordDeleteSync(g *gocui.Gui) error {
 	syncing, reconciling := app.syncCounts()
 	total := syncing + reconciling
-	body := fmt.Sprintf("Cancel sync? This will cancel all %d record(s) currently being synced.\n\n  %sy%s  confirm   %sn / esc%s  cancel",
-		total,
-		app.theme.Color2, app.theme.Reset,
-		app.theme.Color2, app.theme.Reset)
+	body := fmt.Sprintf("Cancel sync? This will cancel all %d record(s) currently being synced.", total)
 
 	app.openConfirmPopup(g, "Cancel sync", body, func() {
 		go app.cancelSync()
@@ -424,9 +469,7 @@ func (app *Gui) clipboardPaste(g *gocui.Gui, v *gocui.View) error {
 
 	if app.state.clipboardSource == app.state.serverAddr {
 		app.openConfirmPopup(g, "Paste records",
-			fmt.Sprintf("Cannot paste: source and target are the same server\n(%s)\n\n  %sesc%s  dismiss",
-				app.state.serverAddr,
-				app.theme.Color2, app.theme.Reset),
+			fmt.Sprintf("Cannot paste: source and target are the same server\n(%s)", app.state.serverAddr),
 			nil,
 		)
 		return nil
@@ -458,10 +501,6 @@ func (app *Gui) clipboardPaste(g *gocui.Gui, v *gocui.View) error {
 		}
 		fmt.Fprintf(&body, "  • %s\n", label)
 	}
-	fmt.Fprintf(&body, "\n  %sy%s  confirm   %sn / esc%s  cancel",
-		app.theme.Color2, app.theme.Reset,
-		app.theme.Color2, app.theme.Reset)
-
 	app.openConfirmPopup(g, "Sync records", body.String(), func() {
 		app.startSync(g)
 	})

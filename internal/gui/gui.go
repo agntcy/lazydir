@@ -40,6 +40,19 @@ const (
 	streamErrored                      // stream finished with an error
 )
 
+// menuOption describes one selectable row in a popup option menu.
+type menuOption struct {
+	label  string
+	action func()
+}
+
+// menuState tracks the cursor and options for a navigable popup menu.
+type menuState struct {
+	cursor  int
+	options []menuOption
+	view    string // the gocui view name this menu is rendered in
+}
+
 // appState holds all mutable application state. Fields are only mutated on
 // the GUI goroutine (inside g.Update callbacks or key handlers).
 type appState struct {
@@ -138,9 +151,11 @@ type appState struct {
 	popupPrevView  string // view to restore focus to when any popup closes
 	infoPopupPanel string // which panel opened the info popup (viewDirectory/viewFilters/viewRecords)
 
+	// generic option menu state (used by copy menu, confirm popup, etc.)
+	menu menuState
+
 	// confirmation popup state
 	confirmPopupText string // rendered text shown inside the confirm popup
-	onConfirmAction  func() // action to run when the user confirms
 
 	// clipboard for copy-paste between nodes (issue #20)
 	clipboard          map[string]*dirclient.RecordSummary // CID → full summary snapshot
