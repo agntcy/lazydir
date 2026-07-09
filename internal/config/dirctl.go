@@ -25,10 +25,12 @@ type dirctlContext struct {
 	OIDCClientID  string `yaml:"oidc_client_id"`
 }
 
-// LoadDirctlContexts reads and parses a dirctl config file, returning the
-// contexts as DirectoryEntry values in the order they appear in the YAML file.
-// The path supports a leading "~/" which is expanded to the user's home
-// directory.
+// LoadDirctlContexts reads and parses a dirctl config file, returning its
+// contexts as DirectoryEntry values. If the config specifies a
+// "current_context", that context is placed first so it becomes the default
+// connection target; the remaining contexts follow in the order they appear in
+// the YAML file. The path supports a leading "~/" which is expanded to the
+// user's home directory.
 //
 // Returns an error if the file cannot be read or parsed; callers should treat
 // errors as non-fatal (log and continue with manually configured servers).
@@ -89,11 +91,35 @@ func LoadDirctlContexts(path string) ([]DirectoryEntry, error) {
 		})
 	}
 
+	// Move the current_context to the front so it becomes the default target.
+	if currentNode := findMapValue(&root, "current_context"); currentNode != nil {
+		moveContextToFront(entries, currentNode.Value)
+	}
+
 	var warnErr error
 	if len(warnings) > 0 {
 		warnErr = fmt.Errorf("dirctl config: %s", strings.Join(warnings, "; "))
 	}
 	return entries, warnErr
+}
+
+// moveContextToFront reorders entries in place so that the entry whose
+// ContextName matches name becomes the first element, preserving the relative
+// order of the remaining entries. It is a no-op if name is empty or no entry
+// matches (e.g. the current context has no valid server_address).
+func moveContextToFront(entries []DirectoryEntry, name string) {
+	if name == "" {
+		return
+	}
+	for i, e := range entries {
+		if e.ContextName != name {
+			continue
+		}
+		current := entries[i]
+		copy(entries[1:i+1], entries[:i])
+		entries[0] = current
+		return
+	}
 }
 
 // checkRootIsMapping unwraps a document node and returns an error if the

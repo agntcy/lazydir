@@ -47,28 +47,29 @@ contexts:
 		t.Fatalf("expected 3 entries, got %d", len(entries))
 	}
 
-	// Order preserved from YAML: prod, local, staging
-	if entries[0].ContextName != "prod" {
-		t.Errorf("entries[0].ContextName = %q, want %q", entries[0].ContextName, "prod")
+	// current_context is "local", so it is moved to the front. The remaining
+	// contexts keep their YAML order, giving: local, prod, staging.
+	if entries[0].ContextName != "local" {
+		t.Errorf("entries[0].ContextName = %q, want %q", entries[0].ContextName, "local")
 	}
-	if entries[0].Address != "prod.example.com:443" {
-		t.Errorf("entries[0].Address = %q, want %q", entries[0].Address, "prod.example.com:443")
+	if entries[0].Address != "localhost:8888" {
+		t.Errorf("entries[0].Address = %q, want %q", entries[0].Address, "localhost:8888")
 	}
-	if entries[0].OIDCIssuer != "https://auth.example.com" {
-		t.Errorf("entries[0].OIDCIssuer = %q, want %q", entries[0].OIDCIssuer, "https://auth.example.com")
-	}
-	if entries[0].OIDCClientID != "dirctl" {
-		t.Errorf("entries[0].OIDCClientID = %q, want %q", entries[0].OIDCClientID, "dirctl")
+	if entries[0].AuthMode != "insecure" {
+		t.Errorf("entries[0].AuthMode = %q, want %q", entries[0].AuthMode, "insecure")
 	}
 
-	if entries[1].ContextName != "local" {
-		t.Errorf("entries[1].ContextName = %q, want %q", entries[1].ContextName, "local")
+	if entries[1].ContextName != "prod" {
+		t.Errorf("entries[1].ContextName = %q, want %q", entries[1].ContextName, "prod")
 	}
-	if entries[1].Address != "localhost:8888" {
-		t.Errorf("entries[1].Address = %q, want %q", entries[1].Address, "localhost:8888")
+	if entries[1].Address != "prod.example.com:443" {
+		t.Errorf("entries[1].Address = %q, want %q", entries[1].Address, "prod.example.com:443")
 	}
-	if entries[1].AuthMode != "insecure" {
-		t.Errorf("entries[1].AuthMode = %q, want %q", entries[1].AuthMode, "insecure")
+	if entries[1].OIDCIssuer != "https://auth.example.com" {
+		t.Errorf("entries[1].OIDCIssuer = %q, want %q", entries[1].OIDCIssuer, "https://auth.example.com")
+	}
+	if entries[1].OIDCClientID != "dirctl" {
+		t.Errorf("entries[1].OIDCClientID = %q, want %q", entries[1].OIDCClientID, "dirctl")
 	}
 
 	if entries[2].ContextName != "staging" {
@@ -85,6 +86,81 @@ contexts:
 	}
 	if !entries[2].TLSSkipVerify {
 		t.Error("entries[2].TLSSkipVerify = false, want true")
+	}
+}
+
+func TestLoadDirctlContexts_CurrentContextMissing(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	data := []byte(`
+current_context: does-not-exist
+contexts:
+  first:
+    server_address: first.example.com:443
+    auth_mode: insecure
+  second:
+    server_address: second.example.com:443
+    auth_mode: insecure
+`)
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := LoadDirctlContexts(path)
+	if err != nil {
+		t.Fatalf("LoadDirctlContexts() error = %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	// current_context points to an unknown context: YAML order is preserved.
+	if entries[0].ContextName != "first" {
+		t.Errorf("entries[0].ContextName = %q, want %q", entries[0].ContextName, "first")
+	}
+	if entries[1].ContextName != "second" {
+		t.Errorf("entries[1].ContextName = %q, want %q", entries[1].ContextName, "second")
+	}
+}
+
+func TestLoadDirctlContexts_CurrentContextSkipped(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// current_context points to a context that is present in YAML but skipped
+	// because it has no server_address, so no reordering should happen.
+	data := []byte(`
+current_context: broken
+contexts:
+  broken:
+    server_address: ""
+    auth_mode: insecure
+  first:
+    server_address: first.example.com:443
+    auth_mode: insecure
+  second:
+    server_address: second.example.com:443
+    auth_mode: insecure
+`)
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := LoadDirctlContexts(path)
+	if err == nil {
+		t.Error("expected warning error for skipped context, got nil")
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	// "broken" was skipped, so YAML order of the valid contexts is preserved.
+	if entries[0].ContextName != "first" {
+		t.Errorf("entries[0].ContextName = %q, want %q", entries[0].ContextName, "first")
+	}
+	if entries[1].ContextName != "second" {
+		t.Errorf("entries[1].ContextName = %q, want %q", entries[1].ContextName, "second")
 	}
 }
 
