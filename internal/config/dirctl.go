@@ -25,11 +25,12 @@ type dirctlContext struct {
 	OIDCClientID  string `yaml:"oidc_client_id"`
 }
 
-// LoadDirctlContexts reads and parses a dirctl config file, returning the
-// contexts as DirectoryEntry values in the order they appear in the YAML file.
-// If the config specifies a "current_context", that context is moved to the
-// front of the list so it becomes the default connection target. The path
-// supports a leading "~/" which is expanded to the user's home directory.
+// LoadDirctlContexts reads and parses a dirctl config file, returning its
+// contexts as DirectoryEntry values. If the config specifies a
+// "current_context", that context is placed first so it becomes the default
+// connection target; the remaining contexts follow in the order they appear in
+// the YAML file. The path supports a leading "~/" which is expanded to the
+// user's home directory.
 //
 // Returns an error if the file cannot be read or parsed; callers should treat
 // errors as non-fatal (log and continue with manually configured servers).

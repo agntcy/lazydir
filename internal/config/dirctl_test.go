@@ -48,7 +48,7 @@ contexts:
 	}
 
 	// current_context is "local", so it is moved to the front. The remaining
-	// contexts keep their YAML order: local, prod, staging.
+	// contexts keep their YAML order, giving: local, prod, staging.
 	if entries[0].ContextName != "local" {
 		t.Errorf("entries[0].ContextName = %q, want %q", entries[0].ContextName, "local")
 	}
@@ -116,6 +116,46 @@ contexts:
 		t.Fatalf("expected 2 entries, got %d", len(entries))
 	}
 	// current_context points to an unknown context: YAML order is preserved.
+	if entries[0].ContextName != "first" {
+		t.Errorf("entries[0].ContextName = %q, want %q", entries[0].ContextName, "first")
+	}
+	if entries[1].ContextName != "second" {
+		t.Errorf("entries[1].ContextName = %q, want %q", entries[1].ContextName, "second")
+	}
+}
+
+func TestLoadDirctlContexts_CurrentContextSkipped(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// current_context points to a context that is present in YAML but skipped
+	// because it has no server_address, so no reordering should happen.
+	data := []byte(`
+current_context: broken
+contexts:
+  broken:
+    server_address: ""
+    auth_mode: insecure
+  first:
+    server_address: first.example.com:443
+    auth_mode: insecure
+  second:
+    server_address: second.example.com:443
+    auth_mode: insecure
+`)
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := LoadDirctlContexts(path)
+	if err == nil {
+		t.Error("expected warning error for skipped context, got nil")
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	// "broken" was skipped, so YAML order of the valid contexts is preserved.
 	if entries[0].ContextName != "first" {
 		t.Errorf("entries[0].ContextName = %q, want %q", entries[0].ContextName, "first")
 	}
