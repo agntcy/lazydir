@@ -6,10 +6,30 @@ package gui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/jesseduffield/gocui"
 )
+
+// syncedAgo renders roughly how long ago the displayed records were last
+// synced, in compact coarse units (e.g. "< 1m ago", "5m ago", "2h ago",
+// "3d ago"), as a relative staleness indicator for the records panel title.
+// The panel is redrawn on a timer (see uiRefreshLoop) so this value stays
+// current.
+func syncedAgo(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "< 1m ago"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours())/24)
+	}
+}
 
 // indent1 is the single-level indentation used for child rows everywhere in
 // the TUI (applied filter selections, inline descriptions, inline record info).
@@ -112,6 +132,29 @@ func (app *Gui) renderFilterOption(v *gocui.View, r listRow, applied map[string]
 	}
 }
 
+// recordsTitle builds the [3] Records panel title, reflecting the current
+// record count, name filter, and (once loaded) the relative staleness of the
+// displayed data.
+func (app *Gui) recordsTitle() string {
+	total := len(app.state.records)
+
+	title := "[3] Records"
+	if total > 0 || app.state.stream == streamDone {
+		if app.state.filterQuery != "" {
+			title += fmt.Sprintf(" (%d/%d)", len(app.state.filteredRecords), total)
+		} else {
+			title += fmt.Sprintf(" (%d)", total)
+		}
+	}
+	if app.state.filterQuery != "" {
+		title += fmt.Sprintf("  /: %s", app.state.filterQuery)
+	}
+	if app.state.stream == streamDone && !app.state.dataFetchedAt.IsZero() {
+		title += fmt.Sprintf("  [⟳ %s]", syncedAgo(app.state.dataFetchedAt))
+	}
+	return title
+}
+
 // renderRecordsView redraws the [3] Records panel and updates its title to
 // reflect the current record count, stream state, and name filter.
 func (app *Gui) renderRecordsView(g *gocui.Gui) {
@@ -121,21 +164,7 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	}
 	v.Clear()
 
-	records := app.state.filteredRecords
-	total := len(app.state.records)
-
-	title := "[3] Records"
-	if total > 0 || app.state.stream == streamDone {
-		if app.state.filterQuery != "" {
-			title += fmt.Sprintf(" (%d/%d)", len(records), total)
-		} else {
-			title += fmt.Sprintf(" (%d)", total)
-		}
-	}
-	if app.state.filterQuery != "" {
-		title += fmt.Sprintf("  /: %s", app.state.filterQuery)
-	}
-	v.Title = title
+	v.Title = app.recordsTitle()
 
 	viewW, _ := v.Size()
 	nameW := viewW - 14

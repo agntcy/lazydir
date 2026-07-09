@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/agntcy/lazydir/internal/config"
 	"github.com/agntcy/lazydir/internal/dirclient"
@@ -180,6 +181,10 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 		app.state.cancelLoad()
 		app.state.cancelLoad = nil
 	}
+
+	// Save current server's records to the per-server cache before switching.
+	app.saveServerCache()
+
 	if app.state.client != nil {
 		app.state.client.Close()
 		app.state.client = nil
@@ -187,18 +192,30 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.activeDir = entry
 	app.state.serverAddr = entry.Address
 	app.state.dirStatus = connTrying
-	app.state.stream = streamLoading
-	app.state.fullCache = nil
-	app.state.records = nil
-	app.state.filteredRecords = nil
-	app.state.recordDisplayRows = nil
 	app.state.recordGroupExpanded = map[string]bool{}
 	app.state.recordCursor = 0
 	app.state.filters = newFilterState()
 	app.state.filterQuery = ""
-	app.state.filterValues = newFilterValueAggregator()
 	app.state.classEntries = nil
 	app.state.classEntriesVer = ""
+
+	// Restore cached records if available for the target server.
+	if cached := app.state.serverCache[serverCacheKey(entry)]; cached != nil {
+		app.state.fullCache = cached.fullCache
+		app.state.filterValues = cached.filterValues
+		app.state.dataFetchedAt = cached.cachedAt
+		app.state.stream = streamDone
+		app.applyFilters()
+	} else {
+		app.state.fullCache = nil
+		app.state.records = nil
+		app.state.filteredRecords = nil
+		app.state.recordDisplayRows = nil
+		app.state.filterValues = newFilterValueAggregator()
+		app.state.dataFetchedAt = time.Time{}
+		app.state.stream = streamLoading
+	}
+
 	app.renderDirectory(g)
 	app.renderRecordsView(g)
 	app.renderFiltersView(g)
