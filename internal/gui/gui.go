@@ -5,6 +5,8 @@ package gui
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strconv"
@@ -53,9 +55,28 @@ type menuState struct {
 	view    string // the gocui view name this menu is rendered in
 }
 
+// serverCacheEntry holds the cached record data for a previously visited
+// directory server. It is stored when the user switches away from a server
+// and restored (displaying cached records instantly) when switching back.
+type serverCacheEntry struct {
+	fullCache    []*dirclient.RecordSummary
+	filterValues *filterValueAggregator
+	cachedAt     time.Time
+}
+
 // appState holds all mutable application state. Fields are only mutated on
 // the GUI goroutine (inside g.Update callbacks or key handlers).
 type appState struct {
+	// Per-server record cache: keyed by address + auth identity (see
+	// serverCacheKey), stores records fetched from previously visited servers
+	// so switching back is instant.
+	serverCache map[string]*serverCacheEntry
+
+	// When the currently-displayed records were fetched from the directory.
+	// Set on a fresh stream completion and preserved across cache round-trips
+	// so the records panel can show how stale the data is. Zero if never loaded.
+	dataFetchedAt time.Time
+
 	// Connections panel cursor (0 = Directory, 1 = OASF)
 	connCursor int
 
@@ -259,6 +280,12 @@ func New(cfg Config) error {
 	app.state.oasfStatus = connTrying
 	go app.pingOASF(oasfClient)
 
+	// Refresh the records panel on a timer so the "synced N ago" staleness
+	// indicator in its title stays current. Stopped when the main loop exits.
+	uiStop := make(chan struct{})
+	defer close(uiStop)
+	go app.uiRefreshLoop(uiStop)
+
 	if err := g.MainLoop(); err != nil && !gocui.IsQuit(err) {
 		return fmt.Errorf("main loop: %w", err)
 	}
@@ -299,7 +326,18 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		app.state.dirStatus = connTrying
 		app.renderDirectory(g)
 		app.renderStatus(g)
-		app.startRecordsStream()
+		// A completed stream means connectToDirectory restored a cached
+		// snapshot (which may legitimately be empty) — display it instantly
+		// rather than refetching.
+		if app.state.stream == streamDone {
+			app.state.dirStatus = connOK
+			app.state.dirLastConnected = time.Now()
+			app.state.dirError = ""
+			app.renderDirectory(g)
+			app.startReconnectLoop()
+		} else {
+			app.startRecordsStream()
+		}
 		return nil
 	})
 }
@@ -326,6 +364,38 @@ func (app *Gui) startReconnectLoop() {
 	stop := make(chan struct{})
 	app.state.dirReconnStop = stop
 	go app.dirHealthLoop(stop)
+}
+
+// uiRefreshLoop keeps the records panel's relative "synced N ago" staleness
+// indicator current. It only rewrites the panel title (never clears/repaints
+// the record list) and only when the title actually changes, so it stays cheap
+// even for large lists. It runs for the lifetime of the GUI and exits when stop
+// is closed.
+func (app *Gui) uiRefreshLoop(stop chan struct{}) {
+	// Coarse (minute-granular) label, so a low-frequency tick is plenty.
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			app.g.Update(func(g *gocui.Gui) error {
+				if app.state.stream != streamDone || app.state.dataFetchedAt.IsZero() {
+					return nil
+				}
+				v, err := g.View(viewRecords)
+				if err != nil {
+					return nil
+				}
+				if title := app.recordsTitle(); title != v.Title {
+					v.Title = title
+				}
+				return nil
+			})
+		}
+	}
 }
 
 func (app *Gui) stopReconnectLoop() {
@@ -740,6 +810,7 @@ func (app *Gui) startRecordsStream() {
 					app.startReconnectLoop()
 				} else {
 					app.state.stream = streamDone
+					app.state.dataFetchedAt = time.Now()
 					if app.state.dirStatus == connTrying {
 						app.state.dirStatus = connOK
 						app.state.dirLastConnected = time.Now()
@@ -982,6 +1053,63 @@ func (app *Gui) syncCounts() (syncing, reconciling int) {
 func (app *Gui) hasSyncingRecords() bool {
 	s, r := app.syncCounts()
 	return s+r > 0
+}
+
+// serverCacheKey derives the per-server cache key. It is a composite of the
+// address and the auth identity, so cached records fetched under one identity
+// are never displayed for a different entry that happens to point at the same
+// address (e.g. two dirctl contexts with different credentials). The auth
+// token is hashed rather than stored verbatim.
+func serverCacheKey(e config.DirectoryEntry) string {
+	tokenHash := ""
+	if e.AuthToken != "" {
+		sum := sha256.Sum256([]byte(e.AuthToken))
+		tokenHash = hex.EncodeToString(sum[:8])
+	}
+	return strings.Join([]string{
+		e.Address,
+		e.AuthMode,
+		e.OIDCIssuer,
+		e.OIDCClientID,
+		e.TLSCAFile,
+		e.TLSCertFile,
+		e.TLSKeyFile,
+		strconv.FormatBool(e.TLSSkipVerify),
+		tokenHash,
+	}, "\x00")
+}
+
+// saveServerCache snapshots the current server's fullCache and filterValues
+// into the per-server cache map. It only caches after a stream has completed
+// (streamDone), so a server that legitimately returns zero records is still
+// cached and switching back to it stays instant.
+func (app *Gui) saveServerCache() {
+	if app.state.activeDir.Address == "" || app.state.stream != streamDone {
+		return
+	}
+	if app.state.serverCache == nil {
+		app.state.serverCache = map[string]*serverCacheEntry{}
+	}
+	// cachedAt reflects when the data was actually fetched (not when it was
+	// cached) so the staleness indicator survives cache round-trips.
+	cachedAt := app.state.dataFetchedAt
+	if cachedAt.IsZero() {
+		cachedAt = time.Now()
+	}
+	app.state.serverCache[serverCacheKey(app.state.activeDir)] = &serverCacheEntry{
+		fullCache:    app.state.fullCache,
+		filterValues: app.state.filterValues,
+		cachedAt:     cachedAt,
+	}
+}
+
+// invalidateServerCache removes the cache entry for the current server.
+// Called after mutating actions (delete, sync) that make cached data stale.
+func (app *Gui) invalidateServerCache() {
+	if app.state.serverCache == nil {
+		return
+	}
+	delete(app.state.serverCache, serverCacheKey(app.state.activeDir))
 }
 
 // clearSyncState resets all sync-related tracking fields.

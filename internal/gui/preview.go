@@ -57,8 +57,12 @@ func init() {
 // ── Preview panel: data fetching ──────────────────────────────────────────────
 
 func (app *Gui) pullRecord(subtitle, cid string) {
+	client := app.state.client
+	if client == nil {
+		return
+	}
 	ctx := context.Background()
-	jsonStr, err := app.state.client.PullJSON(ctx, cid)
+	jsonStr, err := client.PullJSON(ctx, cid)
 	app.g.Update(func(g *gocui.Gui) error {
 		if err != nil {
 			app.renderPreviewError(g, err.Error())
