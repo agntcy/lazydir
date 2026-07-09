@@ -30,6 +30,7 @@ type ClassEntry struct {
 	ID      int
 	Name    string
 	Caption string
+	Version string // OASF schema version this entry was fetched from
 }
 
 // ClassInfo holds user-visible info about a taxonomy class, including its
@@ -160,6 +161,12 @@ func (c *Client) FetchAll(ctx context.Context, classType ClassType, schemaVersio
 
 	entries := map[string]ClassEntry{}
 	collectEntries(map[string]sdkschema.TaxonomyItem(taxonomy), entries)
+	// Stamp the source schema version so callers can resolve version-specific
+	// details (e.g. descriptions) for values that only exist in this version.
+	for k, e := range entries {
+		e.Version = schemaVersion
+		entries[k] = e
+	}
 	return entries, nil
 }
 

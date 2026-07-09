@@ -229,11 +229,19 @@ func (app *Gui) filterToggleInfo(g *gocui.Gui, v *gocui.View) error {
 	fs.inlineDescLoading = true
 	app.openInfoPopup(g, viewFilters)
 
-	go app.fetchInlineDesc(ct, name)
+	// Resolve the schema version from the cached entry so the description is
+	// fetched from the same OASF version the value originated in. Read here on
+	// the GUI goroutine to avoid racing the background taxonomy fetch.
+	schemaVer := ""
+	if entries := app.state.classEntries[ct]; entries != nil {
+		schemaVer = entries[name].Version
+	}
+
+	go app.fetchInlineDesc(ct, name, schemaVer)
 	return nil
 }
 
-func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
+func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name, schemaVer string) {
 	client := app.state.oasfClient
 	if client == nil {
 		app.g.Update(func(g *gocui.Gui) error {
@@ -249,7 +257,6 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 		return
 	}
 
-	schemaVer := app.state.classEntriesVer
 	info, err := client.Fetch(context.Background(), ct, name, schemaVer)
 	app.g.Update(func(g *gocui.Gui) error {
 		if app.state.filters.inlineDesc != name {

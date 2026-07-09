@@ -479,6 +479,21 @@ func (c *Client) DeleteSync(ctx context.Context, syncID string) error {
 	return nil
 }
 
+// namesOf collects the non-empty names from a slice of OASF sub-objects
+// (skills, domains, modules), each of which exposes GetName().
+func namesOf[T interface{ GetName() string }](items []T) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(items))
+	for _, it := range items {
+		if n := it.GetName(); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
 // extractSummary pulls name/version/skills/domains/modules from a raw record.
 func extractSummary(record *corev1.Record) *RecordSummary {
 	cid := record.GetCid()
@@ -494,6 +509,10 @@ func extractSummary(record *corev1.Record) *RecordSummary {
 
 	s := &RecordSummary{CID: cid}
 
+	// Every supported OASF schema version (v1alpha1/0.7.x, v1alpha2/0.8.x,
+	// v1/1.x) exposes the same skill/domain/module accessors, so extract them
+	// uniformly. Skipping the older versions here left their records out of the
+	// filter option lists.
 	switch {
 	case decoded.HasV1():
 		r := decoded.GetV1()
@@ -504,21 +523,9 @@ func extractSummary(record *corev1.Record) *RecordSummary {
 		s.Version = r.GetVersion()
 		s.SchemaVersion = r.GetSchemaVersion()
 		s.Authors = append(s.Authors, r.GetAuthors()...)
-		for _, sk := range r.GetSkills() {
-			if sk.GetName() != "" {
-				s.Skills = append(s.Skills, sk.GetName())
-			}
-		}
-		for _, d := range r.GetDomains() {
-			if d.GetName() != "" {
-				s.Domains = append(s.Domains, d.GetName())
-			}
-		}
-		for _, m := range r.GetModules() {
-			if m.GetName() != "" {
-				s.Modules = append(s.Modules, m.GetName())
-			}
-		}
+		s.Skills = namesOf(r.GetSkills())
+		s.Domains = namesOf(r.GetDomains())
+		s.Modules = namesOf(r.GetModules())
 	case decoded.HasV1Alpha2():
 		r := decoded.GetV1Alpha2()
 		if r == nil {
@@ -528,6 +535,9 @@ func extractSummary(record *corev1.Record) *RecordSummary {
 		s.Version = r.GetVersion()
 		s.SchemaVersion = r.GetSchemaVersion()
 		s.Authors = append(s.Authors, r.GetAuthors()...)
+		s.Skills = namesOf(r.GetSkills())
+		s.Domains = namesOf(r.GetDomains())
+		s.Modules = namesOf(r.GetModules())
 	case decoded.HasV1Alpha1():
 		r := decoded.GetV1Alpha1()
 		if r == nil {
@@ -537,6 +547,9 @@ func extractSummary(record *corev1.Record) *RecordSummary {
 		s.Version = r.GetVersion()
 		s.SchemaVersion = r.GetSchemaVersion()
 		s.Authors = append(s.Authors, r.GetAuthors()...)
+		s.Skills = namesOf(r.GetSkills())
+		s.Domains = namesOf(r.GetDomains())
+		s.Modules = namesOf(r.GetModules())
 	default:
 		return nil
 	}

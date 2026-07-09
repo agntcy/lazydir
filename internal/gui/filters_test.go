@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
+	"github.com/agntcy/lazydir/internal/oasf"
 )
 
 func TestFilterCategoryTitle(t *testing.T) {
@@ -136,5 +137,94 @@ func TestNewFilterState(t *testing.T) {
 	}
 	if fs.listCursor != 0 || fs.filterQuery != "" {
 		t.Error("expected zero-value defaults")
+	}
+}
+
+func summariesWithVersions(versions ...string) []*dirclient.RecordSummary {
+	out := make([]*dirclient.RecordSummary, 0, len(versions))
+	for _, v := range versions {
+		out = append(out, &dirclient.RecordSummary{SchemaVersion: v})
+	}
+	return out
+}
+
+func TestDistinctNewSchemaVersions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		summaries []*dirclient.RecordSummary
+		fetched   map[string]bool
+		want      []string
+	}{
+		{
+			name:      "all new, deduped and order preserved",
+			summaries: summariesWithVersions("1.0.0", "0.7.0", "1.0.0", "0.8.0"),
+			want:      []string{"1.0.0", "0.7.0", "0.8.0"},
+		},
+		{
+			name:      "already fetched versions skipped",
+			summaries: summariesWithVersions("1.0.0", "0.7.0"),
+			fetched:   map[string]bool{"1.0.0": true},
+			want:      []string{"0.7.0"},
+		},
+		{
+			name:      "empty versions ignored",
+			summaries: summariesWithVersions("", "0.7.0", ""),
+			want:      []string{"0.7.0"},
+		},
+		{
+			name:      "nothing new",
+			summaries: summariesWithVersions("1.0.0"),
+			fetched:   map[string]bool{"1.0.0": true},
+			want:      nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := distinctNewSchemaVersions(tt.summaries, tt.fetched)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestMergeClassEntries(t *testing.T) {
+	t.Parallel()
+
+	// A value that only exists in an older version fills a gap, while an
+	// already-present name keeps its first (existing) entry.
+	dst := map[string]oasf.ClassEntry{
+		"schema.oasf/skill": {Name: "schema.oasf/skill", Caption: "Skill", Version: "1.0.0"},
+	}
+	src := map[string]oasf.ClassEntry{
+		"schema.oasf/skill": {Name: "schema.oasf/skill", Caption: "Skill (old)", Version: "0.7.0"},
+		"runtime/model":     {Name: "runtime/model", Caption: "Model", Version: "0.7.0"},
+	}
+
+	got := mergeClassEntries(dst, src)
+
+	if e := got["runtime/model"]; e.Caption != "Model" || e.Version != "0.7.0" {
+		t.Errorf("runtime/model = %+v, want caption=Model version=0.7.0", e)
+	}
+	if e := got["schema.oasf/skill"]; e.Caption != "Skill" || e.Version != "1.0.0" {
+		t.Errorf("existing entry was overwritten: %+v", e)
+	}
+}
+
+func TestMergeClassEntriesNilDst(t *testing.T) {
+	t.Parallel()
+
+	src := map[string]oasf.ClassEntry{"runtime/model": {Name: "runtime/model", Caption: "Model"}}
+	got := mergeClassEntries(nil, src)
+	if got["runtime/model"].Caption != "Model" {
+		t.Errorf("merge into nil dst dropped entry: %+v", got)
 	}
 }

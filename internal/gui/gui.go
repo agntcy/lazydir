@@ -148,10 +148,11 @@ type appState struct {
 	activeFilterValues *filterValueAggregator
 
 	// classEntries caches enriched display info (ID, caption) for OASF
-	// taxonomy classes. Populated once after the first record batch
-	// arrives and provides the schema version needed for the lookup.
-	classEntries    map[oasf.ClassType]map[string]oasf.ClassEntry
-	classEntriesVer string // schema version used for the fetch, "" if not yet fetched
+	// taxonomy classes. Records may span multiple OASF schema versions, so
+	// entries are merged from every version seen in the stream; classEntriesVers
+	// tracks which versions have already been fetched (or are in flight).
+	classEntries     map[oasf.ClassType]map[string]oasf.ClassEntry
+	classEntriesVers map[string]bool
 
 	// [2] Filters panel state
 	filters filterState
@@ -785,6 +786,7 @@ func (app *Gui) startRecordsStream() {
 				for _, r := range batch {
 					app.state.filterValues.add(r)
 				}
+				app.maybeStartClassEntriesFetch(batch)
 				app.applyFilters()
 				app.renderRecordsView(g)
 				app.renderFiltersView(g)
@@ -1300,19 +1302,51 @@ func (e *liveInputEditor) Edit(v *gocui.View, key gocui.Key, ch rune, mod gocui.
 const defaultInputDebounceDelay = 150
 
 // maybeStartClassEntriesFetch kicks off a background taxonomy fetch for
-// skills/domains/modules when the first schema version is discovered in
-// the record stream. It is a no-op if the fetch has already been started.
+// skills/domains/modules for every OASF schema version present in the given
+// summaries that has not already been fetched. Records can span multiple
+// schema versions, so each distinct version needs its own taxonomy to resolve
+// captions for values that only exist in that version.
+//
+// It must be called on the GUI goroutine so access to classEntriesVers is safe.
 func (app *Gui) maybeStartClassEntriesFetch(summaries []*dirclient.RecordSummary) {
-	if app.state.classEntriesVer != "" {
-		return
+	for _, v := range distinctNewSchemaVersions(summaries, app.state.classEntriesVers) {
+		if app.state.classEntriesVers == nil {
+			app.state.classEntriesVers = map[string]bool{}
+		}
+		app.state.classEntriesVers[v] = true
+		go app.fetchClassEntries(v)
 	}
+}
+
+// distinctNewSchemaVersions returns the non-empty schema versions present in
+// summaries that are absent from the fetched set, each listed once.
+func distinctNewSchemaVersions(summaries []*dirclient.RecordSummary, fetched map[string]bool) []string {
+	var out []string
+	seen := map[string]bool{}
 	for _, r := range summaries {
-		if r.SchemaVersion != "" {
-			app.state.classEntriesVer = r.SchemaVersion
-			go app.fetchClassEntries(r.SchemaVersion)
-			return
+		v := r.SchemaVersion
+		if v == "" || seen[v] || fetched[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
+}
+
+// mergeClassEntries folds src into dst, keeping entries already present in dst.
+// Captions for a given taxonomy name are stable across versions, so the first
+// version that supplies a name wins and later versions only fill in the gaps.
+func mergeClassEntries(dst, src map[string]oasf.ClassEntry) map[string]oasf.ClassEntry {
+	if dst == nil {
+		dst = make(map[string]oasf.ClassEntry, len(src))
+	}
+	for k, v := range src {
+		if _, ok := dst[k]; !ok {
+			dst[k] = v
 		}
 	}
+	return dst
 }
 
 // fetchClassEntries fetches the full OASF taxonomy for all three class types
@@ -1334,7 +1368,7 @@ func (app *Gui) fetchClassEntries(schemaVersion string) {
 			if app.state.classEntries == nil {
 				app.state.classEntries = map[oasf.ClassType]map[string]oasf.ClassEntry{}
 			}
-			app.state.classEntries[ct] = entries
+			app.state.classEntries[ct] = mergeClassEntries(app.state.classEntries[ct], entries)
 			app.renderFiltersView(g)
 			app.refreshPreviewTree(g)
 			return nil
