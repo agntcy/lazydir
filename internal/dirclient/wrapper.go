@@ -340,16 +340,24 @@ func (c *Client) MatchingCIDs(ctx context.Context, queries []Query) ([]string, e
 	}
 
 	var cids []string
+	resCh := result.ResCh()
+	errCh := result.ErrCh()
 	for {
 		select {
-		case resp, ok := <-result.ResCh():
+		case resp, ok := <-resCh:
 			if !ok {
 				return cids, nil
 			}
 			if resp != nil {
 				cids = append(cids, resp.GetRecordCid())
 			}
-		case streamErr := <-result.ErrCh():
+		case streamErr, ok := <-errCh:
+			if !ok {
+				// ErrCh closed: stop selecting it so a closed channel does
+				// not busy-loop while we wait for ResCh/DoneCh.
+				errCh = nil
+				continue
+			}
 			if streamErr != nil {
 				return nil, fmt.Errorf("receiving CID: %w", streamErr)
 			}

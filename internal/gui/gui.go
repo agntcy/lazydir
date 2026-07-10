@@ -835,7 +835,6 @@ func (app *Gui) startRecordsStream() {
 						app.state.dirError = ""
 					}
 					app.startReconnectLoop()
-					app.startTVEnrichment()
 				}
 				app.renderRecordsView(g)
 				app.renderDirectory(g)
@@ -971,8 +970,8 @@ func matchesCategory(r *dirclient.RecordSummary, cat filterCategory, selected ma
 
 // splitModes partitions a selection map into include and exclude value sets.
 func splitModes(selected map[string]filterMode) (include, exclude map[string]bool) {
-	include = map[string]bool{}
-	exclude = map[string]bool{}
+	include = make(map[string]bool, len(selected))
+	exclude = make(map[string]bool, len(selected))
 	for v, mode := range selected {
 		switch mode {
 		case modeInclude:
