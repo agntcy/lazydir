@@ -6,7 +6,9 @@ package dirclient
 import (
 	"testing"
 
+	corev1 "github.com/agntcy/dir/api/core/v1"
 	searchv1 "github.com/agntcy/dir/api/search/v1"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func TestQueryToRPC(t *testing.T) {
@@ -105,6 +107,60 @@ func TestClose_NilClient(t *testing.T) {
 
 	c := &Client{}
 	c.Close()
+}
+
+// makeRecord builds a minimal record carrying one skill, domain and module for
+// the given OASF schema version.
+func makeRecord(t *testing.T, schemaVersion string) *corev1.Record {
+	t.Helper()
+
+	data, err := structpb.NewStruct(map[string]any{
+		"schema_version": schemaVersion,
+		"name":           "test-agent",
+		"version":        "1.0.0",
+		"authors":        []any{"alice"},
+		"skills":         []any{map[string]any{"name": "natural_language_processing"}},
+		"domains":        []any{map[string]any{"name": "biotechnology"}},
+		"modules":        []any{map[string]any{"name": "runtime/model"}},
+	})
+	if err != nil {
+		t.Fatalf("building struct: %v", err)
+	}
+
+	return &corev1.Record{Data: data}
+}
+
+// TestExtractSummaryAcrossSchemaVersions guards against the regression where
+// skills/domains/modules were only collected from v1 (1.x) records, leaving
+// older 0.7.x (v1alpha1) and 0.8.x (v1alpha2) records absent from the filters.
+func TestExtractSummaryAcrossSchemaVersions(t *testing.T) {
+	t.Parallel()
+
+	versions := []string{"0.7.0", "0.8.0", "1.0.0"}
+
+	for _, v := range versions {
+		t.Run(v, func(t *testing.T) {
+			t.Parallel()
+
+			s := extractSummary(makeRecord(t, v))
+			if s == nil {
+				t.Fatalf("extractSummary returned nil for schema version %s", v)
+			}
+
+			if want, got := "test-agent", s.Name; got != want {
+				t.Errorf("Name = %q, want %q", got, want)
+			}
+			if len(s.Skills) != 1 || s.Skills[0] != "natural_language_processing" {
+				t.Errorf("Skills = %v, want [natural_language_processing]", s.Skills)
+			}
+			if len(s.Domains) != 1 || s.Domains[0] != "biotechnology" {
+				t.Errorf("Domains = %v, want [biotechnology]", s.Domains)
+			}
+			if len(s.Modules) != 1 || s.Modules[0] != "runtime/model" {
+				t.Errorf("Modules = %v, want [runtime/model]", s.Modules)
+			}
+		})
+	}
 }
 
 func TestMinFunc(t *testing.T) {

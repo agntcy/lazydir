@@ -197,7 +197,7 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.filters = newFilterState()
 	app.state.filterQuery = ""
 	app.state.classEntries = nil
-	app.state.classEntriesVer = ""
+	app.state.classEntriesVers = nil
 
 	// Restore cached records if available for the target server.
 	if cached := app.state.serverCache[serverCacheKey(entry)]; cached != nil {
@@ -388,7 +388,7 @@ func (app *Gui) connectToOASF(g *gocui.Gui, addr string) {
 	app.state.oasfStatus = connTrying
 	app.state.oasfError = ""
 	app.state.classEntries = nil
-	app.state.classEntriesVer = ""
+	app.state.classEntriesVers = nil
 	app.renderDirectory(g)
 	go app.pingOASF(client)
 }
