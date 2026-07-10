@@ -1351,16 +1351,22 @@ func mergeClassEntries(dst, src map[string]oasf.ClassEntry) map[string]oasf.Clas
 
 // fetchClassEntries fetches the full OASF taxonomy for all three class types
 // (skills, domains, modules) and stores the flattened entries in app state.
+// On any failure it clears the version from classEntriesVers so a later record
+// batch carrying that version re-attempts the fetch, rather than leaving its
+// captions permanently unresolved after a transient error.
 func (app *Gui) fetchClassEntries(schemaVersion string) {
 	client := app.state.oasfClient
 	if client == nil {
+		app.forgetClassEntriesVersion(schemaVersion)
 		return
 	}
 	ctx := context.Background()
 
+	failed := false
 	for _, ct := range []oasf.ClassType{oasf.ClassTypeSkill, oasf.ClassTypeDomain, oasf.ClassTypeModule} {
 		entries, err := client.FetchAll(ctx, ct, schemaVersion)
 		if err != nil {
+			failed = true
 			continue
 		}
 		ct := ct
@@ -1374,6 +1380,20 @@ func (app *Gui) fetchClassEntries(schemaVersion string) {
 			return nil
 		})
 	}
+
+	if failed {
+		app.forgetClassEntriesVersion(schemaVersion)
+	}
+}
+
+// forgetClassEntriesVersion clears a schema version from the fetched set so the
+// next record batch that carries it triggers another taxonomy fetch. It runs on
+// the GUI goroutine to keep classEntriesVers accessed from a single goroutine.
+func (app *Gui) forgetClassEntriesVersion(schemaVersion string) {
+	app.g.Update(func(g *gocui.Gui) error {
+		delete(app.state.classEntriesVers, schemaVersion)
+		return nil
+	})
 }
 
 // scheduleInputChange resets the debounce timer so the onChange callback
