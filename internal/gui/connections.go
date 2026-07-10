@@ -181,6 +181,11 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 		app.state.cancelLoad()
 		app.state.cancelLoad = nil
 	}
+	if app.state.tvCancel != nil {
+		app.state.tvCancel()
+		app.state.tvCancel = nil
+	}
+	app.state.tvEnriching = false
 
 	// Save current server's records to the per-server cache before switching.
 	app.saveServerCache()
@@ -205,6 +210,7 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 		app.state.filterValues = cached.filterValues
 		app.state.dataFetchedAt = cached.cachedAt
 		app.state.stream = streamDone
+		app.state.tvEnriched = cached.tvEnriched
 		app.applyFilters()
 	} else {
 		app.state.fullCache = nil
@@ -214,6 +220,7 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 		app.state.filterValues = newFilterValueAggregator()
 		app.state.dataFetchedAt = time.Time{}
 		app.state.stream = streamLoading
+		app.state.tvEnriched = false
 	}
 
 	app.renderDirectory(g)

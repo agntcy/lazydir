@@ -181,3 +181,10 @@ func TestMinFunc(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordSummaryTrustedVerifiedDefaultFalse(t *testing.T) {
+	var s RecordSummary
+	if s.Trusted || s.Verified {
+		t.Fatalf("zero-value RecordSummary should have Trusted=false Verified=false, got %+v", s)
+	}
+}

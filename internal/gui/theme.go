@@ -27,6 +27,7 @@ type Theme struct {
 	Color9  string // default: bright green — verified filter
 	Color10 string // default: bright black — dim/muted (IDs, gray)
 	Reset   string // ANSI reset sequence
+	Strike  string // ANSI strikethrough sequence (excluded/negated filters)
 
 	ActiveBorderColor gocui.Attribute // focused panel border + cursor row foreground
 	SelectedRowBg     gocui.Attribute // highlighted row background in list panels
@@ -46,6 +47,7 @@ var defaultTheme = Theme{
 	Color9:  "\033[92m",
 	Color10: "\033[90m",
 	Reset:   "\033[0m",
+	Strike:  "\033[9m",
 
 	ActiveBorderColor: gocui.ColorGreen,
 	SelectedRowBg:     gocui.Get256Color(8),
