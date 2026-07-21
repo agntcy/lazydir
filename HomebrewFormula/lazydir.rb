@@ -1,7 +1,7 @@
 class Lazydir < Formula
   desc "Terminal UI for browsing AGNTCY Directory instances"
   homepage "https://github.com/agntcy/lazydir"
-  version "v0.0.1"
+  version "v0.0.2"
   license "Apache-2.0"
   version_scheme 1
 
@@ -10,7 +10,7 @@ class Lazydir < Formula
   on_macos do
       if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
           url "#{url}/lazydir-darwin-arm64"
-          sha256 "1854b4dd5869aa96becac05e7895756352f7f9b80126570783855164d4f76fdd"
+          sha256 "0036dd449e3e6e42c6e63abf1d688b8eef3d24119c8ef49b722284eb614e13c4"
 
           def install
               bin.install "lazydir-darwin-arm64" => "lazydir"
@@ -20,7 +20,7 @@ class Lazydir < Formula
 
       if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
           url "#{url}/lazydir-darwin-amd64"
-          sha256 "dd3a4e8621464012b1f137a3a8ced6db04c94e6a4efa08f68fe548249ad1447a"
+          sha256 "a839f4ec03550c978af395b593a9d83a3c5f9face336a862067e252353469a8c"
 
           def install
               bin.install "lazydir-darwin-amd64" => "lazydir"
@@ -32,7 +32,7 @@ class Lazydir < Formula
   on_linux do
       if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
           url "#{url}/lazydir-linux-arm64"
-          sha256 "ab59459b2f78b75c249438ca017d6bfc2bd60a24b061399a98a5aed029f0e5b1"
+          sha256 "d081543953241362f5abee745c48a65d4b31d82b52a6778692071b90824d9749"
 
           def install
               bin.install "lazydir-linux-arm64" => "lazydir"
@@ -42,7 +42,7 @@ class Lazydir < Formula
 
       if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
           url "#{url}/lazydir-linux-amd64"
-          sha256 "37d63e25eb69c65d0c517945e73bc0da0f56f203d33b31b582bdbc22d7a18c51"
+          sha256 "e6f00b8262ed77477bf643da686c77ee8833a360cfac479fdcfae23764e71c0c"
 
           def install
               bin.install "lazydir-linux-amd64" => "lazydir"
