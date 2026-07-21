@@ -264,7 +264,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		if cfv, _ := gui.View(viewConfirmPopup); cfv != nil && cfv.Visible {
 			cfMaxW := maxX - 1 - rightX0 - 2
 			cfCW, cfCH := popupContentSize(g.state.confirmPopupText, cfMaxW)
-			cfCH += 1 + len(g.state.menu.options)
+			cfCH += len(g.state.menu.options)
 			cfX0, cfY0, cfX1, cfY1 = popupRect(gui, viewRecords,
 				cfCW, cfCH, rightX0, maxX, panelBottom, dirY0, filtersY0, recordY0)
 		}

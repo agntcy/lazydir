@@ -415,22 +415,29 @@ func (app *Gui) renderConfirmPopup(g *gocui.Gui) {
 	body := strings.TrimRight(app.state.confirmPopupText, "\n")
 
 	viewW, _ := cv.Size()
-	bodyLines := 0
 	if body != "" {
 		fmt.Fprint(cv, body)
-		if viewW > 0 {
-			bodyLines = wrappedLineCount(body, viewW)
-		} else {
-			bodyLines = strings.Count(body, "\n") + 1
-		}
 		fmt.Fprint(cv, "\n")
-		bodyLines++
 	}
 
 	for _, opt := range ms.options {
 		fmt.Fprintf(cv, " %s\n", opt.label)
 	}
-	_ = cv.SetCursor(0, bodyLines+ms.cursor)
+	_ = cv.SetCursor(0, confirmOptionRowOffset(body, viewW)+ms.cursor)
+}
+
+// confirmOptionRowOffset returns the buffer row on which the first menu option
+// is rendered, i.e. the number of lines the wrapped body occupies. The body's
+// trailing newline only terminates its last line, so options begin exactly
+// wrappedLineCount(body) rows down — not one further.
+func confirmOptionRowOffset(body string, viewW int) int {
+	if body == "" {
+		return 0
+	}
+	if viewW > 0 {
+		return wrappedLineCount(body, viewW)
+	}
+	return strings.Count(strings.TrimRight(body, "\n"), "\n") + 1
 }
 
 func (app *Gui) confirmMenuUp(g *gocui.Gui, v *gocui.View) error {
