@@ -116,6 +116,15 @@ func (c filterCategory) title() string {
 	return ""
 }
 
+// filterMode is the applied state of a single filter option. Absence of a key
+// from the applied map means the option is not applied at all.
+type filterMode int
+
+const (
+	modeInclude filterMode = iota + 1 // applied — keep records that match
+	modeExclude                       // negated — hide records that match
+)
+
 // filterState owns all mutable state for the [2] Filters panel and the set of
 // active filters that the records pane filters against. The map keys are
 // option labels (e.g. skill name, version string, "yes"/"no").
@@ -126,8 +135,8 @@ type filterState struct {
 	// expanded tracks which categories have their options dropdown open.
 	expanded map[filterCategory]bool
 
-	// applied[category] -> set of selected option labels.
-	applied map[filterCategory]map[string]bool
+	// applied[category][option] -> include/exclude mode. Absent = not applied.
+	applied map[filterCategory]map[string]filterMode
 
 	// inline description toggle (press 'i' on an option row)
 	inlineDesc        string // option name currently expanded, "" if none
@@ -142,7 +151,7 @@ type filterState struct {
 func newFilterState() filterState {
 	return filterState{
 		expanded: map[filterCategory]bool{},
-		applied:  map[filterCategory]map[string]bool{},
+		applied:  map[filterCategory]map[string]filterMode{},
 	}
 }
 
@@ -248,20 +257,24 @@ func (app *Gui) appliedFor(c filterCategory) []string {
 	return out
 }
 
-// toggleApplied flips the on/off state of an option for a category.
+// toggleApplied cycles an option through not-applied → include → exclude →
+// not-applied for the given category.
 func (app *Gui) toggleApplied(c filterCategory, value string) {
 	set := app.state.filters.applied[c]
 	if set == nil {
-		set = map[string]bool{}
+		set = map[string]filterMode{}
 		app.state.filters.applied[c] = set
 	}
-	if set[value] {
+	switch set[value] {
+	case modeInclude:
+		set[value] = modeExclude
+	case modeExclude:
 		delete(set, value)
 		if len(set) == 0 {
 			delete(app.state.filters.applied, c)
 		}
-	} else {
-		set[value] = true
+	default: // not applied
+		set[value] = modeInclude
 	}
 }
 
@@ -290,40 +303,6 @@ func (app *Gui) listRows() []listRow {
 		}
 	}
 	return rows
-}
-
-// activeQueries flattens the applied filter selections into the slice of
-// server-side queries that the directory understands.
-func (app *Gui) activeQueries() []dirclient.Query {
-	var qs []dirclient.Query
-	for _, c := range allFilterCategories {
-		set := app.state.filters.applied[c]
-		if len(set) == 0 {
-			continue
-		}
-		if c == filterTrustedVerified {
-			if set["trusted"] {
-				qs = append(qs, dirclient.Query{
-					Category: dirclient.FilterTrusted,
-					Value:    "true",
-				})
-			}
-			if set["verified"] {
-				qs = append(qs, dirclient.Query{
-					Category: dirclient.FilterVerified,
-					Value:    "true",
-				})
-			}
-			continue
-		}
-		for v := range set {
-			qs = append(qs, dirclient.Query{
-				Category: categoryToFilter(c),
-				Value:    v,
-			})
-		}
-	}
-	return qs
 }
 
 func categoryToFilter(c filterCategory) dirclient.FilterCategory {

@@ -528,6 +528,9 @@ func (app *Gui) startSync(g *gocui.Gui) {
 		r := *snap
 		r.Status = dirclient.StatusSyncing
 		app.state.fullCache = append(app.state.fullCache, &r)
+		// Injected clipboard snapshots carry zero-valued Trusted/Verified flags,
+		// so the cache is no longer fully enriched.
+		app.invalidateTVEnrichment()
 	}
 
 	app.state.syncCIDs = cids
@@ -620,6 +623,75 @@ func (app *Gui) setRecordStatus(cids []string, status dirclient.RecordStatus, er
 			r.StatusError = errMsg
 		}
 	}
+}
+
+// markTrustedVerified sets Trusted/Verified on each record according to whether
+// its CID appears in the respective set. Records absent from a set are marked
+// false, so re-running enrichment reflects the latest server state.
+func markTrustedVerified(records []*dirclient.RecordSummary, trusted, verified []string) {
+	tset := make(map[string]bool, len(trusted))
+	for _, c := range trusted {
+		tset[c] = true
+	}
+	vset := make(map[string]bool, len(verified))
+	for _, c := range verified {
+		vset[c] = true
+	}
+	for _, r := range records {
+		r.Trusted = tset[r.CID]
+		r.Verified = vset[r.CID]
+	}
+}
+
+// trustedVerifiedQueries returns the fixed server predicates used to resolve
+// which records are trusted / verified.
+func trustedVerifiedQueries() (trusted, verified []dirclient.Query) {
+	return []dirclient.Query{{Category: dirclient.FilterTrusted, Value: "true"}},
+		[]dirclient.Query{{Category: dirclient.FilterVerified, Value: "true"}}
+}
+
+// invalidateTVEnrichment marks the current fullCache as no longer having
+// resolved trusted/verified flags, so the next filter apply re-triggers
+// startTVEnrichment. Must be called on the GUI goroutine.
+func (app *Gui) invalidateTVEnrichment() {
+	app.state.tvEnriched = false
+}
+
+// startTVEnrichment resolves the trusted/verified CID sets from the server in
+// the background and stamps the matching fullCache records. No-op if already
+// enriched, already running, or no client. Must be called on the GUI goroutine.
+func (app *Gui) startTVEnrichment() {
+	if app.state.tvEnriched || app.state.tvEnriching || app.state.client == nil {
+		return
+	}
+	app.state.tvEnriching = true
+	client := app.state.client
+	ctx, cancel := context.WithCancel(context.Background())
+	app.state.tvCancel = cancel
+
+	go func() {
+		trustedQ, verifiedQ := trustedVerifiedQueries()
+		trusted, tErr := client.MatchingCIDs(ctx, trustedQ)
+		verified, vErr := client.MatchingCIDs(ctx, verifiedQ)
+
+		app.g.Update(func(g *gocui.Gui) error {
+			if ctx.Err() != nil {
+				return nil
+			}
+			app.state.tvEnriching = false
+			if tErr != nil || vErr != nil {
+				// Leave tvEnriched false; a later filter apply retries.
+				app.renderRecordsView(g)
+				return nil
+			}
+			markTrustedVerified(app.state.fullCache, trusted, verified)
+			app.state.tvEnriched = true
+			app.applyFiltersSilent()
+			app.renderRecordsView(g)
+			app.renderFiltersView(g)
+			return nil
+		})
+	}()
 }
 
 // syncFailed transitions syncing records to failed state and shows an error popup.
@@ -723,6 +795,10 @@ func (app *Gui) silentRefreshRecords(ctx context.Context) {
 		}
 
 		app.state.fullCache = result
+		// The fresh stream yields new *RecordSummary pointers with zero-valued
+		// Trusted/Verified flags, so any prior enrichment no longer applies.
+		// Invalidate so a T/V filter apply re-triggers enrichment.
+		app.invalidateTVEnrichment()
 		app.state.filterValues = newFilterValueAggregator()
 		for _, r := range result {
 			app.state.filterValues.add(r)

@@ -5,6 +5,7 @@ package gui
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -103,32 +104,44 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 	}
 }
 
-// renderFilterOption renders one option row. Class categories show "ID Caption"
-// when enrichment data is available; other categories show the raw option label.
-// Selected options use the category's color.
-func (app *Gui) renderFilterOption(v *gocui.View, r listRow, applied map[string]bool) {
+// renderFilterOption renders one option row into the filter view. Class
+// categories show "ID Caption" when enrichment data is available; other
+// categories show the raw option label. Included options use the category
+// color; excluded (negated) options add strikethrough.
+func (app *Gui) renderFilterOption(v *gocui.View, r listRow, applied map[string]filterMode) {
+	app.writeFilterOption(v, r, applied[r.option])
+}
+
+// writeFilterOption is the io.Writer-based core of renderFilterOption, split
+// out so it can be unit-tested without a gocui.View.
+func (app *Gui) writeFilterOption(w io.Writer, r listRow, mode filterMode) {
 	entries := app.classEntriesFor(r.category)
-	selected := applied[r.option]
-	color := ""
-	if selected {
-		color = app.theme.filterColor(r.category)
+
+	prefix := ""
+	suffix := ""
+	switch mode {
+	case modeInclude:
+		prefix = app.theme.filterColor(r.category)
+		suffix = app.theme.Reset
+	case modeExclude:
+		prefix = app.theme.filterColor(r.category) + app.theme.Strike
+		suffix = app.theme.Reset
 	}
 
 	if e, ok := entries[r.option]; ok && e.Caption != "" {
 		idStr := fmt.Sprintf("%d", e.ID)
-		caption := e.Caption
-		if color != "" {
-			fmt.Fprintf(v, "%s%s%s %s%s\n", indent1, color, idStr, caption, app.theme.Reset)
+		if prefix != "" {
+			fmt.Fprintf(w, "%s%s%s %s%s\n", indent1, prefix, idStr, e.Caption, suffix)
 		} else {
-			fmt.Fprintf(v, "%s%s %s\n", indent1, idStr, caption)
+			fmt.Fprintf(w, "%s%s %s\n", indent1, idStr, e.Caption)
 		}
 		return
 	}
 
-	if color != "" {
-		fmt.Fprintf(v, "%s%s%s%s\n", indent1, color, r.option, app.theme.Reset)
+	if prefix != "" {
+		fmt.Fprintf(w, "%s%s%s%s\n", indent1, prefix, r.option, suffix)
 	} else {
-		fmt.Fprintf(v, "%s%s\n", indent1, r.option)
+		fmt.Fprintf(w, "%s%s\n", indent1, r.option)
 	}
 }
 
@@ -148,6 +161,9 @@ func (app *Gui) recordsTitle() string {
 	}
 	if app.state.filterQuery != "" {
 		title += fmt.Sprintf("  /: %s", app.state.filterQuery)
+	}
+	if app.state.tvEnriching && len(app.state.filters.applied[filterTrustedVerified]) > 0 {
+		title += "  [resolving trusted/verified…]"
 	}
 	if app.state.stream == streamDone && !app.state.dataFetchedAt.IsZero() {
 		title += fmt.Sprintf("  [⟳ %s]", syncedAgo(app.state.dataFetchedAt))

@@ -62,6 +62,7 @@ type serverCacheEntry struct {
 	fullCache    []*dirclient.RecordSummary
 	filterValues *filterValueAggregator
 	cachedAt     time.Time
+	tvEnriched   bool // trusted/verified flags already resolved for this cache
 }
 
 // appState holds all mutable application state. Fields are only mutated on
@@ -76,6 +77,14 @@ type appState struct {
 	// Set on a fresh stream completion and preserved across cache round-trips
 	// so the records panel can show how stale the data is. Zero if never loaded.
 	dataFetchedAt time.Time
+
+	// Trusted/Verified enrichment. RecordSummary.Trusted/.Verified are filled
+	// in the background from server search predicates. tvEnriched is true once
+	// resolution completed for the current fullCache; tvEnriching guards against
+	// launching concurrent resolutions; tvCancel stops an in-flight resolution.
+	tvEnriched  bool
+	tvEnriching bool
+	tvCancel    context.CancelFunc
 
 	// Connections panel cursor (0 = Directory, 1 = OASF)
 	connCursor int
@@ -732,6 +741,13 @@ func (app *Gui) startRecordsStream() {
 		app.state.cancelLoad = nil
 	}
 
+	if app.state.tvCancel != nil {
+		app.state.tvCancel()
+		app.state.tvCancel = nil
+	}
+	app.state.tvEnriched = false
+	app.state.tvEnriching = false
+
 	app.state.fullCache = nil
 	app.state.records = nil
 	app.state.recordCursor = 0
@@ -829,10 +845,11 @@ func (app *Gui) startRecordsStream() {
 }
 
 // applyFilters narrows state.records from fullCache according to the active
-// selections (skills, domains, modules, version, schema version, author),
-// then chains into applyNameFilter for the local name query. Trusted/Verified
-// filters are not applicable client-side (they require server evaluation), so
-// when those are active a fresh server stream is issued instead.
+// selections (skills, domains, modules, version, schema version, author,
+// trusted/verified), then chains into applyNameFilter for the local name
+// query. Trusted/Verified are evaluated against enriched flags; if those are
+// not yet resolved, background enrichment is kicked off and re-applies filters
+// on completion.
 //
 // When resetCursor is true the selection resets to the first row and the
 // preview updates (used after explicit user actions). When false the cursor
@@ -852,9 +869,12 @@ func (app *Gui) applyFiltersSilent() {
 func (app *Gui) applyFiltersOpts(resetCursor bool) {
 	applied := app.state.filters.applied
 
-	if len(applied[filterTrustedVerified]) > 0 {
-		app.applyFiltersServerSide()
-		return
+	// Trusted/Verified is evaluated client-side against enriched flags. If the
+	// flags are not resolved yet, kick off enrichment; it re-applies filters on
+	// completion. Filtering proceeds now over whatever flags are set (the
+	// records title shows a resolving indicator until enrichment finishes).
+	if len(applied[filterTrustedVerified]) > 0 && !app.state.tvEnriched {
+		app.startTVEnrichment()
 	}
 
 	if len(applied) == 0 {
@@ -888,90 +908,14 @@ func (app *Gui) applyFiltersOpts(resetCursor bool) {
 	}
 }
 
-// applyFiltersServerSide falls back to a server-side stream when filters
-// that can't be evaluated client-side (Trusted/Verified) are active. Unlike
-// startRecordsStream it does NOT clear or repopulate fullCache.
-func (app *Gui) applyFiltersServerSide() {
-	if app.state.client == nil {
-		return
-	}
-	if app.state.cancelLoad != nil {
-		app.state.cancelLoad()
-		app.state.cancelLoad = nil
-	}
-
-	app.state.records = nil
-	app.state.recordCursor = 0
-	app.state.streamErr = ""
-	app.state.stream = streamLoading
-	app.applyNameFilter()
-	app.renderRecordsView(app.g)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	app.state.cancelLoad = cancel
-	queries := app.activeQueries()
-	client := app.state.client
-
-	go client.Stream(ctx, queries, dirclient.StreamCallbacks{
-		OnFirstPage: func(summaries []*dirclient.RecordSummary) {
-			app.g.Update(func(g *gocui.Gui) error {
-				if ctx.Err() != nil {
-					return nil
-				}
-				app.state.records = append(app.state.records, summaries...)
-				app.state.stream = streamStreaming
-				app.applyNameFilter()
-				app.renderRecordsView(g)
-				app.autoPreviewRecord(g)
-				return nil
-			})
-		},
-		OnBatch: func(batch []*dirclient.RecordSummary) {
-			app.g.Update(func(g *gocui.Gui) error {
-				if ctx.Err() != nil {
-					return nil
-				}
-				app.state.records = append(app.state.records, batch...)
-				app.applyNameFilter()
-				app.renderRecordsView(g)
-				return nil
-			})
-		},
-		OnDone: func(err error) {
-			app.g.Update(func(g *gocui.Gui) error {
-				if ctx.Err() != nil {
-					return nil
-				}
-				if err != nil {
-					app.state.stream = streamErrored
-					app.state.streamErr = err.Error()
-					app.state.recordInfoCID = ""
-					app.state.recordInfoText = err.Error()
-					app.state.recordInfoError = true
-					app.state.recordInfoLoading = false
-					app.openInfoPopup(g, viewRecords)
-				} else {
-					app.rebuildActiveFilterValues()
-					app.renderFiltersView(g)
-					app.state.stream = streamDone
-				}
-				app.renderRecordsView(g)
-				return nil
-			})
-		},
-	})
-}
-
-// matchesFilters checks whether a single record matches all the applied filter
-// selections. Within each category the semantics are OR (match any selected
-// value); across categories the semantics are AND (all categories must match).
-// Trusted/Verified are excluded — they require server evaluation.
-func matchesFilters(r *dirclient.RecordSummary, applied map[filterCategory]map[string]bool) bool {
+// matchesFilters checks whether a record satisfies all applied categories.
+// Across categories the semantics are AND. Within a category, include values
+// use the existing include predicate and exclude values drop the record if it
+// matches any of them. Trusted/Verified is evaluated client-side against the
+// enriched RecordSummary.Trusted/.Verified flags.
+func matchesFilters(r *dirclient.RecordSummary, applied map[filterCategory]map[string]filterMode) bool {
 	for cat, selected := range applied {
 		if len(selected) == 0 {
-			continue
-		}
-		if cat == filterTrustedVerified {
 			continue
 		}
 		if !matchesCategory(r, cat, selected) {
@@ -981,37 +925,95 @@ func matchesFilters(r *dirclient.RecordSummary, applied map[filterCategory]map[s
 	return true
 }
 
-func matchesCategory(r *dirclient.RecordSummary, cat filterCategory, selected map[string]bool) bool {
+// matchesCategory returns true if the record passes one category's include and
+// exclude selections. include and exclude are evaluated independently: the
+// record must satisfy the include predicate (if any include values exist) and
+// must not match any exclude value.
+// matchesCategory reports whether r satisfies the include/exclude selection for
+// a single filter category. For any given value, exclude takes precedence over
+// include: if a value were somehow both included and excluded, the record is
+// rejected. (Not reachable via toggleApplied, which keeps each value in exactly
+// one mode.)
+func matchesCategory(r *dirclient.RecordSummary, cat filterCategory, selected map[string]filterMode) bool {
+	include, exclude := splitModes(selected)
+
 	switch cat {
 	case filterSkills:
-		return sliceMatchesAll(r.Skills, selected)
+		return sliceMatches(r.Skills, include, exclude)
 	case filterDomains:
-		return sliceMatchesAll(r.Domains, selected)
+		return sliceMatches(r.Domains, include, exclude)
 	case filterModules:
-		return sliceMatchesAll(r.Modules, selected)
-	case filterOASFVersion:
-		return selected[r.SchemaVersion]
-	case filterVersion:
-		return selected[r.Version]
+		return sliceMatches(r.Modules, include, exclude)
 	case filterAuthor:
-		return sliceMatchesAll(r.Authors, selected)
+		return sliceMatches(r.Authors, include, exclude)
+	case filterOASFVersion:
+		return scalarMatches(r.SchemaVersion, include, exclude)
+	case filterVersion:
+		return scalarMatches(r.Version, include, exclude)
+	case filterTrustedVerified:
+		if include["trusted"] && !r.Trusted {
+			return false
+		}
+		if include["verified"] && !r.Verified {
+			return false
+		}
+		if exclude["trusted"] && r.Trusted {
+			return false
+		}
+		if exclude["verified"] && r.Verified {
+			return false
+		}
+		return true
 	}
 	return true
 }
 
-// sliceMatchesAll returns true only if values contains every key in selected.
-func sliceMatchesAll(values []string, selected map[string]bool) bool {
-	for k := range selected {
-		found := false
-		for _, v := range values {
-			if v == k {
-				found = true
-				break
-			}
+// splitModes partitions a selection map into include and exclude value sets.
+func splitModes(selected map[string]filterMode) (include, exclude map[string]bool) {
+	include = make(map[string]bool, len(selected))
+	exclude = make(map[string]bool, len(selected))
+	for v, mode := range selected {
+		switch mode {
+		case modeInclude:
+			include[v] = true
+		case modeExclude:
+			exclude[v] = true
 		}
-		if !found {
+	}
+	return include, exclude
+}
+
+// sliceMatches applies include/exclude sets to a multi-value field. Include
+// requires the field to contain every included value (preserving the prior
+// AND-within-slice behavior); exclude rejects the record if the field contains
+// any excluded value.
+func sliceMatches(values []string, include, exclude map[string]bool) bool {
+	have := make(map[string]bool, len(values))
+	for _, v := range values {
+		have[v] = true
+	}
+	for k := range include {
+		if !have[k] {
 			return false
 		}
+	}
+	for k := range exclude {
+		if have[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// scalarMatches applies include/exclude sets to a single-value field. Include
+// requires the value to be one of the included values; exclude rejects it if
+// it is one of the excluded values.
+func scalarMatches(value string, include, exclude map[string]bool) bool {
+	if len(include) > 0 && !include[value] {
+		return false
+	}
+	if exclude[value] {
+		return false
 	}
 	return true
 }
@@ -1102,6 +1104,7 @@ func (app *Gui) saveServerCache() {
 		fullCache:    app.state.fullCache,
 		filterValues: app.state.filterValues,
 		cachedAt:     cachedAt,
+		tvEnriched:   app.state.tvEnriched,
 	}
 }
 

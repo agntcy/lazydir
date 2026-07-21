@@ -44,10 +44,10 @@ var perPanelBindings = map[string]panelBindings{
 		title: "[2] Filters",
 		bindings: []binding{
 			{"↑↓ / j k", "navigate", true},
-			{"enter", "expand / toggle filter", true},
+			{"enter", "expand / cycle filter", true},
 			{"l", "expand", false},
 			{"h", "collapse", false},
-			{"space", "toggle filter", true},
+			{"space", "cycle include/exclude/off", true},
 			{"/", "search options", true},
 			{"i", "toggle class info", true},
 			{"x", "clear all filters", true},

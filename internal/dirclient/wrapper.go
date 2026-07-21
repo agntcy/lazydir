@@ -54,6 +54,8 @@ type RecordSummary struct {
 	Modules       []string
 	Status        RecordStatus // lifecycle state; zero = StatusLocal
 	StatusError   string       // error message when Status == StatusFailed
+	Trusted       bool         // lazydir-only; background-enriched via MatchingCIDs
+	Verified      bool         // lazydir-only; background-enriched via MatchingCIDs
 }
 
 // Client wraps the agntcy/dir gRPC client.
@@ -317,6 +319,52 @@ func (c *Client) Stream(ctx context.Context, queries []Query, cb StreamCallbacks
 		case <-ctx.Done():
 			finish(ctx.Err())
 			return
+		}
+	}
+}
+
+// MatchingCIDs issues a SearchCIDs RPC with the supplied queries and returns
+// the CIDs of every matching record. It drains the CID-only server stream
+// until EOF or ctx cancellation. Used to resolve server-only predicates
+// (trusted/verified) into a CID set applied to cached records.
+func (c *Client) MatchingCIDs(ctx context.Context, queries []Query) ([]string, error) {
+	rpcQueries := make([]*searchv1.RecordQuery, 0, len(queries))
+	for _, q := range queries {
+		rpcQueries = append(rpcQueries, q.toRPC())
+	}
+
+	req := &searchv1.SearchCIDsRequest{Queries: rpcQueries}
+	result, err := c.c.SearchCIDs(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("searching CIDs: %w", err)
+	}
+
+	var cids []string
+	resCh := result.ResCh()
+	errCh := result.ErrCh()
+	for {
+		select {
+		case resp, ok := <-resCh:
+			if !ok {
+				return cids, nil
+			}
+			if resp != nil {
+				cids = append(cids, resp.GetRecordCid())
+			}
+		case streamErr, ok := <-errCh:
+			if !ok {
+				// ErrCh closed: stop selecting it so a closed channel does
+				// not busy-loop while we wait for ResCh/DoneCh.
+				errCh = nil
+				continue
+			}
+			if streamErr != nil {
+				return nil, fmt.Errorf("receiving CID: %w", streamErr)
+			}
+		case <-result.DoneCh():
+			return cids, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
 }

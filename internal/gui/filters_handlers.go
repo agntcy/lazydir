@@ -100,7 +100,7 @@ func (app *Gui) filterClearAll(g *gocui.Gui, v *gocui.View) error {
 	if len(app.state.filters.applied) == 0 {
 		return nil
 	}
-	app.state.filters.applied = map[filterCategory]map[string]bool{}
+	app.state.filters.applied = map[filterCategory]map[string]filterMode{}
 	app.applyFilters()
 	app.renderFiltersView(g)
 	return nil
