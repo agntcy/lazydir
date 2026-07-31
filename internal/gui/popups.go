@@ -404,7 +404,10 @@ func (app *Gui) openConfirmPopup(g *gocui.Gui, title, body string, onConfirm fun
 }
 
 // renderConfirmPopup redraws the confirm popup body text and appended menu
-// options, positioning the gocui cursor on the selected option row.
+// options, highlighting the selected option with the shared selected-row
+// background. The highlight is applied with SetHighlight on the option's buffer
+// line (index = bodyLines + cursor), which is independent of how the body wraps
+// or when the view is sized — unlike a cursor offset over the wrapped body.
 func (app *Gui) renderConfirmPopup(g *gocui.Gui) {
 	ms := &app.state.menu
 	cv, err := g.View(ms.view)
@@ -414,30 +417,55 @@ func (app *Gui) renderConfirmPopup(g *gocui.Gui) {
 	cv.Clear()
 	body := strings.TrimRight(app.state.confirmPopupText, "\n")
 
-	viewW, _ := cv.Size()
 	if body != "" {
 		fmt.Fprint(cv, body)
 		fmt.Fprint(cv, "\n")
 	}
 
-	for _, opt := range ms.options {
-		fmt.Fprintf(cv, " %s\n", opt.label)
+	// Pad every option row to a common width so the highlighted row reads as a
+	// full selection bar, like the list panels. Cap at the view width so a very
+	// long body can't push a padded option past the edge and wrap (which would
+	// only skew the bar's width — the highlighted line index is buffer-based and
+	// always correct).
+	width := confirmContentWidth(body, ms.options)
+	if vw, _ := cv.Size(); vw > 0 && width > vw {
+		width = vw
 	}
-	_ = cv.SetCursor(0, confirmOptionRowOffset(body, viewW)+ms.cursor)
+	for _, opt := range ms.options {
+		fmt.Fprintf(cv, " %-*s\n", width-1, opt.label)
+	}
+
+	_ = cv.SetHighlight(confirmSelectedLine(body, ms.cursor), true)
 }
 
-// confirmOptionRowOffset returns the buffer row on which the first menu option
-// is rendered, i.e. the number of lines the wrapped body occupies. The body's
-// trailing newline only terminates its last line, so options begin exactly
-// wrappedLineCount(body) rows down — not one further.
-func confirmOptionRowOffset(body string, viewW int) int {
-	if body == "" {
-		return 0
+// confirmSelectedLine returns the buffer-line index of the option at cursor.
+// Options are written immediately after the body's buffer lines, one per line,
+// so the selected option is at bodyLines + cursor. Empty body contributes zero
+// lines.
+func confirmSelectedLine(body string, cursor int) int {
+	bodyLines := 0
+	if body != "" {
+		bodyLines = strings.Count(body, "\n") + 1
 	}
-	if viewW > 0 {
-		return wrappedLineCount(body, viewW)
+	return bodyLines + cursor
+}
+
+// confirmContentWidth returns the width the option rows are padded to: the
+// widest of the body lines and the option labels (each option label carries a
+// one-space indent). This keeps the highlighted row spanning the popup.
+func confirmContentWidth(body string, options []menuOption) int {
+	w := 0
+	for _, line := range strings.Split(body, "\n") {
+		if l := len([]rune(line)); l > w {
+			w = l
+		}
 	}
-	return strings.Count(strings.TrimRight(body, "\n"), "\n") + 1
+	for _, opt := range options {
+		if l := len([]rune(opt.label)) + 1; l > w {
+			w = l
+		}
+	}
+	return w
 }
 
 func (app *Gui) confirmMenuUp(g *gocui.Gui, v *gocui.View) error {

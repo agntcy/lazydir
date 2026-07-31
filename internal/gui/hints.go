@@ -68,6 +68,8 @@ var perPanelBindings = map[string]panelBindings{
 			{"C", "clipboard toggle", true},
 			{"V", "paste records", true},
 			{"d", "delete record", true},
+			{"P", "publish record", true},
+			{"U", "unpublish record", true},
 			{"esc", "collapse / clear filter", false},
 			{"wheel", "scroll", false},
 		},

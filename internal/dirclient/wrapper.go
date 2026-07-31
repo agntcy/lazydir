@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	corev1 "github.com/agntcy/dir/api/core/v1"
+	routingv1 "github.com/agntcy/dir/api/routing/v1"
 	searchv1 "github.com/agntcy/dir/api/search/v1"
 	"github.com/agntcy/dir/client"
 	"github.com/agntcy/oasf-sdk/pkg/decoder"
@@ -56,6 +57,7 @@ type RecordSummary struct {
 	StatusError   string       // error message when Status == StatusFailed
 	Trusted       bool         // lazydir-only; background-enriched via MatchingCIDs
 	Verified      bool         // lazydir-only; background-enriched via MatchingCIDs
+	Published     bool         // lazydir-only; background-enriched via ListPublished
 }
 
 // Client wraps the agntcy/dir gRPC client.
@@ -471,6 +473,67 @@ func (c *Client) PullInfo(ctx context.Context, cid string) (*RecordInfo, error) 
 func (c *Client) Delete(ctx context.Context, cid string) error {
 	if err := c.c.Delete(ctx, &corev1.RecordRef{Cid: cid}); err != nil {
 		return fmt.Errorf("deleting record %s: %w", cid, err)
+	}
+	return nil
+}
+
+// buildRecordRefs wraps a list of CIDs into the RecordRefs message shared by
+// the Publish and Unpublish routing requests.
+func buildRecordRefs(cids []string) *routingv1.RecordRefs {
+	refs := make([]*corev1.RecordRef, 0, len(cids))
+	for _, cid := range cids {
+		refs = append(refs, &corev1.RecordRef{Cid: cid})
+	}
+	return &routingv1.RecordRefs{Refs: refs}
+}
+
+// collectPublishedCIDs drains a RoutingService.List response stream into a set
+// of published record CIDs. Responses without a record ref are ignored.
+func collectPublishedCIDs(ch <-chan *routingv1.ListResponse) map[string]bool {
+	out := map[string]bool{}
+	for resp := range ch {
+		if ref := resp.GetRecordRef(); ref != nil {
+			if cid := ref.GetCid(); cid != "" {
+				out[cid] = true
+			}
+		}
+	}
+	return out
+}
+
+// ListPublished returns the set of record CIDs this node is locally serving to
+// the network. It drains the RoutingService.List server stream fully. This is
+// a fast, local-only server operation (it does not touch the DHT network).
+func (c *Client) ListPublished(ctx context.Context) (map[string]bool, error) {
+	ch, err := c.c.List(ctx, &routingv1.ListRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("listing published records: %w", err)
+	}
+	return collectPublishedCIDs(ch), nil
+}
+
+// Publish announces the given record CIDs to the DHT network.
+func (c *Client) Publish(ctx context.Context, cids []string) error {
+	req := &routingv1.PublishRequest{
+		Request: &routingv1.PublishRequest_RecordRefs{
+			RecordRefs: buildRecordRefs(cids),
+		},
+	}
+	if err := c.c.Publish(ctx, req); err != nil {
+		return fmt.Errorf("publishing records: %w", err)
+	}
+	return nil
+}
+
+// Unpublish stops serving the given record CIDs to the network.
+func (c *Client) Unpublish(ctx context.Context, cids []string) error {
+	req := &routingv1.UnpublishRequest{
+		Request: &routingv1.UnpublishRequest_RecordRefs{
+			RecordRefs: buildRecordRefs(cids),
+		},
+	}
+	if err := c.c.Unpublish(ctx, req); err != nil {
+		return fmt.Errorf("unpublishing records: %w", err)
 	}
 	return nil
 }

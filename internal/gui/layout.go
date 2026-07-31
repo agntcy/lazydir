@@ -277,7 +277,11 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 			v.FrameRunes = roundedFrame
 			v.Wrap = true
 			v.Visible = false
-			v.Highlight = true
+			// The selected option is highlighted per-line via SetHighlight in
+			// renderConfirmPopup (not the cursor-line Highlight), so it can never
+			// drift onto the wrong row when the body wraps. SetHighlight still
+			// uses these Sel colors, matching the list panels.
+			v.Highlight = false
 			v.SelBgColor = g.theme.SelectedRowBg
 			v.SelFgColor = gocui.ColorDefault
 		}

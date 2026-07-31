@@ -185,6 +185,12 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewRecords, 'V', gocui.ModNone, app.clipboardPaste); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding(viewRecords, 'P', gocui.ModNone, app.recordPublish); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewRecords, 'U', gocui.ModNone, app.recordUnpublish); err != nil {
+		return err
+	}
 
 	// ── Info popup ──────────────────────────────────────────────────────────
 	if err := g.SetKeybinding(viewInfoPopup, gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
