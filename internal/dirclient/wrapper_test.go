@@ -4,6 +4,7 @@
 package dirclient
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "github.com/agntcy/dir/api/core/v1"
@@ -158,6 +159,60 @@ func TestExtractSummaryAcrossSchemaVersions(t *testing.T) {
 			}
 			if len(s.Modules) != 1 || s.Modules[0] != "runtime/model" {
 				t.Errorf("Modules = %v, want [runtime/model]", s.Modules)
+			}
+		})
+	}
+}
+
+// TestExtractSummarySanitizesNewlines guards against malformed server data
+// (e.g. a directory daemon that self-registers with version "v1.6.1\n1.6.1")
+// leaking embedded newlines into name/version. Rendered verbatim, such a value
+// spills onto an extra row and breaks the Records/Filters panel layout.
+func TestExtractSummarySanitizesNewlines(t *testing.T) {
+	t.Parallel()
+
+	data, err := structpb.NewStruct(map[string]any{
+		"schema_version": "1.0.0",
+		"name":           "org.agntcy/directory",
+		"version":        "v1.6.1\n1.6.1",
+	})
+	if err != nil {
+		t.Fatalf("building struct: %v", err)
+	}
+
+	s := extractSummary(&corev1.Record{Data: data})
+	if s == nil {
+		t.Fatal("extractSummary returned nil")
+	}
+	if strings.ContainsAny(s.Version, "\r\n") {
+		t.Errorf("Version %q still contains a line break", s.Version)
+	}
+	if want := "v1.6.1 1.6.1"; s.Version != want {
+		t.Errorf("Version = %q, want %q", s.Version, want)
+	}
+}
+
+func TestSanitizeField(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain", "v1.0.0", "v1.0.0"},
+		{"trailing newline", "v1.0.0\n", "v1.0.0"},
+		{"embedded newline", "v1.6.1\n1.6.1", "v1.6.1 1.6.1"},
+		{"crlf", "a\r\nb", "a b"},
+		{"surrounding whitespace", "  v1.0.0  ", "v1.0.0"},
+		{"tabs and newlines", "a\t\nb", "a b"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := sanitizeField(tt.in); got != tt.want {
+				t.Errorf("sanitizeField(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}

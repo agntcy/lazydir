@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	corev1 "github.com/agntcy/dir/api/core/v1"
 	searchv1 "github.com/agntcy/dir/api/search/v1"
@@ -602,11 +603,27 @@ func extractSummary(record *corev1.Record) *RecordSummary {
 		return nil
 	}
 
+	s.Name = sanitizeField(s.Name)
+	s.Version = sanitizeField(s.Version)
+
 	if s.Name == "" && cid != "" {
 		s.Name = cid[:min(20, len(cid))]
 	}
 
 	return s
+}
+
+// sanitizeField normalizes a record field to a single line. Some servers emit
+// malformed values (e.g. a directory daemon that self-registers with a version
+// of "v1.6.1\n1.6.1"); rendered verbatim in the TUI, an embedded newline spills
+// onto an extra row and breaks the Records/Filters panel layout. Values with a
+// line break have all whitespace runs collapsed to single spaces; others are
+// only trimmed.
+func sanitizeField(s string) string {
+	if strings.ContainsAny(s, "\r\n") {
+		return strings.Join(strings.Fields(s), " ")
+	}
+	return strings.TrimSpace(s)
 }
 
 func min(a, b int) int {
