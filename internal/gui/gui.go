@@ -59,10 +59,11 @@ type menuState struct {
 // directory server. It is stored when the user switches away from a server
 // and restored (displaying cached records instantly) when switching back.
 type serverCacheEntry struct {
-	fullCache    []*dirclient.RecordSummary
-	filterValues *filterValueAggregator
-	cachedAt     time.Time
-	tvEnriched   bool // trusted/verified flags already resolved for this cache
+	fullCache       []*dirclient.RecordSummary
+	filterValues    *filterValueAggregator
+	cachedAt        time.Time
+	tvEnriched      bool // trusted/verified flags already resolved for this cache
+	publishEnriched bool // publish flags already resolved for this cache
 }
 
 // appState holds all mutable application state. Fields are only mutated on
@@ -85,6 +86,20 @@ type appState struct {
 	tvEnriched  bool
 	tvEnriching bool
 	tvCancel    context.CancelFunc
+
+	// Publish enrichment. RecordSummary.Published is filled in the background
+	// from RoutingService.List after a records stream completes. publishEnriched
+	// is true once resolution completed for the current fullCache;
+	// publishEnriching guards against concurrent resolutions; publishCancel
+	// stops an in-flight resolution.
+	publishEnriched  bool
+	publishEnriching bool
+	publishCancel    context.CancelFunc
+	// publishOverrides holds optimistic publish/unpublish results (CID → desired
+	// Published state) that must survive an enrichment whose ListPublished
+	// snapshot predates the change. Each entry is dropped once the server set
+	// agrees with it (self-healing). Cleared on server switch.
+	publishOverrides map[string]bool
 
 	// Connections panel cursor (0 = Directory, 1 = OASF)
 	connCursor int
@@ -345,6 +360,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 			app.state.dirError = ""
 			app.renderDirectory(g)
 			app.startReconnectLoop()
+			app.startPublishEnrichment()
 		} else {
 			app.startRecordsStream()
 		}
@@ -726,6 +742,19 @@ func (app *Gui) pingOASF(client *oasf.Client) {
 	})
 }
 
+// markStreaming advances the records-stream state to streamStreaming when the
+// first page arrives, but only from streamLoading — never regressing a stream
+// that has already finished. When every record fits in the first page,
+// OnFirstPage and OnDone fire back-to-back and gocui's async g.Update can run
+// them out of order; without this guard a late OnFirstPage would clobber
+// streamDone back to streamStreaming, leaving the panel "streaming" forever and
+// hiding the "synced N ago" indicator. Must run on the GUI goroutine.
+func (app *Gui) markStreaming() {
+	if app.state.stream == streamLoading {
+		app.state.stream = streamStreaming
+	}
+}
+
 // startRecordsStream cancels any in-flight records stream and issues a fresh
 // unfiltered SearchRecords RPC to populate the full cache. Client-side filters
 // are re-applied once the cache is populated. It must run on the GUI goroutine
@@ -747,6 +776,13 @@ func (app *Gui) startRecordsStream() {
 	}
 	app.state.tvEnriched = false
 	app.state.tvEnriching = false
+
+	if app.state.publishCancel != nil {
+		app.state.publishCancel()
+		app.state.publishCancel = nil
+	}
+	app.state.publishEnriched = false
+	app.state.publishEnriching = false
 
 	app.state.fullCache = nil
 	app.state.records = nil
@@ -784,7 +820,7 @@ func (app *Gui) startRecordsStream() {
 					app.state.filterValues.add(r)
 				}
 				app.maybeStartClassEntriesFetch(summaries)
-				app.state.stream = streamStreaming
+				app.markStreaming()
 				app.applyFilters()
 				app.renderRecordsView(g)
 				app.renderFiltersView(g)
@@ -835,6 +871,7 @@ func (app *Gui) startRecordsStream() {
 						app.state.dirError = ""
 					}
 					app.startReconnectLoop()
+					app.startPublishEnrichment()
 				}
 				app.renderRecordsView(g)
 				app.renderDirectory(g)
@@ -1101,10 +1138,11 @@ func (app *Gui) saveServerCache() {
 		cachedAt = time.Now()
 	}
 	app.state.serverCache[serverCacheKey(app.state.activeDir)] = &serverCacheEntry{
-		fullCache:    app.state.fullCache,
-		filterValues: app.state.filterValues,
-		cachedAt:     cachedAt,
-		tvEnriched:   app.state.tvEnriched,
+		fullCache:       app.state.fullCache,
+		filterValues:    app.state.filterValues,
+		cachedAt:        cachedAt,
+		tvEnriched:      app.state.tvEnriched,
+		publishEnriched: app.state.publishEnriched,
 	}
 }
 

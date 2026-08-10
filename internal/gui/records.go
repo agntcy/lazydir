@@ -373,6 +373,152 @@ func (app *Gui) deleteRecord(cid string) {
 	})
 }
 
+// setRecordPublished flips the Published flag of the fullCache record with the
+// given CID and records the change as an optimistic override so a concurrent
+// enrichment with a stale snapshot cannot clobber it (see applyPublishOverrides).
+// Must be called on the GUI goroutine.
+func (app *Gui) setRecordPublished(cid string, published bool) {
+	for _, r := range app.state.fullCache {
+		if r.CID == cid {
+			r.Published = published
+			break
+		}
+	}
+	if app.state.publishOverrides == nil {
+		app.state.publishOverrides = map[string]bool{}
+	}
+	app.state.publishOverrides[cid] = published
+}
+
+// applyPublishOverrides re-applies optimistic publish/unpublish results on top
+// of a freshly enriched publish set, so a record the user just toggled is not
+// clobbered by a ListPublished snapshot taken before the change reached the
+// server's routing index. An override is dropped once the server set agrees
+// with it, so enrichment becomes authoritative again (self-healing). Must be
+// called on the GUI goroutine, right after markPublished.
+func (app *Gui) applyPublishOverrides(set map[string]bool) {
+	for cid, want := range app.state.publishOverrides {
+		if set[cid] == want {
+			delete(app.state.publishOverrides, cid)
+			continue
+		}
+		for _, r := range app.state.fullCache {
+			if r.CID == cid {
+				r.Published = want
+				break
+			}
+		}
+	}
+}
+
+// recordPublish opens a confirmation popup for publishing the selected record.
+// It only acts on a local, not-yet-published record; on group headers and
+// already-published records it is a no-op.
+func (app *Gui) recordPublish(g *gocui.Gui, v *gocui.View) error {
+	r := app.cursorRecord()
+	if r == nil || r.CID == "" || app.state.client == nil {
+		return nil
+	}
+	if r.Status != dirclient.StatusLocal || r.Published {
+		return nil
+	}
+
+	name := r.Name
+	if name == "" {
+		name = r.CID
+	}
+	version := ""
+	if r.Version != "" {
+		version = " " + r.Version
+	}
+	body := fmt.Sprintf("Publish %s%s?", name, version)
+
+	cid := r.CID
+	app.openConfirmPopup(g, "Publish record", body, func() {
+		go app.publishRecord(cid)
+	})
+	return nil
+}
+
+// recordUnpublish opens a confirmation popup for unpublishing the selected
+// record. It only acts on a published record; otherwise it is a no-op.
+func (app *Gui) recordUnpublish(g *gocui.Gui, v *gocui.View) error {
+	r := app.cursorRecord()
+	if r == nil || r.CID == "" || app.state.client == nil {
+		return nil
+	}
+	if !r.Published {
+		return nil
+	}
+
+	name := r.Name
+	if name == "" {
+		name = r.CID
+	}
+	version := ""
+	if r.Version != "" {
+		version = " " + r.Version
+	}
+	body := fmt.Sprintf("Unpublish %s%s?", name, version)
+
+	cid := r.CID
+	app.openConfirmPopup(g, "Unpublish record", body, func() {
+		go app.unpublishRecord(cid)
+	})
+	return nil
+}
+
+// publishRecord calls the Publish RPC in the background and flips the record's
+// Published flag on success. On failure it shows the error in the info popup.
+func (app *Gui) publishRecord(cid string) {
+	client := app.state.client
+	if client == nil {
+		return
+	}
+
+	err := client.Publish(context.Background(), []string{cid})
+	app.g.Update(func(g *gocui.Gui) error {
+		if err != nil {
+			app.state.recordInfoCID = cid
+			app.state.recordInfoText = err.Error()
+			app.state.recordInfoError = true
+			app.state.recordInfoLoading = false
+			app.openInfoPopup(g, viewRecords)
+			return nil
+		}
+		app.setRecordPublished(cid, true)
+		app.applyFiltersSilent()
+		app.renderRecordsView(g)
+		return nil
+	})
+}
+
+// unpublishRecord calls the Unpublish RPC in the background and clears the
+// record's Published flag on success. On failure it shows the error in the
+// info popup.
+func (app *Gui) unpublishRecord(cid string) {
+	client := app.state.client
+	if client == nil {
+		return
+	}
+
+	err := client.Unpublish(context.Background(), []string{cid})
+	app.g.Update(func(g *gocui.Gui) error {
+		if err != nil {
+			app.state.recordInfoCID = cid
+			app.state.recordInfoText = err.Error()
+			app.state.recordInfoError = true
+			app.state.recordInfoLoading = false
+			app.openInfoPopup(g, viewRecords)
+			return nil
+		}
+		app.setRecordPublished(cid, false)
+		app.applyFiltersSilent()
+		app.renderRecordsView(g)
+		return nil
+	})
+}
+
 // removeRecordFromState purges a record by CID from fullCache, records,
 // and filteredRecords, rebuilds display rows, and refreshes active filter
 // values so the Filters panel stays consistent.
@@ -686,6 +832,53 @@ func (app *Gui) startTVEnrichment() {
 			}
 			markTrustedVerified(app.state.fullCache, trusted, verified)
 			app.state.tvEnriched = true
+			app.applyFiltersSilent()
+			app.renderRecordsView(g)
+			app.renderFiltersView(g)
+			return nil
+		})
+	}()
+}
+
+// markPublished sets Published on each record according to whether its CID
+// appears in the set. Records absent from the set are marked false, so
+// re-running enrichment reflects the latest server state.
+func markPublished(records []*dirclient.RecordSummary, set map[string]bool) {
+	for _, r := range records {
+		r.Published = set[r.CID]
+	}
+}
+
+// startPublishEnrichment resolves the published-CID set from the server in the
+// background and stamps the matching fullCache records. No-op if already
+// enriched, already running, or no client. Failures (e.g. a server without
+// routing support) leave publishEnriched false and show no error — publish
+// coloring simply does not appear. Must be called on the GUI goroutine.
+func (app *Gui) startPublishEnrichment() {
+	if app.state.publishEnriched || app.state.publishEnriching || app.state.client == nil {
+		return
+	}
+	app.state.publishEnriching = true
+	client := app.state.client
+	ctx, cancel := context.WithCancel(context.Background())
+	app.state.publishCancel = cancel
+
+	go func() {
+		set, err := client.ListPublished(ctx)
+
+		app.g.Update(func(g *gocui.Gui) error {
+			if ctx.Err() != nil {
+				return nil
+			}
+			app.state.publishEnriching = false
+			if err != nil {
+				// Leave publishEnriched false; older servers without routing
+				// degrade silently.
+				return nil
+			}
+			markPublished(app.state.fullCache, set)
+			app.applyPublishOverrides(set)
+			app.state.publishEnriched = true
 			app.applyFiltersSilent()
 			app.renderRecordsView(g)
 			app.renderFiltersView(g)

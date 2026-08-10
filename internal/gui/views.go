@@ -171,6 +171,29 @@ func (app *Gui) recordsTitle() string {
 	return title
 }
 
+// groupPublishStatus reports, per group name, whether every record in that
+// group is published. Group name mirrors the records-panel grouping key: the
+// record Name, falling back to CID when Name is empty. Empty groups are absent
+// from the result.
+func groupPublishStatus(records []*dirclient.RecordSummary) map[string]bool {
+	all := map[string]bool{}
+	seen := map[string]bool{}
+	for _, r := range records {
+		name := r.Name
+		if name == "" {
+			name = r.CID
+		}
+		if !seen[name] {
+			seen[name] = true
+			all[name] = true
+		}
+		if !r.Published {
+			all[name] = false
+		}
+	}
+	return all
+}
+
 // renderRecordsView redraws the [3] Records panel and updates its title to
 // reflect the current record count, stream state, and name filter.
 func (app *Gui) renderRecordsView(g *gocui.Gui) {
@@ -197,6 +220,7 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	reset := "\033[0m"
 	yellow := "\033[33m"
 	red := "\033[31m"
+	green := "\033[32m"
 
 	// Precompute which group names have non-local children.
 	groupSyncStatus := map[string]dirclient.RecordStatus{}
@@ -212,6 +236,8 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 			groupSyncStatus[name] = r.Status
 		}
 	}
+
+	groupAllPublished := groupPublishStatus(app.state.filteredRecords)
 
 	lineNum := 0
 	targetLine := 0
@@ -237,6 +263,9 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 				}
 				line := fmt.Sprintf(" %s %s", triangle, name)
 				fmt.Fprintf(v, "%s%-*s%s\n", color, viewW, line, reset)
+			} else if groupAllPublished[row.groupName] {
+				line := fmt.Sprintf(" %s %s", triangle, name)
+				fmt.Fprintf(v, "%s%-*s%s\n", green, viewW, line, reset)
 			} else {
 				fmt.Fprintf(v, " %s %s\n", triangle, name)
 			}
@@ -266,6 +295,9 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 				} else if inClip {
 					line := fmt.Sprintf("%s%s", indent1, version)
 					fmt.Fprintf(v, "%s%-*s%s\n", clipBg, viewW, line, reset)
+				} else if row.record.Published {
+					line := fmt.Sprintf("%s%s", indent1, version)
+					fmt.Fprintf(v, "%s%-*s%s\n", green, viewW, line, reset)
 				} else {
 					fmt.Fprintf(v, "%s%s\n", indent1, version)
 				}
@@ -279,6 +311,9 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 				} else if inClip {
 					line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
 					fmt.Fprintf(v, "%s%-*s%s\n", clipBg, viewW, line, reset)
+				} else if row.record.Published {
+					line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
+					fmt.Fprintf(v, "%s%-*s%s\n", green, viewW, line, reset)
 				} else {
 					fmt.Fprintf(v, " %-*s  %s\n", nameW, name, version)
 				}

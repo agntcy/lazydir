@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	corev1 "github.com/agntcy/dir/api/core/v1"
+	routingv1 "github.com/agntcy/dir/api/routing/v1"
 	searchv1 "github.com/agntcy/dir/api/search/v1"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -241,5 +242,42 @@ func TestRecordSummaryTrustedVerifiedDefaultFalse(t *testing.T) {
 	var s RecordSummary
 	if s.Trusted || s.Verified {
 		t.Fatalf("zero-value RecordSummary should have Trusted=false Verified=false, got %+v", s)
+	}
+}
+
+func TestBuildRecordRefs(t *testing.T) {
+	t.Parallel()
+
+	refs := buildRecordRefs([]string{"cidA", "cidB"})
+	got := refs.GetRefs()
+	if len(got) != 2 {
+		t.Fatalf("len(refs) = %d, want 2", len(got))
+	}
+	if got[0].GetCid() != "cidA" || got[1].GetCid() != "cidB" {
+		t.Errorf("refs = [%q %q], want [cidA cidB]", got[0].GetCid(), got[1].GetCid())
+	}
+}
+
+func TestBuildRecordRefsEmpty(t *testing.T) {
+	t.Parallel()
+
+	refs := buildRecordRefs(nil)
+	if len(refs.GetRefs()) != 0 {
+		t.Errorf("len(refs) = %d, want 0", len(refs.GetRefs()))
+	}
+}
+
+func TestCollectPublishedCIDs(t *testing.T) {
+	t.Parallel()
+
+	ch := make(chan *routingv1.ListResponse, 3)
+	ch <- &routingv1.ListResponse{RecordRef: &corev1.RecordRef{Cid: "cid1"}}
+	ch <- &routingv1.ListResponse{RecordRef: &corev1.RecordRef{Cid: "cid2"}}
+	ch <- &routingv1.ListResponse{RecordRef: nil} // defensive: skipped
+	close(ch)
+
+	got := collectPublishedCIDs(ch)
+	if len(got) != 2 || !got["cid1"] || !got["cid2"] {
+		t.Errorf("collectPublishedCIDs = %v, want {cid1, cid2}", got)
 	}
 }
