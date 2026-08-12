@@ -780,8 +780,15 @@ func (app *Gui) startQuery(resetCursor bool) {
 			}
 			app.state.page.loading = false
 			if err != nil {
+				// The query failed: surface it and start the health/reconnect
+				// loop so the connection can recover (mirrors the old stream's
+				// OnDone error branch).
 				app.state.streamErr = err.Error()
+				app.state.dirStatus = connFailed
+				app.state.dirError = err.Error()
+				app.startReconnectLoop()
 				app.renderRecordsView(g)
+				app.renderDirectory(g)
 				return nil
 			}
 			app.state.streamErr = ""
@@ -790,13 +797,33 @@ func (app *Gui) startQuery(resetCursor bool) {
 				app.state.page.total = total
 				app.state.page.totalKnown = true
 			}
+			// A successful first page confirms the connection is healthy.
+			// startQuery replaced the old records stream, so the side effects
+			// that used to live in its OnDone (mark connected, start the
+			// health/reconnect loop, publish enrichment, staleness stamp) are
+			// re-established here. Both loops are idempotent (guarded against
+			// duplicate goroutines), so firing them on every query is safe.
+			app.state.dirStatus = connOK
+			app.state.dirLastConnected = time.Now()
+			app.state.dirError = ""
+			if app.state.infoPopupPanel == viewDirectory {
+				_ = app.closeInfoPopup(g, nil)
+			}
+			app.state.stream = streamDone
+			app.state.dataFetchedAt = time.Now()
+			app.startReconnectLoop()
+			app.startPublishEnrichment()
 			app.maybeStartClassEntriesFetch(recs)
 			app.ingestPageOptions(recs) // interim option aggregation
 			app.rebuildRecordRows()     // flat renderer
 			app.renderRecordsView(g)
 			app.renderFiltersView(g)
 			app.renderDirectory(g)
-			app.autoPreviewRecord(g)
+			// Only the cursor-resetting (explicit) path moves the preview;
+			// applyFiltersSilent (background reconciliation) must stay silent.
+			if resetCursor {
+				app.autoPreviewRecord(g)
+			}
 			return nil
 		})
 	}()
