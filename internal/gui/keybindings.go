@@ -444,7 +444,6 @@ func (app *Gui) refresh(g *gocui.Gui, v *gocui.View) error {
 	if app.state.client == nil {
 		return nil
 	}
-	app.invalidateServerCache()
 	app.startQuery(true)
 	return nil
 }

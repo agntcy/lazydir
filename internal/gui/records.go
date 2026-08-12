@@ -299,7 +299,6 @@ func (app *Gui) deleteRecord(cid string) {
 			app.openInfoPopup(g, viewRecords)
 			return nil
 		}
-		app.invalidateServerCache()
 		app.removeRecordFromState(cid)
 		app.renderRecordsView(g)
 		app.renderFiltersView(g)
@@ -587,7 +586,6 @@ func (app *Gui) clipboardPaste(g *gocui.Gui, v *gocui.View) error {
 // startSync injects clipboard records into fullCache with StatusSyncing,
 // clears the clipboard, and kicks off the sync operation in the background.
 func (app *Gui) startSync(g *gocui.Gui) {
-	app.invalidateServerCache()
 	sourceURL := app.state.clipboardSourceURL
 
 	existingCIDs := map[string]bool{}

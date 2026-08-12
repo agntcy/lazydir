@@ -5,10 +5,7 @@ package gui
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -54,24 +51,9 @@ type menuState struct {
 	view    string // the gocui view name this menu is rendered in
 }
 
-// serverCacheEntry holds the cached record data for a previously visited
-// directory server. It is stored when the user switches away from a server
-// and restored (displaying cached records instantly) when switching back.
-type serverCacheEntry struct {
-	fullCache       []*dirclient.RecordSummary
-	filterValues    *filterValueAggregator
-	cachedAt        time.Time
-	publishEnriched bool // publish flags already resolved for this cache
-}
-
 // appState holds all mutable application state. Fields are only mutated on
 // the GUI goroutine (inside g.Update callbacks or key handlers).
 type appState struct {
-	// Per-server record cache: keyed by address + auth identity (see
-	// serverCacheKey), stores records fetched from previously visited servers
-	// so switching back is instant.
-	serverCache map[string]*serverCacheEntry
-
 	// When the currently-displayed records were fetched from the directory.
 	// Set on a fresh stream completion and preserved across cache round-trips
 	// so the records panel can show how stale the data is. Zero if never loaded.
@@ -922,64 +904,6 @@ func (app *Gui) syncCounts() (syncing, reconciling int) {
 func (app *Gui) hasSyncingRecords() bool {
 	s, r := app.syncCounts()
 	return s+r > 0
-}
-
-// serverCacheKey derives the per-server cache key. It is a composite of the
-// address and the auth identity, so cached records fetched under one identity
-// are never displayed for a different entry that happens to point at the same
-// address (e.g. two dirctl contexts with different credentials). The auth
-// token is hashed rather than stored verbatim.
-func serverCacheKey(e config.DirectoryEntry) string {
-	tokenHash := ""
-	if e.AuthToken != "" {
-		sum := sha256.Sum256([]byte(e.AuthToken))
-		tokenHash = hex.EncodeToString(sum[:8])
-	}
-	return strings.Join([]string{
-		e.Address,
-		e.AuthMode,
-		e.OIDCIssuer,
-		e.OIDCClientID,
-		e.TLSCAFile,
-		e.TLSCertFile,
-		e.TLSKeyFile,
-		strconv.FormatBool(e.TLSSkipVerify),
-		tokenHash,
-	}, "\x00")
-}
-
-// saveServerCache snapshots the current server's fullCache and filterValues
-// into the per-server cache map. It only caches after a stream has completed
-// (streamDone), so a server that legitimately returns zero records is still
-// cached and switching back to it stays instant.
-func (app *Gui) saveServerCache() {
-	if app.state.activeDir.Address == "" || app.state.stream != streamDone {
-		return
-	}
-	if app.state.serverCache == nil {
-		app.state.serverCache = map[string]*serverCacheEntry{}
-	}
-	// cachedAt reflects when the data was actually fetched (not when it was
-	// cached) so the staleness indicator survives cache round-trips.
-	cachedAt := app.state.dataFetchedAt
-	if cachedAt.IsZero() {
-		cachedAt = time.Now()
-	}
-	app.state.serverCache[serverCacheKey(app.state.activeDir)] = &serverCacheEntry{
-		fullCache:       app.state.fullCache,
-		filterValues:    app.state.filterValues,
-		cachedAt:        cachedAt,
-		publishEnriched: app.state.publishEnriched,
-	}
-}
-
-// invalidateServerCache removes the cache entry for the current server.
-// Called after mutating actions (delete, sync) that make cached data stale.
-func (app *Gui) invalidateServerCache() {
-	if app.state.serverCache == nil {
-		return
-	}
-	delete(app.state.serverCache, serverCacheKey(app.state.activeDir))
 }
 
 // clearSyncState resets all sync-related tracking fields.
