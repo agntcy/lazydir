@@ -234,6 +234,7 @@ type Config struct {
 	DimLevel           float64
 	FirstPageSize      int
 	BatchSize          int
+	PageSize           int
 }
 
 // Gui is the top-level lazydir GUI object.

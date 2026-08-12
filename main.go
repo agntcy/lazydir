@@ -81,6 +81,7 @@ func buildConfig(userCfg config.Config) gui.Config {
 		DimLevel:           dimLevel,
 		FirstPageSize:      userCfg.Stream.FirstPageSize,
 		BatchSize:          userCfg.Stream.BatchSize,
+		PageSize:           userCfg.PageSize(),
 	}
 
 	// Honour environment variables also used by dirctl and the OASF SDK.
