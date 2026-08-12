@@ -192,6 +192,32 @@ func TestDir_Stream_NoFilters(t *testing.T) {
 	t.Logf("streamed %d records (first page: %d, batches: %d)", total, len(firstPage), len(batches))
 }
 
+func TestDir_Count(t *testing.T) {
+	addr := requireDaemon(t)
+	dirctl := dirctlBin(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	seedRecord(t, ctx, addr, dirctl)
+
+	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
+	if err != nil {
+		t.Fatalf("Connect(%s): %v", addr, err)
+	}
+	defer c.Close()
+
+	total, err := c.Count(ctx, nil)
+	if err != nil {
+		t.Fatalf("Count: %v", err)
+	}
+	if total == 0 {
+		t.Fatal("expected at least one record after seeding")
+	}
+
+	t.Logf("counted %d records", total)
+}
+
 func TestDir_PushAndPull(t *testing.T) {
 	addr := requireDaemon(t)
 	dirctl := dirctlBin(t)

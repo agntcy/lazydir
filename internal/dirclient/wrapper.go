@@ -138,6 +138,17 @@ func (c *Client) Ping(ctx context.Context) error {
 	}
 }
 
+// Count returns the total number of records matching queries via the
+// SearchService.CountRecords RPC. Pagination/sorting are irrelevant to a total.
+func (c *Client) Count(ctx context.Context, queries []Query) (uint32, error) {
+	req := &searchv1.CountRecordsRequest{Queries: buildRPCQueries(queries)}
+	resp, err := c.c.CountRecords(ctx, req)
+	if err != nil {
+		return 0, fmt.Errorf("counting records: %w", err)
+	}
+	return resp.GetTotalCount(), nil
+}
+
 // FilterCategory identifies a server-side filter predicate. Each value maps
 // 1:1 to a RecordQueryType in the agntcy.dir.search.v1 protobuf API.
 type FilterCategory int
