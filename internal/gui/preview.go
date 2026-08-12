@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -74,20 +73,13 @@ func (app *Gui) pullRecord(subtitle, cid string) {
 }
 
 // autoPreviewRecord fires a background pull for the record currently under the
-// cursor, resetting the preview scroll position first. For group headers it
-// previews the first record in the group.
+// cursor, resetting the preview scroll position first.
 func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
 	rows := app.state.recordDisplayRows
 	if app.state.recordCursor >= len(rows) {
 		return
 	}
-	row := rows[app.state.recordCursor]
-	var rec *dirclient.RecordSummary
-	if row.record != nil {
-		rec = row.record
-	} else {
-		rec = app.firstRecordInGroup(row.groupName)
-	}
+	rec := rows[app.state.recordCursor].record
 	if rec == nil || rec.CID == "" {
 		return
 	}
@@ -102,41 +94,6 @@ func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
 		_ = pv.SetOrigin(0, 0)
 	}
 	go app.pullRecord(subtitle, rec.CID)
-}
-
-// firstRecordInGroup returns the latest-version record in the named group.
-// When expanded, the first child row is already the latest (sorted).
-// When collapsed, it scans filteredRecords and picks the highest version.
-func (app *Gui) firstRecordInGroup(name string) *dirclient.RecordSummary {
-	if app.state.recordGroupExpanded[name] {
-		found := false
-		for _, row := range app.state.recordDisplayRows {
-			if row.record == nil && row.groupName == name {
-				found = true
-				continue
-			}
-			if found {
-				if row.record != nil {
-					return row.record
-				}
-				break
-			}
-		}
-	}
-	var best *dirclient.RecordSummary
-	for _, r := range app.state.filteredRecords {
-		rName := r.Name
-		if rName == "" {
-			rName = r.CID
-		}
-		if rName != name {
-			continue
-		}
-		if best == nil || compareVersions(r.Version, best.Version) > 0 {
-			best = r
-		}
-	}
-	return best
 }
 
 // ── Preview panel: rendering ──────────────────────────────────────────────────

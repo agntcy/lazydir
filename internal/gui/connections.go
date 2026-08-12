@@ -181,11 +181,6 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 		app.state.cancelLoad()
 		app.state.cancelLoad = nil
 	}
-	if app.state.tvCancel != nil {
-		app.state.tvCancel()
-		app.state.tvCancel = nil
-	}
-	app.state.tvEnriching = false
 
 	if app.state.publishCancel != nil {
 		app.state.publishCancel()
@@ -204,8 +199,8 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.activeDir = entry
 	app.state.serverAddr = entry.Address
 	app.state.dirStatus = connTrying
-	app.state.recordGroupExpanded = map[string]bool{}
 	app.state.recordCursor = 0
+	app.state.page.reset()
 	app.state.filters = newFilterState()
 	app.state.filterQuery = ""
 	app.state.classEntries = nil
@@ -217,7 +212,6 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 		app.state.filterValues = cached.filterValues
 		app.state.dataFetchedAt = cached.cachedAt
 		app.state.stream = streamDone
-		app.state.tvEnriched = cached.tvEnriched
 		app.state.publishEnriched = cached.publishEnriched
 		app.applyFilters()
 	} else {
@@ -228,7 +222,6 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 		app.state.filterValues = newFilterValueAggregator()
 		app.state.dataFetchedAt = time.Time{}
 		app.state.stream = streamLoading
-		app.state.tvEnriched = false
 		app.state.publishEnriched = false
 	}
 

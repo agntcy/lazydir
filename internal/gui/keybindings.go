@@ -158,12 +158,6 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewRecords, gocui.KeyEnter, gocui.ModNone, app.recordSelect); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'l', gocui.ModNone, app.recordExpand); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(viewRecords, 'h', gocui.ModNone, app.recordCollapse); err != nil {
-		return err
-	}
 	if err := g.SetKeybinding(viewRecords, '/', gocui.ModNone, app.openFilterDialog); err != nil {
 		return err
 	}
@@ -451,6 +445,6 @@ func (app *Gui) refresh(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 	app.invalidateServerCache()
-	app.startRecordsStream()
+	app.startQuery(true)
 	return nil
 }

@@ -37,11 +37,6 @@ func (app *Gui) recordMouseClick(g *gocui.Gui, v *gocui.View) error {
 	rows := app.state.recordDisplayRows
 	if idx >= 0 && idx < len(rows) {
 		app.state.recordCursor = idx
-		row := rows[idx]
-		if row.record == nil {
-			app.state.recordGroupExpanded[row.groupName] = !app.state.recordGroupExpanded[row.groupName]
-			app.buildRecordDisplayRows()
-		}
 		app.renderRecordsView(g)
 		app.autoPreviewRecord(g)
 	}
@@ -67,65 +62,14 @@ func (app *Gui) recordCursorDown(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-// recordExpand expands the group header under the cursor. On non-group rows
-// it is a no-op.
-func (app *Gui) recordExpand(g *gocui.Gui, v *gocui.View) error {
-	rows := app.state.recordDisplayRows
-	if app.state.recordCursor >= len(rows) {
-		return nil
-	}
-	row := rows[app.state.recordCursor]
-	if row.groupName != "" && !app.state.recordGroupExpanded[row.groupName] {
-		app.state.recordGroupExpanded[row.groupName] = true
-		app.buildRecordDisplayRows()
-		app.renderRecordsView(g)
-		app.autoPreviewRecord(g)
-	}
-	return nil
-}
-
-// recordCollapse collapses the current group. When the cursor is on a child
-// record it collapses the parent group and moves the cursor to its header.
-func (app *Gui) recordCollapse(g *gocui.Gui, v *gocui.View) error {
-	rows := app.state.recordDisplayRows
-	if app.state.recordCursor >= len(rows) {
-		return nil
-	}
-	row := rows[app.state.recordCursor]
-
-	if row.grouped {
-		for i := app.state.recordCursor - 1; i >= 0; i-- {
-			if rows[i].groupName != "" {
-				app.state.recordCursor = i
-				row = rows[i]
-				break
-			}
-		}
-	}
-	if row.groupName != "" && app.state.recordGroupExpanded[row.groupName] {
-		app.state.recordGroupExpanded[row.groupName] = false
-		app.buildRecordDisplayRows()
-		app.renderRecordsView(g)
-		app.autoPreviewRecord(g)
-	}
-	return nil
-}
-
 func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
 	rows := app.state.recordDisplayRows
 	if app.state.recordCursor >= len(rows) {
 		return nil
 	}
 	row := rows[app.state.recordCursor]
-	if row.record == nil {
-		app.state.recordGroupExpanded[row.groupName] = !app.state.recordGroupExpanded[row.groupName]
-		app.buildRecordDisplayRows()
-		app.renderRecordsView(g)
-		app.autoPreviewRecord(g)
-		return nil
-	}
 	rec := row.record
-	if rec.CID == "" {
+	if rec == nil || rec.CID == "" {
 		return nil
 	}
 	subtitle := rec.Name
@@ -145,26 +89,20 @@ func (app *Gui) openFilterDialog(g *gocui.Gui, v *gocui.View) error {
 		func(value string) {
 			app.g.Update(func(g *gocui.Gui) error {
 				app.state.filterQuery = value
-				app.state.recordCursor = 0
-				app.applyNameFilter()
-				app.renderRecordsView(g)
+				app.startQuery(true)
 				return nil
 			})
 		},
 		func() {
 			app.g.Update(func(g *gocui.Gui) error {
 				app.state.filterQuery = prevQuery
-				app.state.recordCursor = 0
-				app.applyNameFilter()
-				app.renderRecordsView(g)
+				app.startQuery(true)
 				return nil
 			})
 		},
 		func(value string) {
 			app.state.filterQuery = value
-			app.state.recordCursor = 0
-			app.applyNameFilter()
-			app.renderRecordsView(app.g)
+			app.startQuery(true)
 		},
 	)
 	return nil
@@ -173,17 +111,8 @@ func (app *Gui) openFilterDialog(g *gocui.Gui, v *gocui.View) error {
 func (app *Gui) clearFilter(g *gocui.Gui, v *gocui.View) error {
 	if app.state.filterQuery != "" {
 		app.state.filterQuery = ""
-		app.state.recordCursor = 0
-		app.applyNameFilter()
-		app.renderRecordsView(g)
+		app.startQuery(true)
 		return nil
-	}
-	rows := app.state.recordDisplayRows
-	if app.state.recordCursor < len(rows) {
-		row := rows[app.state.recordCursor]
-		if row.grouped || (row.groupName != "" && app.state.recordGroupExpanded[row.groupName]) {
-			return app.recordCollapse(g, v)
-		}
 	}
 	if len(app.state.clipboard) > 0 {
 		return app.clipboardClear(g, v)
@@ -519,20 +448,15 @@ func (app *Gui) unpublishRecord(cid string) {
 	})
 }
 
-// removeRecordFromState purges a record by CID from fullCache, records,
-// and filteredRecords, rebuilds display rows, and refreshes active filter
-// values so the Filters panel stays consistent.
+// removeRecordFromState purges a record by CID from the current page (and the
+// vestigial fullCache/records/filteredRecords slices) and rebuilds the flat
+// display rows so the deleted record disappears immediately without a refetch.
 func (app *Gui) removeRecordFromState(cid string) {
+	app.state.page.records = removeRecordByCID(app.state.page.records, cid)
 	app.state.fullCache = removeRecordByCID(app.state.fullCache, cid)
 	app.state.records = removeRecordByCID(app.state.records, cid)
 	app.state.filteredRecords = removeRecordByCID(app.state.filteredRecords, cid)
-	if app.state.activeFilterValues != nil {
-		app.rebuildActiveFilterValues()
-	}
-	app.buildRecordDisplayRows()
-	if max := len(app.state.recordDisplayRows) - 1; app.state.recordCursor > max && max >= 0 {
-		app.state.recordCursor = max
-	}
+	app.rebuildRecordRows()
 }
 
 func removeRecordByCID(records []*dirclient.RecordSummary, cid string) []*dirclient.RecordSummary {
@@ -674,9 +598,6 @@ func (app *Gui) startSync(g *gocui.Gui) {
 		r := *snap
 		r.Status = dirclient.StatusSyncing
 		app.state.fullCache = append(app.state.fullCache, &r)
-		// Injected clipboard snapshots carry zero-valued Trusted/Verified flags,
-		// so the cache is no longer fully enriched.
-		app.invalidateTVEnrichment()
 	}
 
 	app.state.syncCIDs = cids
@@ -769,75 +690,6 @@ func (app *Gui) setRecordStatus(cids []string, status dirclient.RecordStatus, er
 			r.StatusError = errMsg
 		}
 	}
-}
-
-// markTrustedVerified sets Trusted/Verified on each record according to whether
-// its CID appears in the respective set. Records absent from a set are marked
-// false, so re-running enrichment reflects the latest server state.
-func markTrustedVerified(records []*dirclient.RecordSummary, trusted, verified []string) {
-	tset := make(map[string]bool, len(trusted))
-	for _, c := range trusted {
-		tset[c] = true
-	}
-	vset := make(map[string]bool, len(verified))
-	for _, c := range verified {
-		vset[c] = true
-	}
-	for _, r := range records {
-		r.Trusted = tset[r.CID]
-		r.Verified = vset[r.CID]
-	}
-}
-
-// trustedVerifiedQueries returns the fixed server predicates used to resolve
-// which records are trusted / verified.
-func trustedVerifiedQueries() (trusted, verified []dirclient.Query) {
-	return []dirclient.Query{{Category: dirclient.FilterTrusted, Value: "true"}},
-		[]dirclient.Query{{Category: dirclient.FilterVerified, Value: "true"}}
-}
-
-// invalidateTVEnrichment marks the current fullCache as no longer having
-// resolved trusted/verified flags, so the next filter apply re-triggers
-// startTVEnrichment. Must be called on the GUI goroutine.
-func (app *Gui) invalidateTVEnrichment() {
-	app.state.tvEnriched = false
-}
-
-// startTVEnrichment resolves the trusted/verified CID sets from the server in
-// the background and stamps the matching fullCache records. No-op if already
-// enriched, already running, or no client. Must be called on the GUI goroutine.
-func (app *Gui) startTVEnrichment() {
-	if app.state.tvEnriched || app.state.tvEnriching || app.state.client == nil {
-		return
-	}
-	app.state.tvEnriching = true
-	client := app.state.client
-	ctx, cancel := context.WithCancel(context.Background())
-	app.state.tvCancel = cancel
-
-	go func() {
-		trustedQ, verifiedQ := trustedVerifiedQueries()
-		trusted, tErr := client.MatchingCIDs(ctx, trustedQ)
-		verified, vErr := client.MatchingCIDs(ctx, verifiedQ)
-
-		app.g.Update(func(g *gocui.Gui) error {
-			if ctx.Err() != nil {
-				return nil
-			}
-			app.state.tvEnriching = false
-			if tErr != nil || vErr != nil {
-				// Leave tvEnriched false; a later filter apply retries.
-				app.renderRecordsView(g)
-				return nil
-			}
-			markTrustedVerified(app.state.fullCache, trusted, verified)
-			app.state.tvEnriched = true
-			app.applyFiltersSilent()
-			app.renderRecordsView(g)
-			app.renderFiltersView(g)
-			return nil
-		})
-	}()
 }
 
 // markPublished sets Published on each record according to whether its CID
@@ -988,10 +840,6 @@ func (app *Gui) silentRefreshRecords(ctx context.Context) {
 		}
 
 		app.state.fullCache = result
-		// The fresh stream yields new *RecordSummary pointers with zero-valued
-		// Trusted/Verified flags, so any prior enrichment no longer applies.
-		// Invalidate so a T/V filter apply re-triggers enrichment.
-		app.invalidateTVEnrichment()
 		app.state.filterValues = newFilterValueAggregator()
 		for _, r := range result {
 			app.state.filterValues.add(r)

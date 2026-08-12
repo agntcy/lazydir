@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -62,7 +61,6 @@ type serverCacheEntry struct {
 	fullCache       []*dirclient.RecordSummary
 	filterValues    *filterValueAggregator
 	cachedAt        time.Time
-	tvEnriched      bool // trusted/verified flags already resolved for this cache
 	publishEnriched bool // publish flags already resolved for this cache
 }
 
@@ -78,14 +76,6 @@ type appState struct {
 	// Set on a fresh stream completion and preserved across cache round-trips
 	// so the records panel can show how stale the data is. Zero if never loaded.
 	dataFetchedAt time.Time
-
-	// Trusted/Verified enrichment. RecordSummary.Trusted/.Verified are filled
-	// in the background from server search predicates. tvEnriched is true once
-	// resolution completed for the current fullCache; tvEnriching guards against
-	// launching concurrent resolutions; tvCancel stops an in-flight resolution.
-	tvEnriched  bool
-	tvEnriching bool
-	tvCancel    context.CancelFunc
 
 	// Publish enrichment. RecordSummary.Published is filled in the background
 	// from RoutingService.List after a records stream completes. publishEnriched
@@ -144,10 +134,13 @@ type appState struct {
 	filteredRecords []*dirclient.RecordSummary
 	recordCursor    int
 
-	// Record grouping: records with the same Name but different versions
-	// are grouped together with a collapsible header.
-	recordDisplayRows   []recordDisplayRow
-	recordGroupExpanded map[string]bool
+	// recordDisplayRows are the flat display rows for the records panel: one
+	// row per record in the current page (no version grouping).
+	recordDisplayRows []recordDisplayRow
+
+	// page holds the server-side pagination state for the records panel
+	// (accumulated pages, offset, total, exhausted/loading flags).
+	page pageState
 
 	// records-stream lifecycle
 	stream     streamState
@@ -164,12 +157,6 @@ type appState struct {
 	// monotonically across every stream (we never forget an option once
 	// we've seen it, even if the next filtered stream wouldn't include it).
 	filterValues *filterValueAggregator
-
-	// activeFilterValues is recomputed from state.records each time
-	// applyFilters runs. optionsFor reads from it so the Filters panel
-	// only shows values present in the current filtered result set.
-	// nil when no filters are active (falls back to filterValues).
-	activeFilterValues *filterValueAggregator
 
 	// classEntries caches enriched display info (ID, caption) for OASF
 	// taxonomy classes. Records may span multiple OASF schema versions, so
@@ -363,7 +350,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 			app.startReconnectLoop()
 			app.startPublishEnrichment()
 		} else {
-			app.startRecordsStream()
+			app.startQuery(true)
 		}
 		return nil
 	})
@@ -489,8 +476,8 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 					if prev != connOK {
 						app.renderDirectory(g)
 					}
-					if prev != connOK && len(app.state.records) == 0 {
-						app.startRecordsStream()
+					if prev != connOK && len(app.state.page.records) == 0 {
+						app.startQuery(true)
 					}
 					return nil
 				})
@@ -586,7 +573,7 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 				_ = app.closeInfoPopup(g, nil)
 			}
 			app.renderDirectory(g)
-			app.startRecordsStream()
+			app.startQuery(true)
 			return nil
 		})
 		ticker.Reset(healthInterval)
@@ -756,326 +743,131 @@ func (app *Gui) markStreaming() {
 	}
 }
 
-// startRecordsStream cancels any in-flight records stream and issues a fresh
-// unfiltered SearchRecords RPC to populate the full cache. Client-side filters
-// are re-applied once the cache is populated. It must run on the GUI goroutine
-// (i.e. inside a g.Update callback or a key handler) because it touches state
-// without taking state.mu.
-func (app *Gui) startRecordsStream() {
-	if app.state.client == nil {
+// startQuery resets pagination and fetches the first page plus the total for
+// the current filter + name-query selection. Runs the fetch on a background
+// goroutine; results are applied on the GUI goroutine via g.Update.
+//
+// When resetCursor is true the selection resets to the first row; when false
+// the current recordCursor is preserved (clamped by rebuildRecordRows). Both
+// perform the same fetch.
+func (app *Gui) startQuery(resetCursor bool) {
+	client := app.state.client
+	if client == nil {
 		return
 	}
+	queries := buildServerQueries(app.state.filters, app.state.filterQuery)
+	pageSize := app.pageSize()
 
-	if app.state.cancelLoad != nil {
-		app.state.cancelLoad()
-		app.state.cancelLoad = nil
-	}
-
-	if app.state.tvCancel != nil {
-		app.state.tvCancel()
-		app.state.tvCancel = nil
-	}
-	app.state.tvEnriched = false
-	app.state.tvEnriching = false
-
-	if app.state.publishCancel != nil {
-		app.state.publishCancel()
-		app.state.publishCancel = nil
-	}
-	app.state.publishEnriched = false
-	app.state.publishEnriching = false
-
-	app.state.fullCache = nil
-	app.state.records = nil
-	app.state.recordCursor = 0
-	app.state.streamErr = ""
-	app.state.stream = streamLoading
-	app.state.recordInfoCID = ""
-	app.state.recordInfoText = ""
-	app.state.recordInfoLoading = false
-	app.applyNameFilter()
-	app.renderRecordsView(app.g)
-	app.renderDirectory(app.g)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	app.state.cancelLoad = cancel
-
-	client := app.state.client
-
-	go client.Stream(ctx, nil, dirclient.StreamCallbacks{
-		OnFirstPage: func(summaries []*dirclient.RecordSummary) {
-			app.g.Update(func(g *gocui.Gui) error {
-				if ctx.Err() != nil {
-					return nil
-				}
-				if len(summaries) > 0 {
-					app.state.dirStatus = connOK
-					app.state.dirLastConnected = time.Now()
-					app.state.dirError = ""
-					if app.state.infoPopupPanel == viewDirectory {
-						_ = app.closeInfoPopup(g, nil)
-					}
-				}
-				app.state.fullCache = append(app.state.fullCache, summaries...)
-				for _, r := range summaries {
-					app.state.filterValues.add(r)
-				}
-				app.maybeStartClassEntriesFetch(summaries)
-				app.markStreaming()
-				app.applyFilters()
-				app.renderRecordsView(g)
-				app.renderFiltersView(g)
-				app.renderDirectory(g)
-				app.autoPreviewRecord(g)
-				return nil
-			})
-		},
-		OnBatch: func(batch []*dirclient.RecordSummary) {
-			app.g.Update(func(g *gocui.Gui) error {
-				if ctx.Err() != nil {
-					return nil
-				}
-				app.state.fullCache = append(app.state.fullCache, batch...)
-				for _, r := range batch {
-					app.state.filterValues.add(r)
-				}
-				app.maybeStartClassEntriesFetch(batch)
-				app.applyFilters()
-				app.renderRecordsView(g)
-				app.renderFiltersView(g)
-				return nil
-			})
-		},
-		OnDone: func(err error) {
-			app.g.Update(func(g *gocui.Gui) error {
-				if ctx.Err() != nil {
-					return nil
-				}
-				if err != nil {
-					app.state.stream = streamErrored
-					app.state.streamErr = err.Error()
-					app.state.dirStatus = connFailed
-					app.state.dirError = err.Error()
-					app.state.recordInfoCID = ""
-					app.state.recordInfoText = err.Error()
-					app.state.recordInfoError = true
-					app.state.recordInfoLoading = false
-					app.openInfoPopup(g, viewRecords)
-					app.renderDirectory(g)
-					app.startReconnectLoop()
-				} else {
-					app.state.stream = streamDone
-					app.state.dataFetchedAt = time.Now()
-					if app.state.dirStatus == connTrying {
-						app.state.dirStatus = connOK
-						app.state.dirLastConnected = time.Now()
-						app.state.dirError = ""
-					}
-					app.startReconnectLoop()
-					app.startPublishEnrichment()
-				}
-				app.renderRecordsView(g)
-				app.renderDirectory(g)
-				return nil
-			})
-		},
-	})
-}
-
-// applyFilters narrows state.records from fullCache according to the active
-// selections (skills, domains, modules, version, schema version, author,
-// trusted/verified), then chains into applyNameFilter for the local name
-// query. Trusted/Verified are evaluated against enriched flags; if those are
-// not yet resolved, background enrichment is kicked off and re-applies filters
-// on completion.
-//
-// When resetCursor is true the selection resets to the first row and the
-// preview updates (used after explicit user actions). When false the cursor
-// is clamped to remain valid without jumping (used during background sync).
-//
-// Must be called from the GUI goroutine (g.Update callback or key handler).
-func (app *Gui) applyFilters() {
-	app.applyFiltersOpts(true)
-}
-
-// applyFiltersSilent is like applyFilters but preserves the cursor position.
-// Used during background sync reconciliation to avoid resetting the user's selection.
-func (app *Gui) applyFiltersSilent() {
-	app.applyFiltersOpts(false)
-}
-
-func (app *Gui) applyFiltersOpts(resetCursor bool) {
-	applied := app.state.filters.applied
-
-	// Trusted/Verified is evaluated client-side against enriched flags. If the
-	// flags are not resolved yet, kick off enrichment; it re-applies filters on
-	// completion. Filtering proceeds now over whatever flags are set (the
-	// records title shows a resolving indicator until enrichment finishes).
-	if len(applied[filterTrustedVerified]) > 0 && !app.state.tvEnriched {
-		app.startTVEnrichment()
-	}
-
-	if len(applied) == 0 {
-		app.state.records = app.state.fullCache
-		app.state.activeFilterValues = nil
-	} else {
-		out := make([]*dirclient.RecordSummary, 0, len(app.state.fullCache))
-		for _, r := range app.state.fullCache {
-			if matchesFilters(r, applied) {
-				out = append(out, r)
-			}
-		}
-		app.state.records = out
-		app.rebuildActiveFilterValues()
-	}
-
+	app.state.page.reset()
+	app.state.page.loading = true
 	if resetCursor {
 		app.state.recordCursor = 0
 	}
-	app.applyNameFilter()
-	if !resetCursor {
-		if max := len(app.state.recordDisplayRows) - 1; app.state.recordCursor > max && max >= 0 {
-			app.state.recordCursor = max
-		}
-	}
+	app.state.streamErr = ""
 
-	app.renderRecordsView(app.g)
-	app.renderFiltersView(app.g)
-	if resetCursor {
-		app.autoPreviewRecord(app.g)
+	if app.state.cancelLoad != nil {
+		app.state.cancelLoad()
 	}
-}
+	ctx, cancel := context.WithCancel(context.Background())
+	app.state.cancelLoad = cancel
 
-// matchesFilters checks whether a record satisfies all applied categories.
-// Across categories the semantics are AND. Within a category, include values
-// use the existing include predicate and exclude values drop the record if it
-// matches any of them. Trusted/Verified is evaluated client-side against the
-// enriched RecordSummary.Trusted/.Verified flags.
-func matchesFilters(r *dirclient.RecordSummary, applied map[filterCategory]map[string]filterMode) bool {
-	for cat, selected := range applied {
-		if len(selected) == 0 {
-			continue
-		}
-		if !matchesCategory(r, cat, selected) {
-			return false
-		}
-	}
-	return true
-}
-
-// matchesCategory returns true if the record passes one category's include and
-// exclude selections. include and exclude are evaluated independently: the
-// record must satisfy the include predicate (if any include values exist) and
-// must not match any exclude value.
-// matchesCategory reports whether r satisfies the include/exclude selection for
-// a single filter category. For any given value, exclude takes precedence over
-// include: if a value were somehow both included and excluded, the record is
-// rejected. (Not reachable via toggleApplied, which keeps each value in exactly
-// one mode.)
-func matchesCategory(r *dirclient.RecordSummary, cat filterCategory, selected map[string]filterMode) bool {
-	include, exclude := splitModes(selected)
-
-	switch cat {
-	case filterSkills:
-		return sliceMatches(r.Skills, include, exclude)
-	case filterDomains:
-		return sliceMatches(r.Domains, include, exclude)
-	case filterModules:
-		return sliceMatches(r.Modules, include, exclude)
-	case filterAuthor:
-		return sliceMatches(r.Authors, include, exclude)
-	case filterOASFVersion:
-		return scalarMatches(r.SchemaVersion, include, exclude)
-	case filterVersion:
-		return scalarMatches(r.Version, include, exclude)
-	case filterTrustedVerified:
-		if include["trusted"] && !r.Trusted {
-			return false
-		}
-		if include["verified"] && !r.Verified {
-			return false
-		}
-		if exclude["trusted"] && r.Trusted {
-			return false
-		}
-		if exclude["verified"] && r.Verified {
-			return false
-		}
-		return true
-	}
-	return true
-}
-
-// splitModes partitions a selection map into include and exclude value sets.
-func splitModes(selected map[string]filterMode) (include, exclude map[string]bool) {
-	include = make(map[string]bool, len(selected))
-	exclude = make(map[string]bool, len(selected))
-	for v, mode := range selected {
-		switch mode {
-		case modeInclude:
-			include[v] = true
-		case modeExclude:
-			exclude[v] = true
-		}
-	}
-	return include, exclude
-}
-
-// sliceMatches applies include/exclude sets to a multi-value field. Include
-// requires the field to contain every included value (preserving the prior
-// AND-within-slice behavior); exclude rejects the record if the field contains
-// any excluded value.
-func sliceMatches(values []string, include, exclude map[string]bool) bool {
-	have := make(map[string]bool, len(values))
-	for _, v := range values {
-		have[v] = true
-	}
-	for k := range include {
-		if !have[k] {
-			return false
-		}
-	}
-	for k := range exclude {
-		if have[k] {
-			return false
-		}
-	}
-	return true
-}
-
-// scalarMatches applies include/exclude sets to a single-value field. Include
-// requires the value to be one of the included values; exclude rejects it if
-// it is one of the excluded values.
-func scalarMatches(value string, include, exclude map[string]bool) bool {
-	if len(include) > 0 && !include[value] {
-		return false
-	}
-	if exclude[value] {
-		return false
-	}
-	return true
-}
-
-// applyNameFilter recomputes filteredRecords from records by applying only
-// the local name query. The records slice has already been narrowed by
-// applyFilters; the name query is intentionally local so the user can narrow
-// incrementally without restarting the stream.
-//
-// Must be called from the GUI goroutine (g.Update callback or key handler).
-func (app *Gui) applyNameFilter() {
-	if app.state.filterQuery == "" {
-		app.state.filteredRecords = app.state.records
-	} else {
-		q := strings.ToLower(app.state.filterQuery)
-		out := make([]*dirclient.RecordSummary, 0, len(app.state.records))
-		for _, r := range app.state.records {
-			if strings.Contains(strings.ToLower(r.Name), q) {
-				out = append(out, r)
+	go func() {
+		recs, exhausted, err := client.Page(ctx, queries, uint32(pageSize), 0)
+		total, cntErr := client.Count(ctx, queries)
+		app.g.Update(func(g *gocui.Gui) error {
+			if ctx.Err() != nil {
+				return nil // superseded by a newer query
 			}
-		}
-		app.state.filteredRecords = out
+			app.state.page.loading = false
+			if err != nil {
+				app.state.streamErr = err.Error()
+				app.renderRecordsView(g)
+				return nil
+			}
+			app.state.streamErr = ""
+			app.state.page.appendPage(recs, exhausted)
+			if cntErr == nil {
+				app.state.page.total = total
+				app.state.page.totalKnown = true
+			}
+			app.maybeStartClassEntriesFetch(recs)
+			app.ingestPageOptions(recs) // interim option aggregation
+			app.rebuildRecordRows()     // flat renderer
+			app.renderRecordsView(g)
+			app.renderFiltersView(g)
+			app.renderDirectory(g)
+			app.autoPreviewRecord(g)
+			return nil
+		})
+	}()
+}
+
+// loadNextPage fetches and appends the next page unless already loading or
+// exhausted. Wired to the records-panel scroll trigger in a later task.
+//
+//nolint:unused // consumed by the scroll trigger (a subsequent phase-1 task)
+func (app *Gui) loadNextPage() {
+	client := app.state.client
+	if client == nil || app.state.page.loading || app.state.page.exhausted {
+		return
 	}
-	app.buildRecordDisplayRows()
+	queries := buildServerQueries(app.state.filters, app.state.filterQuery)
+	pageSize := app.pageSize()
+	offset := app.state.page.offset
+	app.state.page.loading = true
+
+	// Next-page fetches are not cancelled by cursor moves — only superseded by a
+	// new startQuery, which discards the accumulated page state on the next
+	// rebuild — so this fetch uses a background context.
+	ctx := context.Background()
+
+	go func() {
+		recs, exhausted, err := client.Page(ctx, queries, uint32(pageSize), offset)
+		app.g.Update(func(g *gocui.Gui) error {
+			app.state.page.loading = false
+			if err != nil {
+				app.state.streamErr = err.Error()
+				app.renderRecordsView(g)
+				return nil
+			}
+			app.state.page.appendPage(recs, exhausted)
+			app.maybeStartClassEntriesFetch(recs)
+			app.ingestPageOptions(recs)
+			app.rebuildRecordRows()
+			app.renderRecordsView(g)
+			app.renderFiltersView(g)
+			return nil
+		})
+	}()
+}
+
+// pageSize returns the configured page size, defaulting defensively.
+func (app *Gui) pageSize() int {
+	if app.cfg.PageSize > 0 {
+		return app.cfg.PageSize
+	}
+	return 50
+}
+
+// applyFilters re-runs the server-side query for the current selection,
+// resetting the cursor to the first row.
+func (app *Gui) applyFilters() { app.startQuery(true) }
+
+// applyFiltersSilent re-runs the server-side query while preserving the cursor
+// position. Used during background sync/publish reconciliation.
+func (app *Gui) applyFiltersSilent() { app.startQuery(false) }
+
+// ingestPageOptions feeds filter-option values from a fetched page into the
+// aggregator. INTERIM (Phase 1): options are only as complete as the pages
+// loaded so far. Phase 2 replaces this with ListRecordValues (present-only,
+// complete). See docs/superpowers/specs/2026-08-11-lazydir-pagination-design.md.
+func (app *Gui) ingestPageOptions(recs []*dirclient.RecordSummary) {
+	if app.state.filterValues == nil {
+		app.state.filterValues = newFilterValueAggregator()
+	}
+	for _, r := range recs {
+		app.state.filterValues.add(r)
+	}
 }
 
 // syncCounts returns the number of records in fullCache that are syncing vs reconciling.
@@ -1142,7 +934,6 @@ func (app *Gui) saveServerCache() {
 		fullCache:       app.state.fullCache,
 		filterValues:    app.state.filterValues,
 		cachedAt:        cachedAt,
-		tvEnriched:      app.state.tvEnriched,
 		publishEnriched: app.state.publishEnriched,
 	}
 }
@@ -1170,100 +961,21 @@ func (app *Gui) clearClipboard() {
 	app.state.clipboardSourceURL = ""
 }
 
-// buildRecordDisplayRows computes the grouped display rows from
-// filteredRecords. Records sharing the same Name are grouped together with a
-// collapsible header (similar to filter categories). Groups with a single
-// record are shown flat without a header.
-func (app *Gui) buildRecordDisplayRows() {
-	records := app.state.filteredRecords
-	if len(records) == 0 {
-		app.state.recordDisplayRows = nil
-		return
+// rebuildRecordRows rebuilds the flat display rows from the current page. One
+// row per record, in server (recency) order; no cross-version grouping. The
+// cursor is clamped to remain within the new row set.
+func (app *Gui) rebuildRecordRows() {
+	rows := make([]recordDisplayRow, 0, len(app.state.page.records))
+	for _, r := range app.state.page.records {
+		rows = append(rows, recordDisplayRow{record: r})
 	}
-
-	if app.state.recordGroupExpanded == nil {
-		app.state.recordGroupExpanded = map[string]bool{}
-	}
-
-	// Build groups keyed by name, then sort alphabetically.
-	type group struct {
-		name    string
-		records []*dirclient.RecordSummary
-	}
-	seen := map[string]int{} // name -> index into groups
-	var groups []group
-	for _, r := range records {
-		name := r.Name
-		if name == "" {
-			name = r.CID
-		}
-		if idx, ok := seen[name]; ok {
-			groups[idx].records = append(groups[idx].records, r)
-		} else {
-			seen[name] = len(groups)
-			groups = append(groups, group{name: name, records: []*dirclient.RecordSummary{r}})
-		}
-	}
-	sort.Slice(groups, func(i, j int) bool {
-		return strings.ToLower(groups[i].name) < strings.ToLower(groups[j].name)
-	})
-
-	var rows []recordDisplayRow
-	for _, g := range groups {
-		if len(g.records) == 1 {
-			rows = append(rows, recordDisplayRow{record: g.records[0]})
-			continue
-		}
-		sort.Slice(g.records, func(i, j int) bool {
-			return compareVersions(g.records[i].Version, g.records[j].Version) > 0
-		})
-		rows = append(rows, recordDisplayRow{groupName: g.name})
-		if app.state.recordGroupExpanded[g.name] {
-			for _, r := range g.records {
-				rows = append(rows, recordDisplayRow{record: r, grouped: true})
-			}
-		}
-	}
-
 	app.state.recordDisplayRows = rows
-}
-
-// compareVersions compares two version strings. It attempts semver-style
-// numeric comparison (splitting on ".") and falls back to lexicographic order.
-// Returns >0 if a > b, <0 if a < b, 0 if equal.
-func compareVersions(a, b string) int {
-	a = strings.TrimPrefix(a, "v")
-	b = strings.TrimPrefix(b, "v")
-	aParts := strings.Split(a, ".")
-	bParts := strings.Split(b, ".")
-	maxLen := len(aParts)
-	if len(bParts) > maxLen {
-		maxLen = len(bParts)
+	if max := len(rows) - 1; app.state.recordCursor > max {
+		app.state.recordCursor = max
 	}
-	for i := 0; i < maxLen; i++ {
-		var ap, bp string
-		if i < len(aParts) {
-			ap = aParts[i]
-		}
-		if i < len(bParts) {
-			bp = bParts[i]
-		}
-		an, aErr := strconv.Atoi(ap)
-		bn, bErr := strconv.Atoi(bp)
-		if aErr == nil && bErr == nil {
-			if an != bn {
-				return an - bn
-			}
-			continue
-		}
-		if ap != bp {
-			if ap < bp {
-				return -1
-			}
-			return 1
-		}
+	if app.state.recordCursor < 0 {
+		app.state.recordCursor = 0
 	}
-	return 0
 }
 
 // openInput shows the shared input prompt, pre-fills it with initialValue,

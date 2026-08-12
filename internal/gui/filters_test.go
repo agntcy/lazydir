@@ -248,34 +248,6 @@ func TestToggleAppliedCycles(t *testing.T) {
 	}
 }
 
-func TestMatchesFiltersIncludeExclude(t *testing.T) {
-	rec := &dirclient.RecordSummary{
-		Skills:        []string{"nlp", "vision"},
-		Version:       "1.0.0",
-		SchemaVersion: "0.7.0",
-	}
-	tests := []struct {
-		name    string
-		applied map[filterCategory]map[string]filterMode
-		want    bool
-	}{
-		{"include match", map[filterCategory]map[string]filterMode{filterSkills: {"nlp": modeInclude}}, true},
-		{"include miss", map[filterCategory]map[string]filterMode{filterSkills: {"audio": modeInclude}}, false},
-		{"exclude drops match", map[filterCategory]map[string]filterMode{filterSkills: {"nlp": modeExclude}}, false},
-		{"exclude keeps non-match", map[filterCategory]map[string]filterMode{filterSkills: {"audio": modeExclude}}, true},
-		{"scalar include", map[filterCategory]map[string]filterMode{filterVersion: {"1.0.0": modeInclude}}, true},
-		{"scalar exclude", map[filterCategory]map[string]filterMode{filterVersion: {"1.0.0": modeExclude}}, false},
-		{"mixed include+exclude", map[filterCategory]map[string]filterMode{filterSkills: {"nlp": modeInclude, "vision": modeExclude}}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := matchesFilters(rec, tt.applied); got != tt.want {
-				t.Errorf("matchesFilters = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestRenderFilterOptionStrike(t *testing.T) {
 	app := &Gui{theme: defaultTheme}
 	app.theme.Strike = "\033[9m"
@@ -312,56 +284,6 @@ func TestRenderFilterOptionStrike(t *testing.T) {
 	}
 	if !strings.Contains(caption.String(), "\033[9m") {
 		t.Errorf("caption row under exclude should contain strike code: %q", caption.String())
-	}
-}
-
-func TestMarkTrustedVerified(t *testing.T) {
-	records := []*dirclient.RecordSummary{
-		{CID: "a"}, {CID: "b"}, {CID: "c"},
-	}
-	markTrustedVerified(records, []string{"a", "c"}, []string{"b"})
-
-	want := map[string][2]bool{
-		"a": {true, false},
-		"b": {false, true},
-		"c": {true, false},
-	}
-	for _, r := range records {
-		if got := [2]bool{r.Trusted, r.Verified}; got != want[r.CID] {
-			t.Errorf("cid %s = {trusted:%v verified:%v}, want %v", r.CID, r.Trusted, r.Verified, want[r.CID])
-		}
-	}
-}
-
-func TestMatchesTrustedVerified(t *testing.T) {
-	trusted := &dirclient.RecordSummary{CID: "a", Trusted: true}
-	verified := &dirclient.RecordSummary{CID: "b", Verified: true}
-	plain := &dirclient.RecordSummary{CID: "c"}
-
-	inclTrusted := map[filterCategory]map[string]filterMode{
-		filterTrustedVerified: {"trusted": modeInclude},
-	}
-	exclTrusted := map[filterCategory]map[string]filterMode{
-		filterTrustedVerified: {"trusted": modeExclude},
-	}
-	inclVerified := map[filterCategory]map[string]filterMode{
-		filterTrustedVerified: {"verified": modeInclude},
-	}
-
-	if !matchesFilters(trusted, inclTrusted) {
-		t.Error("include trusted should keep a trusted record")
-	}
-	if matchesFilters(plain, inclTrusted) {
-		t.Error("include trusted should drop a non-trusted record")
-	}
-	if matchesFilters(trusted, exclTrusted) {
-		t.Error("exclude trusted should drop a trusted record")
-	}
-	if !matchesFilters(plain, exclTrusted) {
-		t.Error("exclude trusted should keep a non-trusted record")
-	}
-	if !matchesFilters(verified, inclVerified) {
-		t.Error("include verified should keep a verified record")
 	}
 }
 

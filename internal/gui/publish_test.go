@@ -30,29 +30,6 @@ func TestMarkPublished(t *testing.T) {
 	}
 }
 
-func TestGroupPublishStatus(t *testing.T) {
-	t.Parallel()
-
-	records := []*dirclient.RecordSummary{
-		{CID: "a1", Name: "all-pub", Published: true},
-		{CID: "a2", Name: "all-pub", Published: true},
-		{CID: "b1", Name: "mixed", Published: true},
-		{CID: "b2", Name: "mixed", Published: false},
-		{CID: "c1", Name: "none-pub", Published: false},
-	}
-
-	got := groupPublishStatus(records)
-	if !got["all-pub"] {
-		t.Errorf("all-pub: got %v, want true", got["all-pub"])
-	}
-	if got["mixed"] {
-		t.Errorf("mixed: got %v, want false", got["mixed"])
-	}
-	if got["none-pub"] {
-		t.Errorf("none-pub: got %v, want false", got["none-pub"])
-	}
-}
-
 func TestSetRecordPublished(t *testing.T) {
 	t.Parallel()
 

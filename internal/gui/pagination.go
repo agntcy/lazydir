@@ -13,7 +13,7 @@ type pageState struct {
 	totalKnown bool                       // false when CountRecords is unavailable
 	offset     uint32                     // next offset to request
 	exhausted  bool                       // no further pages
-	loading    bool                       //nolint:unused // wired up by later tasks (loadNextPage/startQuery)
+	loading    bool                       // a page fetch is in flight
 }
 
 // reset clears all accumulated state for a new query (filter/search change).

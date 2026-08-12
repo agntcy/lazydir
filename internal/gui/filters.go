@@ -59,16 +59,6 @@ func (a *filterValueAggregator) add(r *dirclient.RecordSummary) {
 	}
 }
 
-// rebuildActiveFilterValues recomputes activeFilterValues from the current
-// filtered record set so the Filters panel only shows relevant options.
-func (app *Gui) rebuildActiveFilterValues() {
-	a := newFilterValueAggregator()
-	for _, r := range app.state.records {
-		a.add(r)
-	}
-	app.state.activeFilterValues = a
-}
-
 // filterCategory identifies a filterable record field shown in the [2] Filters
 // panel. The list is presented in this order.
 type filterCategory int
@@ -155,21 +145,16 @@ func newFilterState() filterState {
 	}
 }
 
-// optionsFor returns the option labels available for a given category. When
-// filters are active it reads from activeFilterValues (the narrowed set) so
-// only relevant options are shown; otherwise it falls back to the full
-// filterValues aggregator. Categories that already have active selections
-// always use the full set so the user can add more values to broaden the
-// search (standard faceted-search behaviour). Currently-applied selections
-// are always included so the user can deselect them.
+// optionsFor returns the option labels available for a given category. Options
+// come from the filterValues aggregator, which grows monotonically as pages are
+// fetched (INTERIM Phase 1; Phase 2 replaces this with ListRecordValues).
+// Currently-applied selections are always included so the user can deselect
+// them.
 //
 // Class categories (skills, domains, modules) are sorted by OASF ID when
 // enrichment data is available; other categories are sorted alphabetically.
 func (app *Gui) optionsFor(c filterCategory) []string {
-	a := app.state.activeFilterValues
-	if a == nil {
-		a = app.state.filterValues
-	}
+	a := app.state.filterValues
 	if a == nil {
 		return nil
 	}
