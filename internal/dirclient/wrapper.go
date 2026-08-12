@@ -63,10 +63,8 @@ type RecordSummary struct {
 
 // Client wraps the agntcy/dir gRPC client.
 type Client struct {
-	c             *client.Client
-	Config        Config
-	FirstPageSize int
-	BatchSize     int
+	c      *client.Client
+	Config Config
 }
 
 // Connect creates a new connected client.
@@ -247,25 +245,6 @@ func (q Query) toRPC() *searchv1.RecordQuery {
 	return &searchv1.RecordQuery{Type: t, Value: q.Value, Negate: q.Negate}
 }
 
-const (
-	defaultFirstPageSize = 100
-	defaultBatchSize     = 50
-)
-
-func (c *Client) firstPageSize() int {
-	if c.FirstPageSize > 0 {
-		return c.FirstPageSize
-	}
-	return defaultFirstPageSize
-}
-
-func (c *Client) batchSize() int {
-	if c.BatchSize > 0 {
-		return c.BatchSize
-	}
-	return defaultBatchSize
-}
-
 // buildRPCQueries converts dirclient Queries to their protobuf form.
 func buildRPCQueries(queries []Query) []*searchv1.RecordQuery {
 	rpc := make([]*searchv1.RecordQuery, 0, len(queries))
@@ -273,127 +252,6 @@ func buildRPCQueries(queries []Query) []*searchv1.RecordQuery {
 		rpc = append(rpc, q.toRPC())
 	}
 	return rpc
-}
-
-// StreamCallbacks bundle the optional notification hooks for Stream. Any of
-// the callbacks may be nil. They are invoked from the goroutine driving the
-// stream — callers must not block inside them.
-type StreamCallbacks struct {
-	// OnFirstPage fires once after the first batch of records has been
-	// received (controlled by Client.FirstPageSize, default 100) or after
-	// the stream ends, whichever comes first.
-	OnFirstPage func(summaries []*RecordSummary)
-	// OnBatch fires for every subsequent batch of records (controlled by
-	// Client.BatchSize, default 50). Batching exists so callers can
-	// amortize per-update work like UI redraws.
-	OnBatch func(summaries []*RecordSummary)
-	// OnDone fires exactly once when the stream finishes — either cleanly,
-	// because of an error, or because ctx was cancelled. err is nil on a
-	// clean finish.
-	OnDone func(err error)
-}
-
-// Stream issues a single SearchRecords RPC with the supplied queries and
-// drains the returned server stream until the server closes it (EOF) or ctx
-// is cancelled. The first batch of records (sized by Client.FirstPageSize)
-// is delivered via OnFirstPage; remaining records arrive in OnBatch chunks
-// (sized by Client.BatchSize).
-//
-// No limit/offset is set on the RPC — the server decides how many records
-// to return. Once the gRPC stream is exhausted, OnDone(nil) fires.
-//
-// Callbacks fire on this goroutine; cancel ctx to stop reading at any time.
-func (c *Client) Stream(ctx context.Context, queries []Query, cb StreamCallbacks) {
-	rpcQueries := buildRPCQueries(queries)
-
-	fps := c.firstPageSize()
-	bs := c.batchSize()
-	buf := make([]*RecordSummary, 0, fps)
-	firstPageSent := false
-
-	handOff := func(capHint int) []*RecordSummary {
-		out := buf
-		buf = make([]*RecordSummary, 0, capHint)
-		return out
-	}
-
-	flushFirstPage := func() {
-		if firstPageSent {
-			return
-		}
-		firstPageSent = true
-		batch := handOff(bs)
-		if cb.OnFirstPage != nil {
-			cb.OnFirstPage(batch)
-		}
-	}
-	flushBatch := func() {
-		if !firstPageSent {
-			flushFirstPage()
-			return
-		}
-		if len(buf) == 0 {
-			return
-		}
-		batch := handOff(bs)
-		if cb.OnBatch != nil {
-			cb.OnBatch(batch)
-		}
-	}
-	finish := func(err error) {
-		flushBatch()
-		if cb.OnDone != nil {
-			cb.OnDone(err)
-		}
-	}
-
-	req := &searchv1.SearchRecordsRequest{
-		Queries: rpcQueries,
-	}
-	result, err := c.c.SearchRecords(ctx, req)
-	if err != nil {
-		finish(fmt.Errorf("searching records: %w", err))
-		return
-	}
-
-	for {
-		select {
-		case resp, ok := <-result.ResCh():
-			if !ok {
-				finish(nil)
-				return
-			}
-			record := resp.GetRecord()
-			if record == nil {
-				continue
-			}
-			s := extractSummary(record)
-			if s == nil {
-				continue
-			}
-			buf = append(buf, s)
-			if !firstPageSent {
-				if len(buf) >= fps {
-					flushFirstPage()
-				}
-				continue
-			}
-			if len(buf) >= bs {
-				flushBatch()
-			}
-		case streamErr := <-result.ErrCh():
-			if streamErr != nil {
-				finish(fmt.Errorf("receiving record: %w", streamErr))
-				return
-			}
-		case <-result.DoneCh():
-			finish(nil)
-			return
-		case <-ctx.Done():
-			finish(ctx.Err())
-			return
-		}
-	}
 }
 
 // MatchingCIDs issues a SearchCIDs RPC with the supplied queries and returns

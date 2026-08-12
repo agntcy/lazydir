@@ -210,8 +210,6 @@ type Config struct {
 	SplitRatio         float64
 	InputDebounceDelay int
 	DimLevel           float64
-	FirstPageSize      int
-	BatchSize          int
 	PageSize           int
 }
 
@@ -321,8 +319,6 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		if app.state.client != nil {
 			app.state.client.Close()
 		}
-		c.FirstPageSize = app.cfg.FirstPageSize
-		c.BatchSize = app.cfg.BatchSize
 		app.state.client = c
 		app.state.serverAddr = cfg.ServerAddress
 		app.state.authMode = cfg.AuthMode
@@ -554,8 +550,6 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 				c.Close()
 				return nil
 			}
-			c.FirstPageSize = app.cfg.FirstPageSize
-			c.BatchSize = app.cfg.BatchSize
 			app.state.client = c
 			app.state.dirStatus = connOK
 			app.state.dirLastConnected = time.Now()
@@ -617,8 +611,6 @@ func (app *Gui) tryOIDCTokenRefresh(
 			return nil
 		}
 		snap.client.Close()
-		c.FirstPageSize = app.cfg.FirstPageSize
-		c.BatchSize = app.cfg.BatchSize
 		app.state.client = c
 		app.state.dirLastCfg = &cfg
 		app.state.dirStatus = connOK

@@ -79,8 +79,6 @@ func buildConfig(userCfg config.Config) gui.Config {
 		SplitRatio:         userCfg.GUI.SplitRatio,
 		InputDebounceDelay: userCfg.GUI.InputDebounceDelay,
 		DimLevel:           dimLevel,
-		FirstPageSize:      userCfg.Stream.FirstPageSize,
-		BatchSize:          userCfg.Stream.BatchSize,
 		PageSize:           userCfg.PageSize(),
 	}
 

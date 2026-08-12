@@ -46,46 +46,6 @@ func TestQueryToRPC(t *testing.T) {
 	}
 }
 
-func TestFirstPageSize(t *testing.T) {
-	t.Parallel()
-
-	t.Run("default", func(t *testing.T) {
-		t.Parallel()
-		c := &Client{}
-		if got := c.firstPageSize(); got != defaultFirstPageSize {
-			t.Errorf("firstPageSize() = %d, want %d", got, defaultFirstPageSize)
-		}
-	})
-
-	t.Run("custom", func(t *testing.T) {
-		t.Parallel()
-		c := &Client{FirstPageSize: 50}
-		if got := c.firstPageSize(); got != 50 {
-			t.Errorf("firstPageSize() = %d, want 50", got)
-		}
-	})
-}
-
-func TestBatchSize(t *testing.T) {
-	t.Parallel()
-
-	t.Run("default", func(t *testing.T) {
-		t.Parallel()
-		c := &Client{}
-		if got := c.batchSize(); got != defaultBatchSize {
-			t.Errorf("batchSize() = %d, want %d", got, defaultBatchSize)
-		}
-	})
-
-	t.Run("custom", func(t *testing.T) {
-		t.Parallel()
-		c := &Client{BatchSize: 25}
-		if got := c.batchSize(); got != 25 {
-			t.Errorf("batchSize() = %d, want 25", got)
-		}
-	})
-}
-
 func TestConnect_BadAddress(t *testing.T) {
 	t.Parallel()
 
