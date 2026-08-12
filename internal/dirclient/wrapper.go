@@ -206,6 +206,15 @@ func (c *Client) batchSize() int {
 	return defaultBatchSize
 }
 
+// buildRPCQueries converts dirclient Queries to their protobuf form.
+func buildRPCQueries(queries []Query) []*searchv1.RecordQuery {
+	rpc := make([]*searchv1.RecordQuery, 0, len(queries))
+	for _, q := range queries {
+		rpc = append(rpc, q.toRPC())
+	}
+	return rpc
+}
+
 // StreamCallbacks bundle the optional notification hooks for Stream. Any of
 // the callbacks may be nil. They are invoked from the goroutine driving the
 // stream — callers must not block inside them.
@@ -235,10 +244,7 @@ type StreamCallbacks struct {
 //
 // Callbacks fire on this goroutine; cancel ctx to stop reading at any time.
 func (c *Client) Stream(ctx context.Context, queries []Query, cb StreamCallbacks) {
-	rpcQueries := make([]*searchv1.RecordQuery, 0, len(queries))
-	for _, q := range queries {
-		rpcQueries = append(rpcQueries, q.toRPC())
-	}
+	rpcQueries := buildRPCQueries(queries)
 
 	fps := c.firstPageSize()
 	bs := c.batchSize()
@@ -335,10 +341,7 @@ func (c *Client) Stream(ctx context.Context, queries []Query, cb StreamCallbacks
 // until EOF or ctx cancellation. Used to resolve server-only predicates
 // (trusted/verified) into a CID set applied to cached records.
 func (c *Client) MatchingCIDs(ctx context.Context, queries []Query) ([]string, error) {
-	rpcQueries := make([]*searchv1.RecordQuery, 0, len(queries))
-	for _, q := range queries {
-		rpcQueries = append(rpcQueries, q.toRPC())
-	}
+	rpcQueries := buildRPCQueries(queries)
 
 	req := &searchv1.SearchCIDsRequest{Queries: rpcQueries}
 	result, err := c.c.SearchCIDs(ctx, req)
