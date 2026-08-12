@@ -51,6 +51,13 @@ type menuState struct {
 	view    string // the gocui view name this menu is rendered in
 }
 
+// syncStatusEntry is a single transient sync-status overlay record: the
+// in-flight status of a synced CID plus an optional error message.
+type syncStatusEntry struct {
+	status dirclient.RecordStatus
+	err    string
+}
+
 // appState holds all mutable application state. Fields are only mutated on
 // the GUI goroutine (inside g.Update callbacks or key handlers).
 type appState struct {
@@ -60,10 +67,10 @@ type appState struct {
 	dataFetchedAt time.Time
 
 	// Publish enrichment. RecordSummary.Published is filled in the background
-	// from RoutingService.List after a records stream completes. publishEnriched
-	// is true once resolution completed for the current fullCache;
-	// publishEnriching guards against concurrent resolutions; publishCancel
-	// stops an in-flight resolution.
+	// from RoutingService.List after the first page lands. publishEnriched is
+	// true once resolution completed for the current server; publishEnriching
+	// guards against concurrent resolutions; publishCancel stops an in-flight
+	// resolution.
 	publishEnriched  bool
 	publishEnriching bool
 	publishCancel    context.CancelFunc
@@ -72,6 +79,10 @@ type appState struct {
 	// snapshot predates the change. Each entry is dropped once the server set
 	// agrees with it (self-healing). Cleared on server switch.
 	publishOverrides map[string]bool
+	// publishedCIDs is the last-known published set from enrichment, retained so
+	// pages appended later by loadNextPage (or a rebuild) can be colored without
+	// re-querying the routing service. Cleared on server switch.
+	publishedCIDs map[string]bool
 
 	// Connections panel cursor (0 = Directory, 1 = OASF)
 	connCursor int
@@ -103,18 +114,12 @@ type appState struct {
 	// Auth popup content (for dynamic sizing via popupContentSize)
 	authPopupText string
 
-	// fullCache holds every record received from the unfiltered server stream.
-	// Client-side filters narrow this into records; a new server stream is
-	// only started on explicit refresh or server change.
-	fullCache []*dirclient.RecordSummary
+	// syncStatus is a transient per-CID overlay of in-flight sync state, keyed by
+	// record CID. It decorates matching rows in the current page; it is NOT a
+	// record store. Cleared when a reconcile refetch lands or on server switch.
+	syncStatus map[string]syncStatusEntry
 
-	// records holds the subset of fullCache that matches the current
-	// server-side filter selection (or all of fullCache when no Trusted/
-	// Verified filter is active). filteredRecords is the further subset
-	// after the local name query.
-	records         []*dirclient.RecordSummary
-	filteredRecords []*dirclient.RecordSummary
-	recordCursor    int
+	recordCursor int
 
 	// recordDisplayRows are the flat display rows for the records panel: one
 	// row per record in the current page (no version grouping).
@@ -807,7 +812,7 @@ func (app *Gui) startQuery(resetCursor bool) {
 			app.renderFiltersView(g)
 			app.renderDirectory(g)
 			// Only the cursor-resetting (explicit) path moves the preview;
-			// applyFiltersSilent (background reconciliation) must stay silent.
+			// the resetCursor=false path (background reconciliation) stays silent.
 			if resetCursor {
 				app.autoPreviewRecord(g)
 			}
@@ -870,10 +875,6 @@ func (app *Gui) pageSize() int {
 // resetting the cursor to the first row.
 func (app *Gui) applyFilters() { app.startQuery(true) }
 
-// applyFiltersSilent re-runs the server-side query while preserving the cursor
-// position. Used during background sync/publish reconciliation.
-func (app *Gui) applyFiltersSilent() { app.startQuery(false) }
-
 // ingestPageOptions feeds filter-option values from a fetched page into the
 // aggregator. INTERIM (Phase 1): options are only as complete as the pages
 // loaded so far. Phase 2 replaces this with ListRecordValues (present-only,
@@ -887,10 +888,10 @@ func (app *Gui) ingestPageOptions(recs []*dirclient.RecordSummary) {
 	}
 }
 
-// syncCounts returns the number of records in fullCache that are syncing vs reconciling.
+// syncCounts returns the number of overlay entries that are syncing vs reconciling.
 func (app *Gui) syncCounts() (syncing, reconciling int) {
-	for _, r := range app.state.fullCache {
-		switch r.Status {
+	for _, e := range app.state.syncStatus {
+		switch e.status {
 		case dirclient.StatusSyncing:
 			syncing++
 		case dirclient.StatusReconciling:
@@ -900,7 +901,7 @@ func (app *Gui) syncCounts() (syncing, reconciling int) {
 	return
 }
 
-// hasSyncingRecords returns true if any record in fullCache is still syncing or reconciling.
+// hasSyncingRecords returns true if any overlay entry is still syncing or reconciling.
 func (app *Gui) hasSyncingRecords() bool {
 	s, r := app.syncCounts()
 	return s+r > 0
@@ -924,6 +925,12 @@ func (app *Gui) clearClipboard() {
 // row per record, in server (recency) order; no cross-version grouping. The
 // cursor is clamped to remain within the new row set.
 func (app *Gui) rebuildRecordRows() {
+	// Color pages appended after enrichment (and rebuilt pages) from the
+	// last-known published set; overrides re-apply any pending optimistic toggle.
+	if app.state.publishedCIDs != nil {
+		markPublished(app.state.page.records, app.state.publishedCIDs)
+		app.applyPublishOverrides(app.state.publishedCIDs)
+	}
 	rows := make([]recordDisplayRow, 0, len(app.state.page.records))
 	for _, r := range app.state.page.records {
 		rows = append(rows, recordDisplayRow{record: r})

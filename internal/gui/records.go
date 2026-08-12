@@ -16,6 +16,17 @@ import (
 
 // ── Records panel handlers ────────────────────────────────────────────────────
 
+// recordStatus returns the effective transient status of a record by CID from
+// the sync-status overlay. Records fetched via Page always carry StatusLocal,
+// so the overlay is the sole source of in-flight status; absent an entry the
+// record is treated as local.
+func (app *Gui) recordStatus(cid string) (dirclient.RecordStatus, string) {
+	if e, ok := app.state.syncStatus[cid]; ok {
+		return e.status, e.err
+	}
+	return dirclient.StatusLocal, ""
+}
+
 // cursorRecord returns the record under the current cursor position, or nil
 // if the cursor is on a group header, sync-pending row, or out of range.
 func (app *Gui) cursorRecord() *dirclient.RecordSummary {
@@ -223,7 +234,7 @@ func (app *Gui) recordDelete(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 
-	if r.Status != dirclient.StatusLocal {
+	if status, _ := app.recordStatus(r.CID); status != dirclient.StatusLocal {
 		return app.recordDeleteSync(g)
 	}
 
@@ -270,7 +281,7 @@ func (app *Gui) cancelSync() {
 		app.removeRecordsByStatus(dirclient.StatusSyncing)
 		app.removeRecordsByStatus(dirclient.StatusReconciling)
 		app.clearSyncState()
-		app.applyFiltersSilent()
+		app.renderRecordsView(g)
 		app.renderStatus(g)
 		return nil
 	})
@@ -307,12 +318,12 @@ func (app *Gui) deleteRecord(cid string) {
 	})
 }
 
-// setRecordPublished flips the Published flag of the fullCache record with the
-// given CID and records the change as an optimistic override so a concurrent
+// setRecordPublished flips the Published flag of the current-page record with
+// the given CID and records the change as an optimistic override so a concurrent
 // enrichment with a stale snapshot cannot clobber it (see applyPublishOverrides).
 // Must be called on the GUI goroutine.
 func (app *Gui) setRecordPublished(cid string, published bool) {
-	for _, r := range app.state.fullCache {
+	for _, r := range app.state.page.records {
 		if r.CID == cid {
 			r.Published = published
 			break
@@ -336,7 +347,7 @@ func (app *Gui) applyPublishOverrides(set map[string]bool) {
 			delete(app.state.publishOverrides, cid)
 			continue
 		}
-		for _, r := range app.state.fullCache {
+		for _, r := range app.state.page.records {
 			if r.CID == cid {
 				r.Published = want
 				break
@@ -353,7 +364,7 @@ func (app *Gui) recordPublish(g *gocui.Gui, v *gocui.View) error {
 	if r == nil || r.CID == "" || app.state.client == nil {
 		return nil
 	}
-	if r.Status != dirclient.StatusLocal || r.Published {
+	if status, _ := app.recordStatus(r.CID); status != dirclient.StatusLocal || r.Published {
 		return nil
 	}
 
@@ -421,7 +432,6 @@ func (app *Gui) publishRecord(cid string) {
 			return nil
 		}
 		app.setRecordPublished(cid, true)
-		app.applyFiltersSilent()
 		app.renderRecordsView(g)
 		return nil
 	})
@@ -447,20 +457,17 @@ func (app *Gui) unpublishRecord(cid string) {
 			return nil
 		}
 		app.setRecordPublished(cid, false)
-		app.applyFiltersSilent()
 		app.renderRecordsView(g)
 		return nil
 	})
 }
 
-// removeRecordFromState purges a record by CID from the current page (and the
-// vestigial fullCache/records/filteredRecords slices) and rebuilds the flat
-// display rows so the deleted record disappears immediately without a refetch.
+// removeRecordFromState purges a record by CID from the current page and any
+// stale sync-status overlay entry, then rebuilds the flat display rows so the
+// deleted record disappears immediately without a refetch.
 func (app *Gui) removeRecordFromState(cid string) {
 	app.state.page.records = removeRecordByCID(app.state.page.records, cid)
-	app.state.fullCache = removeRecordByCID(app.state.fullCache, cid)
-	app.state.records = removeRecordByCID(app.state.records, cid)
-	app.state.filteredRecords = removeRecordByCID(app.state.filteredRecords, cid)
+	delete(app.state.syncStatus, cid)
 	app.rebuildRecordRows()
 }
 
@@ -583,34 +590,27 @@ func (app *Gui) clipboardPaste(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-// startSync injects clipboard records into fullCache with StatusSyncing,
+// startSync marks the clipboard CIDs as syncing in the transient overlay,
 // clears the clipboard, and kicks off the sync operation in the background.
+// Records being pasted from another server are not on this server yet, so they
+// do not appear as rows until reconcile + refetch — the sync-progress popup
+// provides feedback in the meantime.
 func (app *Gui) startSync(g *gocui.Gui) {
 	sourceURL := app.state.clipboardSourceURL
 
-	existingCIDs := map[string]bool{}
-	for _, r := range app.state.fullCache {
-		existingCIDs[r.CID] = true
-	}
-
 	cids := make([]string, 0, len(app.state.clipboard))
-	for cid, snap := range app.state.clipboard {
+	for cid := range app.state.clipboard {
 		cids = append(cids, cid)
-		if existingCIDs[cid] {
-			continue
-		}
-		r := *snap
-		r.Status = dirclient.StatusSyncing
-		app.state.fullCache = append(app.state.fullCache, &r)
 	}
 
+	app.setRecordStatus(cids, dirclient.StatusSyncing, "")
 	app.state.syncCIDs = cids
 	app.clearClipboard()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	app.state.syncCancelFunc = cancel
 
-	app.applyFiltersSilent()
+	app.renderRecordsView(g)
 	app.renderStatus(g)
 
 	go app.runSync(ctx, sourceURL, cids)
@@ -660,7 +660,7 @@ func (app *Gui) pollSync(ctx context.Context, client *dirclient.Client, syncID s
 		case dirclient.SyncCompleted:
 			app.g.Update(func(g *gocui.Gui) error {
 				app.setRecordStatus(app.state.syncCIDs, dirclient.StatusReconciling, "")
-				app.applyFiltersSilent()
+				app.renderRecordsView(g)
 				app.renderStatus(g)
 				return nil
 			})
@@ -681,18 +681,15 @@ func (app *Gui) pollSync(ctx context.Context, client *dirclient.Client, syncID s
 	}
 }
 
-// setRecordStatus updates the Status (and optionally StatusError) of all
-// records in fullCache whose CID is in the given list.
+// setRecordStatus sets the transient sync-status overlay entry for each of the
+// given CIDs (overwriting any existing entry). Must be called on the GUI
+// goroutine.
 func (app *Gui) setRecordStatus(cids []string, status dirclient.RecordStatus, errMsg string) {
-	cidSet := map[string]bool{}
-	for _, c := range cids {
-		cidSet[c] = true
+	if app.state.syncStatus == nil {
+		app.state.syncStatus = map[string]syncStatusEntry{}
 	}
-	for _, r := range app.state.fullCache {
-		if cidSet[r.CID] {
-			r.Status = status
-			r.StatusError = errMsg
-		}
+	for _, c := range cids {
+		app.state.syncStatus[c] = syncStatusEntry{status: status, err: errMsg}
 	}
 }
 
@@ -706,7 +703,7 @@ func markPublished(records []*dirclient.RecordSummary, set map[string]bool) {
 }
 
 // startPublishEnrichment resolves the published-CID set from the server in the
-// background and stamps the matching fullCache records. No-op if already
+// background and stamps the matching current-page records. No-op if already
 // enriched, already running, or no client. Failures (e.g. a server without
 // routing support) leave publishEnriched false and show no error — publish
 // coloring simply does not appear. Must be called on the GUI goroutine.
@@ -732,10 +729,10 @@ func (app *Gui) startPublishEnrichment() {
 				// degrade silently.
 				return nil
 			}
-			markPublished(app.state.fullCache, set)
+			app.state.publishedCIDs = set
+			markPublished(app.state.page.records, set)
 			app.applyPublishOverrides(set)
 			app.state.publishEnriched = true
-			app.applyFiltersSilent()
 			app.renderRecordsView(g)
 			app.renderFiltersView(g)
 			return nil
@@ -754,15 +751,23 @@ func (app *Gui) syncFailed(msg string) {
 		app.openInfoPopup(g, viewRecords)
 		_, _ = g.SetCurrentView(viewInfoPopup)
 		app.renderInfoPopup(g)
-		app.applyFiltersSilent()
+		app.renderRecordsView(g)
 		app.renderStatus(g)
 		return nil
 	})
 }
 
-// pollReconcile periodically does a silent records refresh (preserving cursor)
-// and promotes reconciling records to local once they appear in the stream.
+// pollReconcile waits for the just-synced records to appear in the server's
+// index, then clears their transient sync-status overlay and refetches the
+// current page so they render as normal server rows. It runs on a background
+// goroutine; every state read/write goes through app.g.Update to stay on the
+// GUI goroutine. Cancellation (user cancel / server switch) arrives via ctx.
 func (app *Gui) pollReconcile(ctx context.Context) {
+	client := app.state.client
+	if client == nil {
+		return
+	}
+
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
@@ -772,115 +777,60 @@ func (app *Gui) pollReconcile(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-timeout:
+			app.syncFailed("Reconciliation timed out — records were synced but the indexer has not picked them up yet. They may appear after a manual refresh (r).")
+			return
 		case <-ticker.C:
-			app.silentRefreshRecords(ctx)
+		}
 
+		// A CID-only search is a cheap way to ask "has the indexer picked these
+		// up yet?" without pulling full records.
+		cids, err := client.MatchingCIDs(ctx, nil)
+		if err != nil {
+			continue // transient; retry on the next tick until the timeout fires
+		}
+		present := make(map[string]bool, len(cids))
+		for _, c := range cids {
+			present[c] = true
+		}
+
+		reconciled := make(chan bool, 1)
+		app.g.Update(func(g *gocui.Gui) error {
+			// Drop overlay entries whose CID now exists on the server.
+			for cid, e := range app.state.syncStatus {
+				switch e.status {
+				case dirclient.StatusSyncing, dirclient.StatusReconciling:
+					if present[cid] {
+						delete(app.state.syncStatus, cid)
+					}
+				}
+			}
+			reconciled <- !app.hasSyncingRecords()
+			return nil
+		})
+
+		if <-reconciled {
 			app.g.Update(func(g *gocui.Gui) error {
-				app.promoteReconciledRecords()
-				app.applyFiltersSilent()
+				app.clearSyncState()
+				// Refetch the current page so the synced records land as regular
+				// server rows (with fresh publish/option data).
+				app.startQuery(false)
 				app.renderStatus(g)
 				return nil
 			})
-
-			if !app.hasSyncingRecords() {
-				app.g.Update(func(g *gocui.Gui) error {
-					app.clearSyncState()
-					return nil
-				})
-				return
-			}
-		case <-timeout:
-			app.syncFailed("Reconciliation timed out — records were synced but the indexer has not picked them up yet. They may appear after a manual refresh (r).")
 			return
 		}
 	}
 }
 
-// silentRefreshRecords does a blocking records fetch without resetting the
-// cursor or the UI state. It merges fresh data into fullCache, replacing
-// placeholder (syncing/reconciling) entries with real server data when
-// their CID appears in the stream.
-func (app *Gui) silentRefreshRecords(ctx context.Context) {
-	client := app.state.client
-	if client == nil {
-		return
-	}
-
-	done := make(chan struct{})
-	var allRecords []*dirclient.RecordSummary
-
-	client.Stream(ctx, nil, dirclient.StreamCallbacks{
-		OnFirstPage: func(summaries []*dirclient.RecordSummary) {
-			allRecords = append(allRecords, summaries...)
-		},
-		OnBatch: func(batch []*dirclient.RecordSummary) {
-			allRecords = append(allRecords, batch...)
-		},
-		OnDone: func(_ error) {
-			close(done)
-		},
-	})
-
-	select {
-	case <-done:
-	case <-ctx.Done():
-		return
-	}
-
-	freshCIDs := make(map[string]bool, len(allRecords))
-	for _, r := range allRecords {
-		freshCIDs[r.CID] = true
-	}
-
-	app.g.Update(func(g *gocui.Gui) error {
-		// Use fresh server records as the base; append any pending (non-local)
-		// records that haven't appeared in the stream yet.
-		result := make([]*dirclient.RecordSummary, 0, len(allRecords))
-		result = append(result, allRecords...)
-		for _, r := range app.state.fullCache {
-			if r.Status != dirclient.StatusLocal && !freshCIDs[r.CID] {
-				result = append(result, r)
-			}
-		}
-
-		app.state.fullCache = result
-		app.state.filterValues = newFilterValueAggregator()
-		for _, r := range result {
-			app.state.filterValues.add(r)
-		}
-		return nil
-	})
-}
-
-// promoteReconciledRecords marks reconciling records as local if they now
-// appear in fullCache with StatusLocal (i.e. from the fresh stream).
-func (app *Gui) promoteReconciledRecords() {
-	localCIDs := map[string]bool{}
-	for _, r := range app.state.fullCache {
-		if r.Status == dirclient.StatusLocal {
-			localCIDs[r.CID] = true
-		}
-	}
-	// Remove reconciling entries whose CID now has a local version
-	remaining := app.state.fullCache[:0]
-	for _, r := range app.state.fullCache {
-		if r.Status == dirclient.StatusReconciling && localCIDs[r.CID] {
-			continue
-		}
-		remaining = append(remaining, r)
-	}
-	app.state.fullCache = remaining
-}
-
-// removeRecordsByStatus removes all records with the given status from fullCache.
+// removeRecordsByStatus deletes all sync-status overlay entries with the given
+// status. Must be called on the GUI goroutine.
 func (app *Gui) removeRecordsByStatus(status dirclient.RecordStatus) {
-	remaining := app.state.fullCache[:0]
-	for _, r := range app.state.fullCache {
-		if r.Status != status {
-			remaining = append(remaining, r)
+	for cid, e := range app.state.syncStatus {
+		if e.status == status {
+			delete(app.state.syncStatus, cid)
 		}
 	}
-	app.state.fullCache = remaining
 }
 
 // clipboardClear removes all records from the clipboard.

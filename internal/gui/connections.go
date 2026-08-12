@@ -203,9 +203,8 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.classEntries = nil
 	app.state.classEntriesVers = nil
 
-	app.state.fullCache = nil
-	app.state.records = nil
-	app.state.filteredRecords = nil
+	app.state.syncStatus = nil
+	app.state.publishedCIDs = nil
 	app.state.recordDisplayRows = nil
 	app.state.filterValues = newFilterValueAggregator()
 	app.state.dataFetchedAt = time.Time{}

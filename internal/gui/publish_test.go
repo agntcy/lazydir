@@ -34,21 +34,21 @@ func TestSetRecordPublished(t *testing.T) {
 	t.Parallel()
 
 	app := &Gui{}
-	app.state.fullCache = []*dirclient.RecordSummary{
+	app.state.page.records = []*dirclient.RecordSummary{
 		{CID: "a"},
 		{CID: "b"},
 	}
 
 	app.setRecordPublished("b", true)
-	if app.state.fullCache[0].Published {
+	if app.state.page.records[0].Published {
 		t.Errorf("record a: Published = true, want false")
 	}
-	if !app.state.fullCache[1].Published {
+	if !app.state.page.records[1].Published {
 		t.Errorf("record b: Published = false, want true")
 	}
 
 	app.setRecordPublished("b", false)
-	if app.state.fullCache[1].Published {
+	if app.state.page.records[1].Published {
 		t.Errorf("record b after unpublish: Published = true, want false")
 	}
 }
@@ -61,16 +61,16 @@ func TestPublishOverrideSurvivesStaleEnrichment(t *testing.T) {
 	t.Parallel()
 
 	app := &Gui{}
-	app.state.fullCache = []*dirclient.RecordSummary{{CID: "x"}}
+	app.state.page.records = []*dirclient.RecordSummary{{CID: "x"}}
 	app.setRecordPublished("x", true) // optimistic publish
 
 	// Stale enrichment: the server's routing index has not caught up, so the
 	// returned set does not yet include "x".
 	staleSet := map[string]bool{}
-	markPublished(app.state.fullCache, staleSet)
+	markPublished(app.state.page.records, staleSet)
 	app.applyPublishOverrides(staleSet)
 
-	if !app.state.fullCache[0].Published {
+	if !app.state.page.records[0].Published {
 		t.Error("stale enrichment clobbered optimistic publish; want Published=true")
 	}
 }
@@ -82,14 +82,14 @@ func TestUnpublishOverrideSurvivesStaleEnrichment(t *testing.T) {
 	t.Parallel()
 
 	app := &Gui{}
-	app.state.fullCache = []*dirclient.RecordSummary{{CID: "x", Published: true}}
+	app.state.page.records = []*dirclient.RecordSummary{{CID: "x", Published: true}}
 	app.setRecordPublished("x", false) // optimistic unpublish
 
 	staleSet := map[string]bool{"x": true} // index still shows it published
-	markPublished(app.state.fullCache, staleSet)
+	markPublished(app.state.page.records, staleSet)
 	app.applyPublishOverrides(staleSet)
 
-	if app.state.fullCache[0].Published {
+	if app.state.page.records[0].Published {
 		t.Error("stale enrichment clobbered optimistic unpublish; want Published=false")
 	}
 }
@@ -101,14 +101,14 @@ func TestPublishOverrideClearsWhenServerAgrees(t *testing.T) {
 	t.Parallel()
 
 	app := &Gui{}
-	app.state.fullCache = []*dirclient.RecordSummary{{CID: "x"}}
+	app.state.page.records = []*dirclient.RecordSummary{{CID: "x"}}
 	app.setRecordPublished("x", true)
 
 	set := map[string]bool{"x": true} // server has caught up
-	markPublished(app.state.fullCache, set)
+	markPublished(app.state.page.records, set)
 	app.applyPublishOverrides(set)
 
-	if !app.state.fullCache[0].Published {
+	if !app.state.page.records[0].Published {
 		t.Error("record x: Published = false, want true")
 	}
 	if _, ok := app.state.publishOverrides["x"]; ok {

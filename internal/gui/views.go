@@ -218,7 +218,7 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		}
 
 		statusColor := ""
-		switch rec.Status {
+		switch status, _ := app.recordStatus(rec.CID); status {
 		case dirclient.StatusSyncing, dirclient.StatusReconciling:
 			statusColor = yellow
 		case dirclient.StatusFailed:
