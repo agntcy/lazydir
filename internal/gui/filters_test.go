@@ -364,3 +364,48 @@ func TestMatchesTrustedVerified(t *testing.T) {
 		t.Error("include verified should keep a verified record")
 	}
 }
+
+func TestBuildServerQueries_IncludeExclude(t *testing.T) {
+	fs := filterState{applied: map[filterCategory]map[string]filterMode{
+		filterSkills:  {"nlp": modeInclude},
+		filterDomains: {"finance": modeExclude},
+	}}
+	got := buildServerQueries(fs, "")
+
+	want := map[dirclient.FilterCategory]dirclient.Query{
+		dirclient.FilterSkill:  {Category: dirclient.FilterSkill, Value: "nlp", Negate: false},
+		dirclient.FilterDomain: {Category: dirclient.FilterDomain, Value: "finance", Negate: true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d queries, got %d", len(want), len(got))
+	}
+	for _, q := range got {
+		if want[q.Category] != q {
+			t.Errorf("unexpected query: %+v", q)
+		}
+	}
+}
+
+func TestBuildServerQueries_TrustedVerified(t *testing.T) {
+	fs := filterState{applied: map[filterCategory]map[string]filterMode{
+		filterTrustedVerified: {"trusted": modeInclude, "verified": modeExclude},
+	}}
+	got := buildServerQueries(fs, "")
+	seen := map[dirclient.FilterCategory]dirclient.Query{}
+	for _, q := range got {
+		seen[q.Category] = q
+	}
+	if q := seen[dirclient.FilterTrusted]; q.Value != valueTrue || q.Negate {
+		t.Errorf("trusted mapping wrong: %+v", q)
+	}
+	if q := seen[dirclient.FilterVerified]; q.Value != valueTrue || !q.Negate {
+		t.Errorf("verified mapping wrong: %+v", q)
+	}
+}
+
+func TestBuildServerQueries_NameWildcard(t *testing.T) {
+	got := buildServerQueries(filterState{applied: map[filterCategory]map[string]filterMode{}}, "assistant")
+	if len(got) != 1 || got[0].Category != dirclient.FilterName || got[0].Value != "*assistant*" {
+		t.Fatalf("unexpected name query: %+v", got)
+	}
+}

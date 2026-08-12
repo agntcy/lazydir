@@ -305,6 +305,12 @@ func (app *Gui) listRows() []listRow {
 	return rows
 }
 
+const (
+	optTrusted  = "trusted"
+	optVerified = "verified"
+	valueTrue   = "true"
+)
+
 func categoryToFilter(c filterCategory) dirclient.FilterCategory {
 	switch c {
 	case filterSkills:
@@ -321,6 +327,37 @@ func categoryToFilter(c filterCategory) dirclient.FilterCategory {
 		return dirclient.FilterAuthor
 	}
 	return dirclient.FilterSkill
+}
+
+// buildServerQueries translates the applied tri-state selection and the name
+// query into server-side dirclient predicates. Include -> positive query;
+// Exclude -> Negate. Trusted/Verified map to their own categories with value
+// "true". The name query becomes a wildcarded NAME predicate.
+func buildServerQueries(fs filterState, nameQuery string) []dirclient.Query {
+	var qs []dirclient.Query
+	for _, cat := range allFilterCategories {
+		if cat == filterTrustedVerified {
+			continue
+		}
+		for value, mode := range fs.applied[cat] {
+			qs = append(qs, dirclient.Query{
+				Category: categoryToFilter(cat),
+				Value:    value,
+				Negate:   mode == modeExclude,
+			})
+		}
+	}
+	for value, mode := range fs.applied[filterTrustedVerified] {
+		cat := dirclient.FilterTrusted
+		if value == optVerified {
+			cat = dirclient.FilterVerified
+		}
+		qs = append(qs, dirclient.Query{Category: cat, Value: valueTrue, Negate: mode == modeExclude})
+	}
+	if nameQuery != "" {
+		qs = append(qs, dirclient.Query{Category: dirclient.FilterName, Value: "*" + nameQuery + "*"})
+	}
+	return qs
 }
 
 // filteredListRows returns the rows to display. When no query is active it
