@@ -59,6 +59,12 @@ func (app *Gui) recordCursorDown(g *gocui.Gui, v *gocui.View) error {
 		app.renderRecordsView(g)
 		app.autoPreviewRecord(g)
 	}
+	// Prefetch the next page as the cursor nears the end of the loaded rows.
+	const prefetchThreshold = 5
+	if !app.state.page.exhausted && !app.state.page.loading &&
+		app.state.recordCursor >= len(app.state.recordDisplayRows)-prefetchThreshold {
+		app.loadNextPage()
+	}
 	return nil
 }
 

@@ -142,6 +142,10 @@ type appState struct {
 	// (accumulated pages, offset, total, exhausted/loading flags).
 	page pageState
 
+	// queryGen is a monotonic query generation; loadNextPage drops results
+	// from a superseded query.
+	queryGen uint64
+
 	// records-stream lifecycle
 	stream     streamState
 	streamErr  string
@@ -759,6 +763,7 @@ func (app *Gui) startQuery(resetCursor bool) {
 	pageSize := app.pageSize()
 
 	app.state.page.reset()
+	app.state.queryGen++
 	app.state.page.loading = true
 	if resetCursor {
 		app.state.recordCursor = 0
@@ -830,9 +835,7 @@ func (app *Gui) startQuery(resetCursor bool) {
 }
 
 // loadNextPage fetches and appends the next page unless already loading or
-// exhausted. Wired to the records-panel scroll trigger in a later task.
-//
-//nolint:unused // consumed by the scroll trigger (a subsequent phase-1 task)
+// exhausted. Wired to the records-panel scroll trigger.
 func (app *Gui) loadNextPage() {
 	client := app.state.client
 	if client == nil || app.state.page.loading || app.state.page.exhausted {
@@ -843,14 +846,19 @@ func (app *Gui) loadNextPage() {
 	offset := app.state.page.offset
 	app.state.page.loading = true
 
-	// Next-page fetches are not cancelled by cursor moves — only superseded by a
-	// new startQuery, which discards the accumulated page state on the next
-	// rebuild — so this fetch uses a background context.
+	// Next-page fetches are not cancelled by cursor moves — only superseded by
+	// a new startQuery. A superseded fetch is detected via the queryGen guard
+	// below (rather than context cancellation), so this fetch uses a
+	// background context.
 	ctx := context.Background()
+	gen := app.state.queryGen
 
 	go func() {
 		recs, exhausted, err := client.Page(ctx, queries, uint32(pageSize), offset)
 		app.g.Update(func(g *gocui.Gui) error {
+			if gen != app.state.queryGen {
+				return nil // superseded by a newer query; drop these results
+			}
 			app.state.page.loading = false
 			if err != nil {
 				app.state.streamErr = err.Error()
