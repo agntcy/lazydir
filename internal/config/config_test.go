@@ -223,3 +223,23 @@ server:
 		t.Errorf("OASFServers = %v, want [https://test.example.com]", cfg.Server.OASFServers)
 	}
 }
+
+func TestPageSize_Default(t *testing.T) {
+	if got := (Config{}).PageSize(); got != 50 {
+		t.Fatalf("expected default 50, got %d", got)
+	}
+}
+
+func TestPageSize_Explicit(t *testing.T) {
+	c := Config{Pagination: PaginationConfig{PageSize: 25}}
+	if got := c.PageSize(); got != 25 {
+		t.Fatalf("expected 25, got %d", got)
+	}
+}
+
+func TestPageSize_LegacyStreamFallback(t *testing.T) {
+	c := Config{Stream: StreamConfig{FirstPageSize: 30}}
+	if got := c.PageSize(); got != 30 {
+		t.Fatalf("expected legacy fallback 30, got %d", got)
+	}
+}

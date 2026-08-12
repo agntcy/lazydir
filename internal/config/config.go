@@ -13,11 +13,19 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+const defaultPageSize = 50
+
+// PaginationConfig controls server-side pagination.
+type PaginationConfig struct {
+	PageSize int `yaml:"pageSize"`
+}
+
 // Config mirrors the YAML structure of ~/.config/lazydir/config.yml.
 type Config struct {
-	GUI    GUIConfig    `yaml:"gui"`
-	Server ServerConfig `yaml:"server"`
-	Stream StreamConfig `yaml:"stream"`
+	GUI        GUIConfig        `yaml:"gui"`
+	Server     ServerConfig     `yaml:"server"`
+	Stream     StreamConfig     `yaml:"stream"`
+	Pagination PaginationConfig `yaml:"pagination"`
 }
 
 // GUIConfig groups all visual/TUI settings.
@@ -143,9 +151,22 @@ func (s ServerConfig) ResolveOASFServers() []string {
 }
 
 // StreamConfig controls record streaming batch sizes.
+// Deprecated: use Pagination.PageSize instead.
 type StreamConfig struct {
 	FirstPageSize int `yaml:"firstPageSize"`
 	BatchSize     int `yaml:"batchSize"`
+}
+
+// PageSize resolves the effective page size, honoring the deprecated
+// stream.firstPageSize, falling back to the default.
+func (c Config) PageSize() int {
+	if c.Pagination.PageSize > 0 {
+		return c.Pagination.PageSize
+	}
+	if c.Stream.FirstPageSize > 0 {
+		return c.Stream.FirstPageSize
+	}
+	return defaultPageSize
 }
 
 // Dir returns the lazydir configuration directory, respecting XDG_CONFIG_HOME.
