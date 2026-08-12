@@ -149,6 +149,55 @@ func (c *Client) Count(ctx context.Context, queries []Query) (uint32, error) {
 	return resp.GetTotalCount(), nil
 }
 
+// Page fetches a single page of records matching queries using server-side
+// limit/offset pagination. exhausted is true when the server returned fewer
+// than limit raw records, meaning there is no further page. The raw count
+// (not the extracted-summary count) drives exhausted, so records dropped by
+// extractSummary do not cause premature termination.
+func (c *Client) Page(ctx context.Context, queries []Query, limit, offset uint32) ([]*RecordSummary, bool, error) {
+	l, o := limit, offset
+	req := &searchv1.SearchRecordsRequest{
+		Queries: buildRPCQueries(queries),
+		Limit:   &l,
+		Offset:  &o,
+	}
+	result, err := c.c.SearchRecords(ctx, req)
+	if err != nil {
+		return nil, false, fmt.Errorf("searching records: %w", err)
+	}
+
+	var summaries []*RecordSummary
+	var rawCount uint32
+	resCh := result.ResCh()
+	errCh := result.ErrCh()
+	for {
+		select {
+		case resp, ok := <-resCh:
+			if !ok {
+				return summaries, rawCount < limit, nil
+			}
+			if rec := resp.GetRecord(); rec != nil {
+				rawCount++
+				if s := extractSummary(rec); s != nil {
+					summaries = append(summaries, s)
+				}
+			}
+		case streamErr, ok := <-errCh:
+			if !ok {
+				errCh = nil
+				continue
+			}
+			if streamErr != nil {
+				return nil, false, fmt.Errorf("receiving record: %w", streamErr)
+			}
+		case <-result.DoneCh():
+			return summaries, rawCount < limit, nil
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		}
+	}
+}
+
 // FilterCategory identifies a server-side filter predicate. Each value maps
 // 1:1 to a RecordQueryType in the agntcy.dir.search.v1 protobuf API.
 type FilterCategory int

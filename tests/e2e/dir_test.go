@@ -218,6 +218,42 @@ func TestDir_Count(t *testing.T) {
 	t.Logf("counted %d records", total)
 }
 
+func TestDir_Page(t *testing.T) {
+	addr := requireDaemon(t)
+	dirctl := dirctlBin(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	seedRecord(t, ctx, addr, dirctl)
+	seedRecord(t, ctx, addr, dirctl)
+
+	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
+	if err != nil {
+		t.Fatalf("Connect(%s): %v", addr, err)
+	}
+	defer c.Close()
+
+	first, exhausted, err := c.Page(ctx, nil, 1, 0)
+	if err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	if len(first) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(first))
+	}
+	if exhausted {
+		t.Error("expected not exhausted with 2+ records and limit 1")
+	}
+
+	none, exhausted, err := c.Page(ctx, nil, 1, 1_000_000)
+	if err != nil {
+		t.Fatalf("Page(large offset): %v", err)
+	}
+	if len(none) != 0 || !exhausted {
+		t.Errorf("expected empty+exhausted past the end, got %d exhausted=%v", len(none), exhausted)
+	}
+}
+
 func TestDir_PushAndPull(t *testing.T) {
 	addr := requireDaemon(t)
 	dirctl := dirctlBin(t)
