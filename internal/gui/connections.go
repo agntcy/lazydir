@@ -189,6 +189,16 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.publishEnriching = false
 	app.state.publishOverrides = nil
 
+	// Cancel any in-flight sync pollers (runSync/pollSync/pollReconcile) so they
+	// do not bleed into the new server, and reset the sync tracking fields. The
+	// pollers' g.Update closures are ctx-guarded, so a late update after this
+	// cancel becomes a no-op instead of writing stale CIDs or popping a stale
+	// "Sync failed" / "Reconciliation timed out" popup on the new server.
+	if app.state.syncCancelFunc != nil {
+		app.state.syncCancelFunc()
+	}
+	app.clearSyncState()
+
 	if app.state.client != nil {
 		app.state.client.Close()
 		app.state.client = nil

@@ -620,17 +620,20 @@ func (app *Gui) startSync(g *gocui.Gui) {
 func (app *Gui) runSync(ctx context.Context, sourceURL string, cids []string) {
 	targetClient := app.state.client
 	if targetClient == nil {
-		app.syncFailed("Not connected to target server")
+		app.syncFailed(ctx, "Not connected to target server")
 		return
 	}
 
 	syncID, err := targetClient.CreateSync(ctx, sourceURL, cids)
 	if err != nil {
-		app.syncFailed("Sync failed: " + err.Error())
+		app.syncFailed(ctx, "Sync failed: "+err.Error())
 		return
 	}
 
 	app.g.Update(func(g *gocui.Gui) error {
+		if ctx.Err() != nil {
+			return nil
+		}
 		app.state.syncID = syncID
 		return nil
 	})
@@ -652,19 +655,22 @@ func (app *Gui) pollSync(ctx context.Context, client *dirclient.Client, syncID s
 
 		info, err := client.GetSyncInfo(ctx, syncID)
 		if err != nil {
-			app.syncFailed("Sync status check failed: " + err.Error())
+			app.syncFailed(ctx, "Sync status check failed: "+err.Error())
 			return
 		}
 
 		switch info.Status {
 		case dirclient.SyncCompleted:
 			app.g.Update(func(g *gocui.Gui) error {
+				if ctx.Err() != nil {
+					return nil
+				}
 				app.setRecordStatus(app.state.syncCIDs, dirclient.StatusReconciling, "")
 				app.renderRecordsView(g)
 				app.renderStatus(g)
 				return nil
 			})
-			go app.pollReconcile(ctx)
+			go app.pollReconcile(ctx, client)
 			return
 		case dirclient.SyncFailed:
 			msg := fmt.Sprintf("Sync failed\n\n"+
@@ -675,7 +681,7 @@ func (app *Gui) pollSync(ctx context.Context, client *dirclient.Client, syncID s
 				"Ensure you are authenticated (dirctl auth login).",
 				syncID, info.RemoteDirectoryURL,
 				app.state.serverAddr, info.LastUpdateTime)
-			app.syncFailed(msg)
+			app.syncFailed(ctx, msg)
 			return
 		}
 	}
@@ -740,10 +746,25 @@ func (app *Gui) startPublishEnrichment() {
 	}()
 }
 
-// syncFailed transitions syncing records to failed state and shows an error popup.
-func (app *Gui) syncFailed(msg string) {
+// syncFailed transitions the still-pending synced records to failed state and
+// shows an error popup. It fails only the CIDs still present in the overlay as
+// syncing/reconciling — not the full original syncCIDs — so a timeout after a
+// partial reconcile does not re-mark records that already landed as failed. The
+// ctx guard makes a late call from a cancelled poller (e.g. after a server
+// switch) a no-op instead of popping a stale popup on the new server.
+func (app *Gui) syncFailed(ctx context.Context, msg string) {
 	app.g.Update(func(g *gocui.Gui) error {
-		app.setRecordStatus(app.state.syncCIDs, dirclient.StatusFailed, msg)
+		if ctx.Err() != nil {
+			return nil
+		}
+		pending := make([]string, 0, len(app.state.syncCIDs))
+		for _, cid := range app.state.syncCIDs {
+			switch app.state.syncStatus[cid].status {
+			case dirclient.StatusSyncing, dirclient.StatusReconciling:
+				pending = append(pending, cid)
+			}
+		}
+		app.setRecordStatus(pending, dirclient.StatusFailed, msg)
 		app.state.recordInfoCID = ""
 		app.state.recordInfoText = msg
 		app.state.recordInfoError = true
@@ -762,8 +783,10 @@ func (app *Gui) syncFailed(msg string) {
 // current page so they render as normal server rows. It runs on a background
 // goroutine; every state read/write goes through app.g.Update to stay on the
 // GUI goroutine. Cancellation (user cancel / server switch) arrives via ctx.
-func (app *Gui) pollReconcile(ctx context.Context) {
-	client := app.state.client
+// client is captured on the GUI goroutine (by pollSync) and passed in, so this
+// goroutine never reads app.state.client (which the GUI goroutine may rewrite
+// on a server switch) — avoiding a data race.
+func (app *Gui) pollReconcile(ctx context.Context, client *dirclient.Client) {
 	if client == nil {
 		return
 	}
@@ -778,7 +801,7 @@ func (app *Gui) pollReconcile(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-timeout:
-			app.syncFailed("Reconciliation timed out — records were synced but the indexer has not picked them up yet. They may appear after a manual refresh (r).")
+			app.syncFailed(ctx, "Reconciliation timed out — records were synced but the indexer has not picked them up yet. They may appear after a manual refresh (r).")
 			return
 		case <-ticker.C:
 		}
@@ -796,6 +819,10 @@ func (app *Gui) pollReconcile(ctx context.Context) {
 
 		reconciled := make(chan bool, 1)
 		app.g.Update(func(g *gocui.Gui) error {
+			if ctx.Err() != nil {
+				reconciled <- false
+				return nil
+			}
 			// Drop overlay entries whose CID now exists on the server.
 			for cid, e := range app.state.syncStatus {
 				switch e.status {
@@ -811,6 +838,9 @@ func (app *Gui) pollReconcile(ctx context.Context) {
 
 		if <-reconciled {
 			app.g.Update(func(g *gocui.Gui) error {
+				if ctx.Err() != nil {
+					return nil
+				}
 				app.clearSyncState()
 				// Refetch the current page so the synced records land as regular
 				// server rows (with fresh publish/option data).
