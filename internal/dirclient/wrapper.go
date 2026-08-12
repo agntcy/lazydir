@@ -151,6 +151,7 @@ const (
 	FilterAuthor
 	FilterTrusted
 	FilterVerified
+	FilterName
 )
 
 // Query is one server-side predicate. Multiple Query values combine on the
@@ -158,6 +159,7 @@ const (
 type Query struct {
 	Category FilterCategory
 	Value    string
+	Negate   bool
 }
 
 func (q Query) toRPC() *searchv1.RecordQuery {
@@ -179,8 +181,10 @@ func (q Query) toRPC() *searchv1.RecordQuery {
 		t = searchv1.RecordQueryType_RECORD_QUERY_TYPE_TRUSTED
 	case FilterVerified:
 		t = searchv1.RecordQueryType_RECORD_QUERY_TYPE_VERIFIED
+	case FilterName:
+		t = searchv1.RecordQueryType_RECORD_QUERY_TYPE_NAME
 	}
-	return &searchv1.RecordQuery{Type: t, Value: q.Value}
+	return &searchv1.RecordQuery{Type: t, Value: q.Value, Negate: q.Negate}
 }
 
 const (

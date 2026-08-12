@@ -281,3 +281,24 @@ func TestCollectPublishedCIDs(t *testing.T) {
 		t.Errorf("collectPublishedCIDs = %v, want {cid1, cid2}", got)
 	}
 }
+
+func TestQueryToRPC_Negate(t *testing.T) {
+	q := Query{Category: FilterSkill, Value: "nlp", Negate: true}
+	rpc := q.toRPC()
+	if rpc.GetType() != searchv1.RecordQueryType_RECORD_QUERY_TYPE_SKILL_NAME {
+		t.Fatalf("unexpected type: %v", rpc.GetType())
+	}
+	if !rpc.GetNegate() {
+		t.Error("expected Negate=true on rpc query")
+	}
+}
+
+func TestQueryToRPC_Name(t *testing.T) {
+	rpc := Query{Category: FilterName, Value: "web*"}.toRPC()
+	if rpc.GetType() != searchv1.RecordQueryType_RECORD_QUERY_TYPE_NAME {
+		t.Fatalf("expected NAME type, got %v", rpc.GetType())
+	}
+	if rpc.GetNegate() {
+		t.Error("expected Negate=false by default")
+	}
+}
