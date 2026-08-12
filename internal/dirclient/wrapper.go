@@ -56,8 +56,6 @@ type RecordSummary struct {
 	Modules       []string
 	Status        RecordStatus // lifecycle state; zero = StatusLocal
 	StatusError   string       // error message when Status == StatusFailed
-	Trusted       bool         // lazydir-only; background-enriched via MatchingCIDs
-	Verified      bool         // lazydir-only; background-enriched via MatchingCIDs
 	Published     bool         // lazydir-only; background-enriched via ListPublished
 }
 

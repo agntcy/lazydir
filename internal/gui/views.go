@@ -159,7 +159,7 @@ func (app *Gui) recordsTitle() string {
 	if app.state.filterQuery != "" {
 		title += fmt.Sprintf("  /: %s", app.state.filterQuery)
 	}
-	if app.state.stream == streamDone && !app.state.dataFetchedAt.IsZero() {
+	if app.state.loadedOnce && !app.state.dataFetchedAt.IsZero() {
 		title += fmt.Sprintf("  [⟳ %s]", syncedAgo(app.state.dataFetchedAt))
 	}
 	return title

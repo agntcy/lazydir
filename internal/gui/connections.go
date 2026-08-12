@@ -218,7 +218,7 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.recordDisplayRows = nil
 	app.state.filterValues = newFilterValueAggregator()
 	app.state.dataFetchedAt = time.Time{}
-	app.state.stream = streamLoading
+	app.state.loadedOnce = false
 	app.state.publishEnriched = false
 
 	app.renderDirectory(g)
@@ -261,7 +261,7 @@ func (app *Gui) connectWithOIDC(entry config.DirectoryEntry) {
 		app.g.Update(func(g *gocui.Gui) error {
 			app.state.dirStatus = connFailed
 			app.state.dirError = err.Error()
-			app.state.stream = streamIdle
+			app.state.loadedOnce = false
 			app.renderDirectory(g)
 			app.openInfoPopup(g, viewDirectory)
 			return nil

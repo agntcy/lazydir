@@ -23,6 +23,7 @@ func (p *pageState) reset() {
 	p.totalKnown = false
 	p.offset = 0
 	p.exhausted = false
+	p.loading = false
 }
 
 // appendPage adds a fetched page and advances the offset.

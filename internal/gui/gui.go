@@ -27,17 +27,6 @@ const (
 	connFailed                   // confirmed broken (red ●)
 )
 
-// streamState describes the lifecycle phase of the records stream.
-type streamState int
-
-const (
-	streamIdle      streamState = iota // no client yet, or no stream issued
-	streamLoading                      // first page hasn't arrived yet
-	streamStreaming                    // first page rendered, still receiving the rest
-	streamDone                         // stream finished cleanly
-	streamErrored                      // stream finished with an error
-)
-
 // menuOption describes one selectable row in a popup option menu.
 type menuOption struct {
 	label  string
@@ -133,9 +122,9 @@ type appState struct {
 	// from a superseded query.
 	queryGen uint64
 
-	// records-stream lifecycle
-	stream     streamState
-	streamErr  string
+	// loadedOnce is true once a query has completed (first page landed), used
+	// to gate the "synced N ago" staleness indicator.
+	loadedOnce bool
 	cancelLoad context.CancelFunc
 
 	// inline record info toggle (records panel)
@@ -304,7 +293,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 			app.state.dirStatus = connFailed
 			app.state.dirError = err.Error()
 			app.state.dirLastCfg = &cfg
-			app.state.stream = streamIdle
+			app.state.loadedOnce = false
 			app.renderDirectory(g)
 			app.renderStatus(g)
 			app.openInfoPopup(g, viewDirectory)
@@ -326,19 +315,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		app.state.dirStatus = connTrying
 		app.renderDirectory(g)
 		app.renderStatus(g)
-		// A completed stream means connectToDirectory restored a cached
-		// snapshot (which may legitimately be empty) — display it instantly
-		// rather than refetching.
-		if app.state.stream == streamDone {
-			app.state.dirStatus = connOK
-			app.state.dirLastConnected = time.Now()
-			app.state.dirError = ""
-			app.renderDirectory(g)
-			app.startReconnectLoop()
-			app.startPublishEnrichment()
-		} else {
-			app.startQuery(true)
-		}
+		app.startQuery(true)
 		return nil
 	})
 }
@@ -383,7 +360,7 @@ func (app *Gui) uiRefreshLoop(stop chan struct{}) {
 			return
 		case <-ticker.C:
 			app.g.Update(func(g *gocui.Gui) error {
-				if app.state.stream != streamDone || app.state.dataFetchedAt.IsZero() {
+				if !app.state.loadedOnce || app.state.dataFetchedAt.IsZero() {
 					return nil
 				}
 				v, err := g.View(viewRecords)
@@ -713,19 +690,6 @@ func (app *Gui) pingOASF(client *oasf.Client) {
 	})
 }
 
-// markStreaming advances the records-stream state to streamStreaming when the
-// first page arrives, but only from streamLoading — never regressing a stream
-// that has already finished. When every record fits in the first page,
-// OnFirstPage and OnDone fire back-to-back and gocui's async g.Update can run
-// them out of order; without this guard a late OnFirstPage would clobber
-// streamDone back to streamStreaming, leaving the panel "streaming" forever and
-// hiding the "synced N ago" indicator. Must run on the GUI goroutine.
-func (app *Gui) markStreaming() {
-	if app.state.stream == streamLoading {
-		app.state.stream = streamStreaming
-	}
-}
-
 // startQuery resets pagination and fetches the first page plus the total for
 // the current filter + name-query selection. Runs the fetch on a background
 // goroutine; results are applied on the GUI goroutine via g.Update.
@@ -747,7 +711,6 @@ func (app *Gui) startQuery(resetCursor bool) {
 	if resetCursor {
 		app.state.recordCursor = 0
 	}
-	app.state.streamErr = ""
 
 	if app.state.cancelLoad != nil {
 		app.state.cancelLoad()
@@ -767,7 +730,6 @@ func (app *Gui) startQuery(resetCursor bool) {
 				// The query failed: surface it and start the health/reconnect
 				// loop so the connection can recover (mirrors the old stream's
 				// OnDone error branch).
-				app.state.streamErr = err.Error()
 				app.state.dirStatus = connFailed
 				app.state.dirError = err.Error()
 				app.startReconnectLoop()
@@ -775,7 +737,6 @@ func (app *Gui) startQuery(resetCursor bool) {
 				app.renderDirectory(g)
 				return nil
 			}
-			app.state.streamErr = ""
 			app.state.page.appendPage(recs, exhausted)
 			if cntErr == nil {
 				app.state.page.total = total
@@ -793,7 +754,7 @@ func (app *Gui) startQuery(resetCursor bool) {
 			if app.state.infoPopupPanel == viewDirectory {
 				_ = app.closeInfoPopup(g, nil)
 			}
-			app.state.stream = streamDone
+			app.state.loadedOnce = true
 			app.state.dataFetchedAt = time.Now()
 			app.startReconnectLoop()
 			app.startPublishEnrichment()
@@ -840,7 +801,6 @@ func (app *Gui) loadNextPage() {
 			}
 			app.state.page.loading = false
 			if err != nil {
-				app.state.streamErr = err.Error()
 				app.renderRecordsView(g)
 				return nil
 			}
