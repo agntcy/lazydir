@@ -23,7 +23,6 @@ func TestFilterCategoryTitle(t *testing.T) {
 		{filterDomains, "Domains"},
 		{filterModules, "Modules"},
 		{filterOASFVersion, "OASF version"},
-		{filterVersion, "Version"},
 		{filterAuthor, "Author"},
 		{filterTrustedVerified, "Trusted / Verified"},
 	}
@@ -48,7 +47,6 @@ func TestCategoryToFilter(t *testing.T) {
 		{filterDomains, dirclient.FilterDomain},
 		{filterModules, dirclient.FilterModule},
 		{filterOASFVersion, dirclient.FilterSchemaVersion},
-		{filterVersion, dirclient.FilterVersion},
 		{filterAuthor, dirclient.FilterAuthor},
 	}
 	for _, tt := range tests {
@@ -69,7 +67,6 @@ func TestAggregatorFieldFor(t *testing.T) {
 	a.domains["security"] = true
 	a.modules["auth"] = true
 	a.schemaVersion["1.0"] = true
-	a.versions["v2.1"] = true
 	a.authors["alice"] = true
 
 	tests := []struct {
@@ -80,7 +77,6 @@ func TestAggregatorFieldFor(t *testing.T) {
 		{filterDomains, "security"},
 		{filterModules, "auth"},
 		{filterOASFVersion, "1.0"},
-		{filterVersion, "v2.1"},
 		{filterAuthor, "alice"},
 	}
 	for _, tt := range tests {
@@ -121,9 +117,6 @@ func TestAggregator_Add(t *testing.T) {
 	}
 	if len(a.authors) != 2 {
 		t.Errorf("authors = %v, want 2 (empty string excluded)", a.authors)
-	}
-	if len(a.versions) != 2 {
-		t.Errorf("versions = %v, want 2 entries", a.versions)
 	}
 	if !a.skills["nlp"] || !a.skills["translation"] {
 		t.Error("expected nlp and translation in skills")

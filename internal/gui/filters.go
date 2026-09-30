@@ -19,7 +19,6 @@ type filterValueAggregator struct {
 	skills        map[string]bool
 	domains       map[string]bool
 	modules       map[string]bool
-	versions      map[string]bool
 	schemaVersion map[string]bool
 	authors       map[string]bool
 }
@@ -29,7 +28,6 @@ func newFilterValueAggregator() *filterValueAggregator {
 		skills:        map[string]bool{},
 		domains:       map[string]bool{},
 		modules:       map[string]bool{},
-		versions:      map[string]bool{},
 		schemaVersion: map[string]bool{},
 		authors:       map[string]bool{},
 	}
@@ -54,9 +52,6 @@ func (a *filterValueAggregator) add(r *dirclient.RecordSummary) {
 	if r.SchemaVersion != "" {
 		a.schemaVersion[r.SchemaVersion] = true
 	}
-	if r.Version != "" {
-		a.versions[r.Version] = true
-	}
 }
 
 // filterCategory identifies a filterable record field shown in the [2] Filters
@@ -68,7 +63,6 @@ const (
 	filterDomains
 	filterModules
 	filterOASFVersion
-	filterVersion
 	filterAuthor
 	filterTrustedVerified
 )
@@ -79,7 +73,6 @@ var allFilterCategories = []filterCategory{
 	filterDomains,
 	filterModules,
 	filterOASFVersion,
-	filterVersion,
 	filterAuthor,
 	filterTrustedVerified,
 }
@@ -96,8 +89,6 @@ func (c filterCategory) title() string {
 		return "Modules"
 	case filterOASFVersion:
 		return "OASF version"
-	case filterVersion:
-		return "Version"
 	case filterAuthor:
 		return "Author"
 	case filterTrustedVerified:
@@ -202,8 +193,6 @@ func aggregatorFieldFor(a *filterValueAggregator, c filterCategory) map[string]b
 		return a.modules
 	case filterOASFVersion:
 		return a.schemaVersion
-	case filterVersion:
-		return a.versions
 	case filterAuthor:
 		return a.authors
 	}
@@ -306,8 +295,6 @@ func categoryToFilter(c filterCategory) dirclient.FilterCategory {
 		return dirclient.FilterModule
 	case filterOASFVersion:
 		return dirclient.FilterSchemaVersion
-	case filterVersion:
-		return dirclient.FilterVersion
 	case filterAuthor:
 		return dirclient.FilterAuthor
 	}

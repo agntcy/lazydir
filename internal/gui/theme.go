@@ -132,8 +132,6 @@ func (t Theme) filterColor(c filterCategory) string {
 		return t.Color3
 	case filterOASFVersion:
 		return t.Color4
-	case filterVersion:
-		return t.Color5
 	case filterAuthor:
 		return t.Color7
 	case filterTrustedVerified:
