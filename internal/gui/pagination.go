@@ -26,9 +26,17 @@ func (p *pageState) reset() {
 	p.loading = false
 }
 
-// appendPage adds a fetched page and advances the offset.
-func (p *pageState) appendPage(recs []*dirclient.RecordSummary, exhausted bool) {
-	p.records = append(p.records, recs...)
-	p.offset += uint32(len(recs))
+// addRecord appends one streamed record. The offset is not moved here; it
+// advances once per page in finishPage.
+func (p *pageState) addRecord(r *dirclient.RecordSummary) {
+	p.records = append(p.records, r)
+}
+
+// finishPage completes a page fetch. The offset advances by rawCount — the
+// number of raw records the server sent — rather than the number of records
+// added, so a record dropped during extraction does not make the next page
+// start short and duplicate a row.
+func (p *pageState) finishPage(rawCount uint32, exhausted bool) {
+	p.offset += rawCount
 	p.exhausted = exhausted
 }

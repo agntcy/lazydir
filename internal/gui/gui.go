@@ -709,8 +709,10 @@ func (app *Gui) pingOASF(client *oasf.Client) {
 }
 
 // startQuery resets pagination and fetches the first page plus the total for
-// the current filter + name-query selection. Runs the fetch on a background
-// goroutine; results are applied on the GUI goroutine via g.Update.
+// the current filter + name-query selection. The page and the count are
+// fetched on two parallel background goroutines; results are applied on the
+// GUI goroutine. Records are rendered one by one as they stream in, so the
+// first rows appear without waiting for the whole page.
 //
 // When resetCursor is true the selection resets to the first row; when false
 // the current recordCursor is preserved (clamped by rebuildRecordRows). Both
@@ -736,18 +738,67 @@ func (app *Gui) startQuery(resetCursor bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	app.state.cancelLoad = cancel
 
+	// The total is fetched in parallel so the records title does not wait for
+	// the (possibly slow) record stream. Errors are ignored: the title falls
+	// back to the loaded-row count while totalKnown is false.
 	go func() {
-		recs, exhausted, err := client.Page(ctx, queries, uint32(pageSize), 0)
-		total, cntErr := client.Count(ctx, queries)
+		total, err := client.Count(ctx, queries)
 		app.g.Update(func(g *gocui.Gui) error {
+			if ctx.Err() != nil {
+				return nil // superseded by a newer query
+			}
+			if err != nil {
+				return nil
+			}
+			app.state.page.total = total
+			app.state.page.totalKnown = true
+			app.renderRecordsView(g)
+			return nil
+		})
+	}()
+
+	// responded is only read and written inside the GUI-goroutine callbacks
+	// below, so the first-response side effects run exactly once per query
+	// without synchronization.
+	responded := false
+	firstResponse := func(g *gocui.Gui) {
+		if responded {
+			return
+		}
+		responded = true
+		app.markQueryResponded(g, resetCursor)
+	}
+
+	// UpdateAsync (not Update) is used for the stream: it enqueues on the
+	// GUI's FIFO event channel from this goroutine, so records render in
+	// server order and the completion callback runs after the last record.
+	// Update would spawn a goroutine per call and lose that ordering.
+	go func() {
+		rawCount, exhausted, err := client.PageStream(ctx, queries, uint32(pageSize), 0,
+			func(r *dirclient.RecordSummary) {
+				app.g.UpdateAsync(func(g *gocui.Gui) error {
+					if ctx.Err() != nil {
+						return nil // superseded by a newer query
+					}
+					app.state.page.addRecord(r)
+					app.maybeStartClassEntriesFetch([]*dirclient.RecordSummary{r})
+					app.rebuildRecordRows() // flat renderer
+					app.renderRecordsView(g)
+					firstResponse(g)
+					return nil
+				})
+			})
+		app.g.UpdateAsync(func(g *gocui.Gui) error {
 			if ctx.Err() != nil {
 				return nil // superseded by a newer query
 			}
 			app.state.page.loading = false
 			if err != nil {
 				// The query failed: surface it and start the health/reconnect
-				// loop so the connection can recover (mirrors the old stream's
-				// OnDone error branch).
+				// loop so the connection can recover. Rows already received
+				// are kept; the offset advances past them (exhausted stays
+				// false) so a later page does not duplicate them.
+				app.state.page.finishPage(rawCount, false)
 				app.state.dirStatus = connFailed
 				app.state.dirError = err.Error()
 				app.startReconnectLoop()
@@ -755,45 +806,48 @@ func (app *Gui) startQuery(resetCursor bool) {
 				app.renderDirectory(g)
 				return nil
 			}
-			app.state.page.appendPage(recs, exhausted)
-			if cntErr == nil {
-				app.state.page.total = total
-				app.state.page.totalKnown = true
-			}
-			// A successful first page confirms the connection is healthy.
-			// startQuery replaced the old records stream, so the side effects
-			// that used to live in its OnDone (mark connected, start the
-			// health/reconnect loop, publish enrichment, staleness stamp) are
-			// re-established here. Both loops are idempotent (guarded against
-			// duplicate goroutines), so firing them on every query is safe.
-			app.state.dirStatus = connOK
-			app.state.dirLastConnected = time.Now()
-			app.state.dirError = ""
-			if app.state.infoPopupPanel == viewDirectory {
-				_ = app.closeInfoPopup(g, nil)
-			}
-			app.state.loadedOnce = true
-			app.state.dataFetchedAt = time.Now()
-			app.startReconnectLoop()
-			app.startPublishEnrichment()
-			app.startFilterValuesFetch(false)
-			app.maybeStartClassEntriesFetch(recs)
-			app.rebuildRecordRows() // flat renderer
+			app.state.page.finishPage(rawCount, exhausted)
+			// An empty result is still a healthy response.
+			firstResponse(g)
 			app.renderRecordsView(g)
 			app.renderFiltersView(g)
 			app.renderDirectory(g)
-			// Only the cursor-resetting (explicit) path moves the preview;
-			// the resetCursor=false path (background reconciliation) stays silent.
-			if resetCursor {
-				app.autoPreviewRecord(g)
-			}
 			return nil
 		})
 	}()
 }
 
+// markQueryResponded applies the side effects of the first server response
+// to a query: a response confirms the connection is healthy. startQuery
+// replaced the old records stream, so the side effects that used to live in
+// its OnDone (mark connected, start the health/reconnect loop, publish
+// enrichment, staleness stamp) are re-established here. Both loops are
+// idempotent (guarded against duplicate goroutines), so firing them on every
+// query is safe. Must be called on the GUI goroutine.
+func (app *Gui) markQueryResponded(g *gocui.Gui, resetCursor bool) {
+	app.state.dirStatus = connOK
+	app.state.dirLastConnected = time.Now()
+	app.state.dirError = ""
+	if app.state.infoPopupPanel == viewDirectory {
+		_ = app.closeInfoPopup(g, nil)
+	}
+	app.state.loadedOnce = true
+	app.state.dataFetchedAt = time.Now()
+	app.startReconnectLoop()
+	app.startPublishEnrichment()
+	app.startFilterValuesFetch(false)
+	app.renderFiltersView(g)
+	app.renderDirectory(g)
+	// Only the cursor-resetting (explicit) path moves the preview; the
+	// resetCursor=false path (background reconciliation) stays silent.
+	if resetCursor {
+		app.autoPreviewRecord(g)
+	}
+}
+
 // loadNextPage fetches and appends the next page unless already loading or
-// exhausted. Wired to the records-panel scroll trigger.
+// exhausted, rendering records as they stream in. Wired to the records-panel
+// scroll trigger.
 func (app *Gui) loadNextPage() {
 	client := app.state.client
 	if client == nil || app.state.page.loading || app.state.page.exhausted {
@@ -811,20 +865,35 @@ func (app *Gui) loadNextPage() {
 	ctx := context.Background()
 	gen := app.state.queryGen
 
+	// UpdateAsync keeps records and the completion in stream order; see
+	// startQuery.
 	go func() {
-		recs, exhausted, err := client.Page(ctx, queries, uint32(pageSize), offset)
-		app.g.Update(func(g *gocui.Gui) error {
+		rawCount, exhausted, err := client.PageStream(ctx, queries, uint32(pageSize), offset,
+			func(r *dirclient.RecordSummary) {
+				app.g.UpdateAsync(func(g *gocui.Gui) error {
+					if gen != app.state.queryGen {
+						return nil // superseded by a newer query; drop this record
+					}
+					app.state.page.addRecord(r)
+					app.maybeStartClassEntriesFetch([]*dirclient.RecordSummary{r})
+					app.rebuildRecordRows()
+					app.renderRecordsView(g)
+					return nil
+				})
+			})
+		app.g.UpdateAsync(func(g *gocui.Gui) error {
 			if gen != app.state.queryGen {
 				return nil // superseded by a newer query; drop these results
 			}
 			app.state.page.loading = false
 			if err != nil {
+				// Keep the rows received so far and advance past them so a
+				// retry continues from there instead of duplicating them.
+				app.state.page.finishPage(rawCount, false)
 				app.renderRecordsView(g)
 				return nil
 			}
-			app.state.page.appendPage(recs, exhausted)
-			app.maybeStartClassEntriesFetch(recs)
-			app.rebuildRecordRows()
+			app.state.page.finishPage(rawCount, exhausted)
 			app.renderRecordsView(g)
 			app.renderFiltersView(g)
 			return nil
