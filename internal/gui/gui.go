@@ -127,6 +127,8 @@ type appState struct {
 	// loadedOnce is true once a query has completed (first page landed), used
 	// to gate the "synced N ago" staleness indicator.
 	loadedOnce bool
+	// cancelLoad cancels the current query's fetches: the startQuery page and
+	// count, plus any next-page streams loadNextPage chained onto it.
 	cancelLoad context.CancelFunc
 
 	// inline record info toggle (records panel)
@@ -730,6 +732,11 @@ func (app *Gui) startQuery(resetCursor bool) {
 	app.state.page.loading = true
 	if resetCursor {
 		app.state.recordCursor = 0
+		// Clear the previous query's rows right away. The silent
+		// (resetCursor=false) refresh keeps them on screen until the new page
+		// lands, so the list does not collapse under the cursor.
+		app.rebuildRecordRows()
+		app.renderRecordsView(app.g)
 	}
 
 	if app.state.cancelLoad != nil {
@@ -773,9 +780,18 @@ func (app *Gui) startQuery(resetCursor bool) {
 	// GUI's FIFO event channel from this goroutine, so records render in
 	// server order and the completion callback runs after the last record.
 	// Update would spawn a goroutine per call and lose that ordering.
+	//
+	// Only the cursor-resetting path streams rows into the view. The silent
+	// refresh buffers the page on this goroutine and applies it in one go at
+	// completion, so the cursor is clamped against the full page.
 	go func() {
+		var buffered []*dirclient.RecordSummary
 		rawCount, exhausted, err := client.PageStream(ctx, queries, uint32(pageSize), 0,
 			func(r *dirclient.RecordSummary) {
+				if !resetCursor {
+					buffered = append(buffered, r)
+					return
+				}
 				app.g.UpdateAsync(func(g *gocui.Gui) error {
 					if ctx.Err() != nil {
 						return nil // superseded by a newer query
@@ -798,7 +814,7 @@ func (app *Gui) startQuery(resetCursor bool) {
 				// loop so the connection can recover. Rows already received
 				// are kept; the offset advances past them (exhausted stays
 				// false) so a later page does not duplicate them.
-				app.state.page.finishPage(rawCount, false)
+				app.completeQueryPage(buffered, rawCount, false)
 				app.state.dirStatus = connFailed
 				app.state.dirError = err.Error()
 				app.startReconnectLoop()
@@ -806,8 +822,9 @@ func (app *Gui) startQuery(resetCursor bool) {
 				app.renderDirectory(g)
 				return nil
 			}
-			app.state.page.finishPage(rawCount, exhausted)
-			// An empty result is still a healthy response.
+			app.completeQueryPage(buffered, rawCount, exhausted)
+			// An empty result (or a buffered silent refresh) is still a
+			// healthy response.
 			firstResponse(g)
 			app.renderRecordsView(g)
 			app.renderFiltersView(g)
@@ -815,6 +832,20 @@ func (app *Gui) startQuery(resetCursor bool) {
 			return nil
 		})
 	}()
+}
+
+// completeQueryPage applies a finished page fetch: it adds any records
+// buffered during the stream, advances pagination by the server's raw count
+// and rebuilds the display rows, so an empty result clears the previous
+// query's rows and the cursor is clamped against the full page. Must be
+// called on the GUI goroutine.
+func (app *Gui) completeQueryPage(buffered []*dirclient.RecordSummary, rawCount uint32, exhausted bool) {
+	for _, r := range buffered {
+		app.state.page.addRecord(r)
+	}
+	app.maybeStartClassEntriesFetch(buffered)
+	app.state.page.finishPage(rawCount, exhausted)
+	app.rebuildRecordRows()
 }
 
 // markQueryResponded applies the side effects of the first server response
@@ -859,10 +890,15 @@ func (app *Gui) loadNextPage() {
 	app.state.page.loading = true
 
 	// Next-page fetches are not cancelled by cursor moves — only superseded by
-	// a new startQuery. A superseded fetch is detected via the queryGen guard
-	// below (rather than context cancellation), so this fetch uses a
-	// background context.
-	ctx := context.Background()
+	// a new startQuery (or a server switch). Chaining this fetch's cancel onto
+	// cancelLoad stops a superseded stream early; the queryGen guard below
+	// drops any results already queued for the GUI goroutine.
+	ctx, cancel := context.WithCancel(context.Background())
+	if prev := app.state.cancelLoad; prev != nil {
+		app.state.cancelLoad = func() { prev(); cancel() }
+	} else {
+		app.state.cancelLoad = cancel
+	}
 	gen := app.state.queryGen
 
 	// UpdateAsync keeps records and the completion in stream order; see
@@ -873,6 +909,9 @@ func (app *Gui) loadNextPage() {
 				app.g.UpdateAsync(func(g *gocui.Gui) error {
 					if gen != app.state.queryGen {
 						return nil // superseded by a newer query; drop this record
+					}
+					if ctx.Err() != nil {
+						return nil // query cancelled (e.g. server switch)
 					}
 					app.state.page.addRecord(r)
 					app.maybeStartClassEntriesFetch([]*dirclient.RecordSummary{r})
@@ -885,15 +924,18 @@ func (app *Gui) loadNextPage() {
 			if gen != app.state.queryGen {
 				return nil // superseded by a newer query; drop these results
 			}
+			if ctx.Err() != nil {
+				return nil // query cancelled (e.g. server switch)
+			}
 			app.state.page.loading = false
 			if err != nil {
 				// Keep the rows received so far and advance past them so a
 				// retry continues from there instead of duplicating them.
-				app.state.page.finishPage(rawCount, false)
+				app.completeQueryPage(nil, rawCount, false)
 				app.renderRecordsView(g)
 				return nil
 			}
-			app.state.page.finishPage(rawCount, exhausted)
+			app.completeQueryPage(nil, rawCount, exhausted)
 			app.renderRecordsView(g)
 			app.renderFiltersView(g)
 			return nil

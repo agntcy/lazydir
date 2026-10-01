@@ -54,3 +54,49 @@ func TestPageState_ResetClears(t *testing.T) {
 		t.Fatalf("reset did not clear total: %+v", p)
 	}
 }
+
+// staleApp returns a Gui showing n rows from a previous query, then reset for
+// a new one (as startQuery does), with the cursor on row cursor.
+func staleApp(n, cursor int) *Gui {
+	app := &Gui{}
+	for i := range n {
+		app.state.page.addRecord(rec(string(rune('a' + i))))
+	}
+	app.rebuildRecordRows()
+	app.state.recordCursor = cursor
+	app.state.page.reset()
+	return app
+}
+
+func TestCompleteQueryPage_EmptyResultClearsStaleRows(t *testing.T) {
+	app := staleApp(3, 2)
+	app.completeQueryPage(nil, 0, true)
+	if n := len(app.state.recordDisplayRows); n != 0 {
+		t.Fatalf("expected 0 display rows after an empty result, got %d", n)
+	}
+	if app.state.recordCursor != 0 {
+		t.Fatalf("expected cursor 0, got %d", app.state.recordCursor)
+	}
+	if !app.state.page.exhausted {
+		t.Fatal("expected page exhausted")
+	}
+}
+
+func TestCompleteQueryPage_BufferedRefreshKeepsCursor(t *testing.T) {
+	const k = 5
+	app := staleApp(10, k)
+	var buffered []*dirclient.RecordSummary
+	for i := range 10 {
+		buffered = append(buffered, rec(string(rune('a'+i))))
+	}
+	app.completeQueryPage(buffered, 10, false)
+	if app.state.recordCursor != k {
+		t.Fatalf("expected cursor kept at %d, got %d", k, app.state.recordCursor)
+	}
+	if n := len(app.state.recordDisplayRows); n != 10 {
+		t.Fatalf("expected 10 display rows, got %d", n)
+	}
+	if app.state.page.offset != 10 || app.state.page.exhausted {
+		t.Fatalf("unexpected page state: offset=%d exhausted=%v", app.state.page.offset, app.state.page.exhausted)
+	}
+}
