@@ -13,6 +13,8 @@ import (
 	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/agntcy/lazydir/internal/oasf"
 	"github.com/jesseduffield/gocui"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // connStatus describes the connectivity state of a remote service (Directory
@@ -148,7 +150,10 @@ type appState struct {
 	filterValuesLoaded  bool
 	filterValuesLoading bool
 	filterValuesFailed  bool
-	filterValuesCancel  context.CancelFunc
+	// filterValuesUnsupported is the sticky subset of failure: the server
+	// returned Unimplemented, so non-forced triggers stop retrying.
+	filterValuesUnsupported bool
+	filterValuesCancel      context.CancelFunc
 
 	// classEntries caches enriched display info (ID, caption) for OASF
 	// taxonomy classes. Records may span multiple OASF schema versions, so
@@ -844,8 +849,10 @@ func (app *Gui) applyFilters() { app.startQuery(true) }
 // app.state.filterValues with the result. Must be called on the GUI goroutine.
 //
 // Non-forced calls (the per-query trigger) are no-ops once values are loaded,
-// while a fetch is in flight, or after a failure on the current connection, so
-// an older server without the RPC is asked once per connection, not per query.
+// while a fetch is in flight, or after the server reported the RPC as
+// Unimplemented on the current connection, so an older server is asked once per
+// connection, not per query. Other errors are treated as transient and the next
+// non-forced trigger retries.
 // Forced calls (refresh, delete, post-sync reconcile) always fetch: an
 // in-flight fetch is cancelled and restarted so the result reflects the latest
 // server state.
@@ -858,7 +865,7 @@ func (app *Gui) startFilterValuesFetch(force bool) {
 	if client == nil {
 		return
 	}
-	if !force && (app.state.filterValuesLoaded || app.state.filterValuesLoading || app.state.filterValuesFailed) {
+	if !force && (app.state.filterValuesLoaded || app.state.filterValuesLoading || app.state.filterValuesUnsupported) {
 		return
 	}
 	if app.state.filterValuesCancel != nil {
@@ -882,6 +889,7 @@ func (app *Gui) startFilterValuesFetch(force bool) {
 			app.state.filterValues = next
 			app.state.filterValuesLoaded = loaded
 			app.state.filterValuesFailed = failed
+			app.state.filterValuesUnsupported = filterValuesUnsupported(err)
 			if err != nil {
 				app.renderFiltersView(g)
 				return nil
@@ -911,6 +919,13 @@ func applyFilterValuesResult(
 		return prev, true, true
 	}
 	return newFilterValueAggregator(), false, true
+}
+
+// filterValuesUnsupported reports whether err means the server does not
+// implement ListFilterValues, the only failure that is not retried by
+// non-forced triggers.
+func filterValuesUnsupported(err error) bool {
+	return err != nil && status.Code(err) == codes.Unimplemented
 }
 
 // filterValuesNotice returns the Filters panel title suffix describing a

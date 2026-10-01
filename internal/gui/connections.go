@@ -196,6 +196,7 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.filterValuesLoading = false
 	app.state.filterValuesLoaded = false
 	app.state.filterValuesFailed = false
+	app.state.filterValuesUnsupported = false
 
 	// Cancel any in-flight sync pollers (runSync/pollSync/pollReconcile) so they
 	// do not bleed into the new server, and reset the sync tracking fields. The

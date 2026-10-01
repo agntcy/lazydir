@@ -11,6 +11,8 @@ import (
 
 	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/agntcy/lazydir/internal/oasf"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Option values, versions and captions reused across the GUI tests.
@@ -395,4 +397,20 @@ func TestApplyFilterValuesResult(t *testing.T) {
 			t.Errorf("notice = %q, want unavailable", n)
 		}
 	})
+}
+
+func TestFilterValuesUnsupported(t *testing.T) {
+	t.Parallel()
+	if !filterValuesUnsupported(status.Error(codes.Unimplemented, "nope")) {
+		t.Error("Unimplemented should be unsupported (sticky)")
+	}
+	if filterValuesUnsupported(status.Error(codes.Unavailable, "down")) {
+		t.Error("Unavailable should be retryable")
+	}
+	if filterValuesUnsupported(errors.New("plain")) {
+		t.Error("plain error should be retryable")
+	}
+	if filterValuesUnsupported(nil) {
+		t.Error("nil error should not be unsupported")
+	}
 }
