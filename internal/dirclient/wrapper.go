@@ -13,6 +13,7 @@ import (
 	routingv1 "github.com/agntcy/dir/api/routing/v1"
 	searchv1 "github.com/agntcy/dir/api/search/v1"
 	"github.com/agntcy/dir/client"
+	"github.com/agntcy/dir/client/streaming"
 	"github.com/agntcy/oasf-sdk/pkg/decoder"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -251,9 +252,35 @@ func (c *Client) PageStream(
 		case <-result.DoneCh():
 			return rawCount, rawCount < limit, nil
 		case <-ctx.Done():
+			drainStream(result)
 			return rawCount, false, ctx.Err()
 		}
 	}
+}
+
+// drainStream consumes a stream result in the background until its DoneCh
+// closes. The dir client's receiver goroutine sends on unbuffered channels,
+// so abandoning a result after cancellation would leave that goroutine
+// blocked on its send forever. Cancellation makes its Recv fail, after which
+// it sends the error, returns and closes DoneCh, ending the drain.
+func drainStream[T any](r streaming.StreamResult[T]) {
+	go func() {
+		resCh, errCh := r.ResCh(), r.ErrCh()
+		for {
+			select {
+			case _, ok := <-resCh:
+				if !ok {
+					resCh = nil
+				}
+			case _, ok := <-errCh:
+				if !ok {
+					errCh = nil
+				}
+			case <-r.DoneCh():
+				return
+			}
+		}
+	}()
 }
 
 // FilterCategory identifies a server-side filter predicate. Each value maps
