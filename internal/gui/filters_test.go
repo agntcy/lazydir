@@ -12,6 +12,19 @@ import (
 	"github.com/agntcy/lazydir/internal/oasf"
 )
 
+// Option values, versions and captions reused across the GUI tests.
+const (
+	optNLP            = "nlp"
+	optSecurity       = "security"
+	optTranslation    = "translation"
+	ver100            = "1.0.0"
+	ver070            = "0.7.0"
+	classSkillSchema  = "schema.oasf/skill"
+	classRuntimeModel = "runtime/model"
+	captionModel      = "Model"
+	captionNLP        = "Natural Language Processing"
+)
+
 func TestFilterCategoryTitle(t *testing.T) {
 	t.Parallel()
 
@@ -63,8 +76,8 @@ func TestAggregatorFieldFor(t *testing.T) {
 	t.Parallel()
 
 	a := newFilterValueAggregator()
-	a.skills["nlp"] = true
-	a.domains["security"] = true
+	a.skills[optNLP] = true
+	a.domains[optSecurity] = true
 	a.modules["auth"] = true
 	a.schemaVersion["1.0"] = true
 	a.authors["alice"] = true
@@ -73,8 +86,8 @@ func TestAggregatorFieldFor(t *testing.T) {
 		cat  filterCategory
 		want string
 	}{
-		{filterSkills, "nlp"},
-		{filterDomains, "security"},
+		{filterSkills, optNLP},
+		{filterDomains, optSecurity},
 		{filterModules, "auth"},
 		{filterOASFVersion, "1.0"},
 		{filterAuthor, "alice"},
@@ -99,15 +112,15 @@ func TestAggregator_Add(t *testing.T) {
 
 	a := newFilterValueAggregator()
 	a.add(&dirclient.RecordSummary{
-		Skills:        []string{"nlp", "translation"},
-		Domains:       []string{"security"},
+		Skills:        []string{optNLP, optTranslation},
+		Domains:       []string{optSecurity},
 		Modules:       []string{"auth"},
 		Authors:       []string{"alice", ""},
-		Version:       "1.0.0",
+		Version:       ver100,
 		SchemaVersion: "1.0",
 	})
 	a.add(&dirclient.RecordSummary{
-		Skills:  []string{"nlp"},
+		Skills:  []string{optNLP},
 		Authors: []string{"bob"},
 		Version: "2.0.0",
 	})
@@ -118,7 +131,7 @@ func TestAggregator_Add(t *testing.T) {
 	if len(a.authors) != 2 {
 		t.Errorf("authors = %v, want 2 (empty string excluded)", a.authors)
 	}
-	if !a.skills["nlp"] || !a.skills["translation"] {
+	if !a.skills[optNLP] || !a.skills[optTranslation] {
 		t.Error("expected nlp and translation in skills")
 	}
 }
@@ -154,24 +167,24 @@ func TestDistinctNewSchemaVersions(t *testing.T) {
 	}{
 		{
 			name:      "all new, deduped and order preserved",
-			summaries: summariesWithVersions("1.0.0", "0.7.0", "1.0.0", "0.8.0"),
-			want:      []string{"1.0.0", "0.7.0", "0.8.0"},
+			summaries: summariesWithVersions(ver100, ver070, ver100, "0.8.0"),
+			want:      []string{ver100, ver070, "0.8.0"},
 		},
 		{
 			name:      "already fetched versions skipped",
-			summaries: summariesWithVersions("1.0.0", "0.7.0"),
-			fetched:   map[string]bool{"1.0.0": true},
-			want:      []string{"0.7.0"},
+			summaries: summariesWithVersions(ver100, ver070),
+			fetched:   map[string]bool{ver100: true},
+			want:      []string{ver070},
 		},
 		{
 			name:      "empty versions ignored",
-			summaries: summariesWithVersions("", "0.7.0", ""),
-			want:      []string{"0.7.0"},
+			summaries: summariesWithVersions("", ver070, ""),
+			want:      []string{ver070},
 		},
 		{
 			name:      "nothing new",
-			summaries: summariesWithVersions("1.0.0"),
-			fetched:   map[string]bool{"1.0.0": true},
+			summaries: summariesWithVersions(ver100),
+			fetched:   map[string]bool{ver100: true},
 			want:      nil,
 		},
 	}
@@ -197,19 +210,19 @@ func TestMergeClassEntries(t *testing.T) {
 	// A value that only exists in an older version fills a gap, while an
 	// already-present name keeps its first (existing) entry.
 	dst := map[string]oasf.ClassEntry{
-		"schema.oasf/skill": {Name: "schema.oasf/skill", Caption: "Skill", Version: "1.0.0"},
+		classSkillSchema: {Name: classSkillSchema, Caption: "Skill", Version: ver100},
 	}
 	src := map[string]oasf.ClassEntry{
-		"schema.oasf/skill": {Name: "schema.oasf/skill", Caption: "Skill (old)", Version: "0.7.0"},
-		"runtime/model":     {Name: "runtime/model", Caption: "Model", Version: "0.7.0"},
+		classSkillSchema:  {Name: classSkillSchema, Caption: "Skill (old)", Version: ver070},
+		classRuntimeModel: {Name: classRuntimeModel, Caption: captionModel, Version: ver070},
 	}
 
 	got := mergeClassEntries(dst, src)
 
-	if e := got["runtime/model"]; e.Caption != "Model" || e.Version != "0.7.0" {
+	if e := got[classRuntimeModel]; e.Caption != captionModel || e.Version != ver070 {
 		t.Errorf("runtime/model = %+v, want caption=Model version=0.7.0", e)
 	}
-	if e := got["schema.oasf/skill"]; e.Caption != "Skill" || e.Version != "1.0.0" {
+	if e := got[classSkillSchema]; e.Caption != "Skill" || e.Version != ver100 {
 		t.Errorf("existing entry was overwritten: %+v", e)
 	}
 }
@@ -217,9 +230,9 @@ func TestMergeClassEntries(t *testing.T) {
 func TestMergeClassEntriesNilDst(t *testing.T) {
 	t.Parallel()
 
-	src := map[string]oasf.ClassEntry{"runtime/model": {Name: "runtime/model", Caption: "Model"}}
+	src := map[string]oasf.ClassEntry{classRuntimeModel: {Name: classRuntimeModel, Caption: captionModel}}
 	got := mergeClassEntries(nil, src)
-	if got["runtime/model"].Caption != "Model" {
+	if got[classRuntimeModel].Caption != captionModel {
 		t.Errorf("merge into nil dst dropped entry: %+v", got)
 	}
 }
@@ -227,15 +240,15 @@ func TestMergeClassEntriesNilDst(t *testing.T) {
 func TestToggleAppliedCycles(t *testing.T) {
 	app := &Gui{state: appState{filters: newFilterState()}}
 
-	app.toggleApplied(filterSkills, "nlp")
-	if got := app.state.filters.applied[filterSkills]["nlp"]; got != modeInclude {
+	app.toggleApplied(filterSkills, optNLP)
+	if got := app.state.filters.applied[filterSkills][optNLP]; got != modeInclude {
 		t.Fatalf("after 1st toggle = %d, want modeInclude", got)
 	}
-	app.toggleApplied(filterSkills, "nlp")
-	if got := app.state.filters.applied[filterSkills]["nlp"]; got != modeExclude {
+	app.toggleApplied(filterSkills, optNLP)
+	if got := app.state.filters.applied[filterSkills][optNLP]; got != modeExclude {
 		t.Fatalf("after 2nd toggle = %d, want modeExclude", got)
 	}
-	app.toggleApplied(filterSkills, "nlp")
+	app.toggleApplied(filterSkills, optNLP)
 	if _, ok := app.state.filters.applied[filterSkills]; ok {
 		t.Fatalf("after 3rd toggle category should be removed, got %v", app.state.filters.applied)
 	}
@@ -246,8 +259,8 @@ func TestRenderFilterOptionStrike(t *testing.T) {
 	app.theme.Strike = "\033[9m"
 
 	var incl, excl bytes.Buffer
-	app.writeFilterOption(&incl, listRow{category: filterSkills, option: "nlp"}, modeInclude)
-	app.writeFilterOption(&excl, listRow{category: filterSkills, option: "nlp"}, modeExclude)
+	app.writeFilterOption(&incl, listRow{category: filterSkills, option: optNLP}, modeInclude)
+	app.writeFilterOption(&excl, listRow{category: filterSkills, option: optNLP}, modeExclude)
 
 	if strings.Contains(incl.String(), "\033[9m") {
 		t.Errorf("include row should not contain strike code: %q", incl.String())
@@ -258,7 +271,7 @@ func TestRenderFilterOptionStrike(t *testing.T) {
 
 	// Not-applied (zero-value filterMode) must not emit any escape codes.
 	var none bytes.Buffer
-	app.writeFilterOption(&none, listRow{category: filterSkills, option: "nlp"}, filterMode(0))
+	app.writeFilterOption(&none, listRow{category: filterSkills, option: optNLP}, filterMode(0))
 	if strings.ContainsRune(none.String(), '\033') {
 		t.Errorf("not-applied row should not contain escape codes: %q", none.String())
 	}
@@ -267,12 +280,12 @@ func TestRenderFilterOptionStrike(t *testing.T) {
 	// wrapped in the strike code.
 	app.state.classEntries = map[oasf.ClassType]map[string]oasf.ClassEntry{
 		oasf.ClassTypeSkill: {
-			"nlp": {ID: 1, Name: "nlp", Caption: "Natural Language Processing"},
+			optNLP: {ID: 1, Name: optNLP, Caption: captionNLP},
 		},
 	}
 	var caption bytes.Buffer
-	app.writeFilterOption(&caption, listRow{category: filterSkills, option: "nlp"}, modeExclude)
-	if !strings.Contains(caption.String(), "Natural Language Processing") {
+	app.writeFilterOption(&caption, listRow{category: filterSkills, option: optNLP}, modeExclude)
+	if !strings.Contains(caption.String(), captionNLP) {
 		t.Errorf("caption row should contain the class caption: %q", caption.String())
 	}
 	if !strings.Contains(caption.String(), "\033[9m") {
@@ -282,13 +295,13 @@ func TestRenderFilterOptionStrike(t *testing.T) {
 
 func TestBuildServerQueries_IncludeExclude(t *testing.T) {
 	fs := filterState{applied: map[filterCategory]map[string]filterMode{
-		filterSkills:  {"nlp": modeInclude},
+		filterSkills:  {optNLP: modeInclude},
 		filterDomains: {"finance": modeExclude},
 	}}
 	got := buildServerQueries(fs, "")
 
 	want := map[dirclient.FilterCategory]dirclient.Query{
-		dirclient.FilterSkill:  {Category: dirclient.FilterSkill, Value: "nlp", Negate: false},
+		dirclient.FilterSkill:  {Category: dirclient.FilterSkill, Value: optNLP, Negate: false},
 		dirclient.FilterDomain: {Category: dirclient.FilterDomain, Value: "finance", Negate: true},
 	}
 	if len(got) != len(want) {

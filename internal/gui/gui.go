@@ -277,7 +277,7 @@ func New(cfg Config) error {
 	defer close(uiStop)
 	go app.uiRefreshLoop(uiStop)
 
-	if err := g.MainLoop(); err != nil && !gocui.IsQuit(err) {
+	if err := g.MainLoop(); !gocui.IsQuit(err) {
 		return fmt.Errorf("main loop: %w", err)
 	}
 

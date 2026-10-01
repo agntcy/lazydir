@@ -35,6 +35,9 @@ type Theme struct {
 	DimFrameColor     gocui.Attribute // gocui color for preview frame/title when dimmed
 }
 
+// ansiReset is the ANSI escape that resets all text attributes.
+const ansiReset = "\033[0m"
+
 var defaultTheme = Theme{
 	Color1:  "\033[33m",
 	Color2:  "\033[36m",
@@ -46,7 +49,7 @@ var defaultTheme = Theme{
 	Color8:  "\033[93m",
 	Color9:  "\033[92m",
 	Color10: "\033[90m",
-	Reset:   "\033[0m",
+	Reset:   ansiReset,
 	Strike:  "\033[9m",
 
 	ActiveBorderColor: gocui.ColorGreen,

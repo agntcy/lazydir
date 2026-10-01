@@ -13,19 +13,27 @@ import (
 	sdkschema "github.com/agntcy/oasf-sdk/pkg/schema"
 )
 
+// Taxonomy class names reused across the fixtures and assertions below.
+const (
+	classNaturalLanguage = "natural_language"
+	classTranslation     = "translation"
+	classParent          = "parent"
+	classChild           = "child"
+)
+
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	taxonomy := map[string]sdkschema.TaxonomyItem{
-		"natural_language": {
+		classNaturalLanguage: {
 			ID:          1,
-			Name:        "natural_language",
+			Name:        classNaturalLanguage,
 			Caption:     "Natural Language",
 			Description: "Natural language processing skills.",
 			Classes: map[string]sdkschema.TaxonomyItem{
-				"translation": {
+				classTranslation: {
 					ID:          10,
-					Name:        "translation",
+					Name:        classTranslation,
 					Caption:     "Translation",
 					Description: "Translation between languages.",
 				},
@@ -129,11 +137,11 @@ func TestFetch_Found(t *testing.T) {
 	c := newTestClient(t, srv.URL)
 	ctx := context.Background()
 
-	info, err := c.Fetch(ctx, ClassTypeSkill, "translation", "")
+	info, err := c.Fetch(ctx, ClassTypeSkill, classTranslation, "")
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	if info.Name != "translation" {
+	if info.Name != classTranslation {
 		t.Errorf("Name = %q, want translation", info.Name)
 	}
 	if info.Caption != "Translation" {
@@ -142,7 +150,7 @@ func TestFetch_Found(t *testing.T) {
 	if info.ID != 10 {
 		t.Errorf("ID = %d, want 10", info.ID)
 	}
-	if len(info.Ancestors) != 1 || info.Ancestors[0].Name != "natural_language" {
+	if len(info.Ancestors) != 1 || info.Ancestors[0].Name != classNaturalLanguage {
 		t.Errorf("Ancestors = %+v, want [natural_language]", info.Ancestors)
 	}
 }
@@ -209,8 +217,8 @@ func TestFetchAll(t *testing.T) {
 	if len(entries) != 3 {
 		t.Fatalf("expected 3 entries (natural_language, translation, code_generation), got %d", len(entries))
 	}
-	if e, ok := entries["translation"]; !ok || e.ID != 10 {
-		t.Errorf("translation entry = %+v", entries["translation"])
+	if e, ok := entries[classTranslation]; !ok || e.ID != 10 {
+		t.Errorf("translation entry = %+v", entries[classTranslation])
 	}
 }
 
@@ -237,11 +245,11 @@ func TestFindItemWithPath_Nested(t *testing.T) {
 	t.Parallel()
 
 	items := map[string]sdkschema.TaxonomyItem{
-		"parent": {
-			ID: 1, Name: "parent", Caption: "Parent",
+		classParent: {
+			ID: 1, Name: classParent, Caption: "Parent",
 			Classes: map[string]sdkschema.TaxonomyItem{
-				"child": {
-					ID: 2, Name: "child", Caption: "Child",
+				classChild: {
+					ID: 2, Name: classChild, Caption: "Child",
 					Classes: map[string]sdkschema.TaxonomyItem{
 						"grandchild": {ID: 3, Name: "grandchild", Caption: "Grandchild"},
 					},
@@ -260,7 +268,7 @@ func TestFindItemWithPath_Nested(t *testing.T) {
 	if len(ancestors) != 2 {
 		t.Fatalf("ancestors len = %d, want 2", len(ancestors))
 	}
-	if ancestors[0].Name != "parent" || ancestors[1].Name != "child" {
+	if ancestors[0].Name != classParent || ancestors[1].Name != classChild {
 		t.Errorf("ancestors = %+v", ancestors)
 	}
 }

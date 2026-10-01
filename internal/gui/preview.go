@@ -269,7 +269,7 @@ func (app *Gui) treeRenderCtx() *jsonRenderCtx {
 
 func previewTitle(subtitle string) string {
 	if subtitle == "" {
-		return "[0] Preview"
+		return titlePreview
 	}
 	return "[0] Preview — " + subtitle
 }
@@ -554,8 +554,6 @@ func isMixedLine(line string) bool {
 // ANSI-colored segments (brackets, captions, triangles). It highlights only
 // the plain-text spans with chroma and passes colored spans through as-is.
 func highlightMixedLine(line string) string {
-	const ansiReset = "\033[0m"
-
 	var sb strings.Builder
 	i := 0
 	plainStart := 0
@@ -625,7 +623,7 @@ func highlightJSON(src string) string {
 // ── Text helpers ──────────────────────────────────────────────────────────────
 
 func dimText(s, dimCode string) string {
-	return dimCode + stripANSI(s) + "\033[0m"
+	return dimCode + stripANSI(s) + ansiReset
 }
 
 func stripANSI(s string) string {

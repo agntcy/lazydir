@@ -8,10 +8,27 @@ import (
 	"strings"
 )
 
+// Repeated hint labels, key names and panel titles shared by the binding tables
+// and the panel views.
+const (
+	hintNavigate = "navigate"
+	hintExpand   = "expand"
+	hintCollapse = "collapse"
+	hintScroll   = "scroll"
+	keyEnter     = "enter"
+	keyEsc       = "esc"
+	keyNavigate  = "↑↓ / j k"
+	keyWheel     = "wheel"
+
+	titleFilters = "[2] Filters"
+	titleRecords = "[3] Records"
+	titlePreview = "[0] Preview"
+)
+
 // binding describes a single keybinding for display purposes.
 type binding struct {
 	key         string // e.g. "enter", "↑↓", "h/l"
-	description string // e.g. "select", "navigate"
+	description string // e.g. "select", hintNavigate
 	showInBar   bool   // shown in the bottom options bar
 }
 
@@ -35,33 +52,33 @@ var perPanelBindings = map[string]panelBindings{
 	viewDirectory: {
 		title: "[1] Connections",
 		bindings: []binding{
-			{"↑↓ / j k", "navigate", true},
+			{keyNavigate, hintNavigate, true},
 			{"c / enter", "select server", true},
 			{"i", "connection info", true},
 		},
 	},
 	viewFilters: {
-		title: "[2] Filters",
+		title: titleFilters,
 		bindings: []binding{
-			{"↑↓ / j k", "navigate", true},
-			{"enter", "expand / cycle filter", true},
-			{"l", "expand", false},
-			{"h", "collapse", false},
+			{keyNavigate, hintNavigate, true},
+			{keyEnter, "expand / cycle filter", true},
+			{"l", hintExpand, false},
+			{"h", hintCollapse, false},
 			{"space", "cycle include/exclude/off", true},
 			{"/", "search options", true},
 			{"i", "toggle class info", true},
 			{"x", "clear all filters", true},
-			{"esc", "collapse / clear search", true},
-			{"wheel", "scroll", false},
+			{keyEsc, "collapse / clear search", true},
+			{keyWheel, hintScroll, false},
 		},
 	},
 	viewRecords: {
-		title: "[3] Records",
+		title: titleRecords,
 		bindings: []binding{
-			{"↑↓ / j k", "navigate", true},
-			{"enter", "expand / open preview", true},
-			{"l", "expand", false},
-			{"h", "collapse", false},
+			{keyNavigate, hintNavigate, true},
+			{keyEnter, "expand / open preview", true},
+			{"l", hintExpand, false},
+			{"h", hintCollapse, false},
 			{"/", "filter by name", true},
 			{"i", "toggle record info", true},
 			{"y", "yank/copy options", true},
@@ -70,37 +87,37 @@ var perPanelBindings = map[string]panelBindings{
 			{"d", "delete record", true},
 			{"P", "publish record", true},
 			{"U", "unpublish record", true},
-			{"esc", "collapse / clear filter", false},
-			{"wheel", "scroll", false},
+			{keyEsc, "collapse / clear filter", false},
+			{keyWheel, hintScroll, false},
 		},
 	},
 	viewPreview: {
-		title: "[0] Preview",
+		title: titlePreview,
 		bindings: []binding{
-			{"↑↓ / j k", "navigate", true},
-			{"enter", "expand / collapse", true},
-			{"l", "expand", false},
-			{"h", "collapse", false},
+			{keyNavigate, hintNavigate, true},
+			{keyEnter, "expand / collapse", true},
+			{"l", hintExpand, false},
+			{"h", hintCollapse, false},
 			{"e", "expand all", true},
 			{"E", "collapse all", true},
-			{"esc", "back to records", true},
-			{"wheel", "scroll", false},
+			{keyEsc, "back to records", true},
+			{keyWheel, hintScroll, false},
 		},
 	},
 	viewCopyMenu: {
 		title: "Copy options",
 		bindings: []binding{
-			{"↑↓ / j k", "navigate", true},
-			{"enter", "select", true},
-			{"esc", "close", true},
+			{keyNavigate, hintNavigate, true},
+			{keyEnter, "select", true},
+			{keyEsc, "close", true},
 		},
 	},
 	viewConfirmPopup: {
 		title: "Confirm",
 		bindings: []binding{
-			{"↑↓ / j k", "navigate", true},
-			{"enter", "select", true},
-			{"esc", "close", true},
+			{keyNavigate, hintNavigate, true},
+			{keyEnter, "select", true},
+			{keyEsc, "close", true},
 		},
 	},
 }

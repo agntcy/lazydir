@@ -58,7 +58,7 @@ func (app *Gui) renderFiltersView(g *gocui.Gui) {
 // collapse/expand triangle, child options are indented, and selected options
 // are rendered in the category's color instead of a [ ]/[x] checkbox.
 func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
-	title := "[2] Filters"
+	title := titleFilters
 	if app.state.filters.filterQuery != "" {
 		title += fmt.Sprintf("  /: %s", app.state.filters.filterQuery)
 	}
@@ -150,7 +150,7 @@ func (app *Gui) writeFilterOption(w io.Writer, r listRow, mode filterMode) {
 func (app *Gui) recordsTitle() string {
 	loaded := len(app.state.page.records)
 
-	title := "[3] Records"
+	title := titleRecords
 	if app.state.page.totalKnown {
 		title += fmt.Sprintf(" (%d/%d)", loaded, app.state.page.total)
 	} else if loaded > 0 {
@@ -188,7 +188,7 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	}
 
 	clipBg := "\033[41m"
-	reset := "\033[0m"
+	reset := ansiReset
 	yellow := "\033[33m"
 	red := "\033[31m"
 	green := "\033[32m"

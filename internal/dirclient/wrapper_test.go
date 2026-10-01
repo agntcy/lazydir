@@ -13,6 +13,14 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
+// Record field keys and sample versions reused across the fixtures below.
+const (
+	keyName        = "name"
+	keyVersion     = "version"
+	testSchemaVer  = "1.0.0"
+	testVersionTag = "v1.0.0"
+)
+
 func TestQueryToRPC(t *testing.T) {
 	t.Parallel()
 
@@ -78,12 +86,12 @@ func makeRecord(t *testing.T, schemaVersion string) *corev1.Record {
 
 	data, err := structpb.NewStruct(map[string]any{
 		"schema_version": schemaVersion,
-		"name":           "test-agent",
-		"version":        "1.0.0",
+		keyName:          "test-agent",
+		keyVersion:       testSchemaVer,
 		"authors":        []any{"alice"},
-		"skills":         []any{map[string]any{"name": "natural_language_processing"}},
-		"domains":        []any{map[string]any{"name": "biotechnology"}},
-		"modules":        []any{map[string]any{"name": "runtime/model"}},
+		"skills":         []any{map[string]any{keyName: "natural_language_processing"}},
+		"domains":        []any{map[string]any{keyName: "biotechnology"}},
+		"modules":        []any{map[string]any{keyName: "runtime/model"}},
 	})
 	if err != nil {
 		t.Fatalf("building struct: %v", err)
@@ -98,7 +106,7 @@ func makeRecord(t *testing.T, schemaVersion string) *corev1.Record {
 func TestExtractSummaryAcrossSchemaVersions(t *testing.T) {
 	t.Parallel()
 
-	versions := []string{"0.7.0", "0.8.0", "1.0.0"}
+	versions := []string{"0.7.0", "0.8.0", testSchemaVer}
 
 	for _, v := range versions {
 		t.Run(v, func(t *testing.T) {
@@ -133,9 +141,9 @@ func TestExtractSummarySanitizesNewlines(t *testing.T) {
 	t.Parallel()
 
 	data, err := structpb.NewStruct(map[string]any{
-		"schema_version": "1.0.0",
-		"name":           "org.agntcy/directory",
-		"version":        "v1.6.1\n1.6.1",
+		"schema_version": testSchemaVer,
+		keyName:          "org.agntcy/directory",
+		keyVersion:       "v1.6.1\n1.6.1",
 	})
 	if err != nil {
 		t.Fatalf("building struct: %v", err)
@@ -161,11 +169,11 @@ func TestSanitizeField(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"plain", "v1.0.0", "v1.0.0"},
-		{"trailing newline", "v1.0.0\n", "v1.0.0"},
+		{"plain", testVersionTag, testVersionTag},
+		{"trailing newline", "v1.0.0\n", testVersionTag},
 		{"embedded newline", "v1.6.1\n1.6.1", "v1.6.1 1.6.1"},
 		{"crlf", "a\r\nb", "a b"},
-		{"surrounding whitespace", "  v1.0.0  ", "v1.0.0"},
+		{"surrounding whitespace", "  v1.0.0  ", testVersionTag},
 		{"tabs and newlines", "a\t\nb", "a b"},
 		{"empty", "", ""},
 	}
