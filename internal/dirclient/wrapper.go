@@ -190,6 +190,31 @@ func filterValuesFromRPC(resp *searchv1.ListFilterValuesResponse) map[FilterCate
 // (not the extracted-summary count) drives exhausted, so records dropped by
 // extractSummary do not cause premature termination.
 func (c *Client) Page(ctx context.Context, queries []Query, limit, offset uint32) ([]*RecordSummary, bool, error) {
+	var summaries []*RecordSummary
+	_, exhausted, err := c.PageStream(ctx, queries, limit, offset, func(s *RecordSummary) {
+		summaries = append(summaries, s)
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return summaries, exhausted, nil
+}
+
+// PageStream is the incremental form of Page: it issues the same request but
+// invokes onRecord for each successfully extracted summary as soon as it
+// arrives, instead of collecting the whole page first.
+//
+// rawCount is the number of raw records the server sent (including any that
+// extractSummary dropped), so callers can advance their offset by what the
+// server actually consumed. exhausted is rawCount < limit. On error, rawCount
+// still reports the records received before the failure and exhausted is
+// false.
+//
+// onRecord runs on the calling (RPC) goroutine: it must not block, and GUI
+// callers must hop to their UI goroutine themselves.
+func (c *Client) PageStream(
+	ctx context.Context, queries []Query, limit, offset uint32, onRecord func(*RecordSummary),
+) (rawCount uint32, exhausted bool, err error) {
 	l, o := limit, offset
 	req := &searchv1.SearchRecordsRequest{
 		Queries: buildRPCQueries(queries),
@@ -198,23 +223,21 @@ func (c *Client) Page(ctx context.Context, queries []Query, limit, offset uint32
 	}
 	result, err := c.c.SearchRecords(ctx, req)
 	if err != nil {
-		return nil, false, fmt.Errorf("searching records: %w", err)
+		return 0, false, fmt.Errorf("searching records: %w", err)
 	}
 
-	var summaries []*RecordSummary
-	var rawCount uint32
 	resCh := result.ResCh()
 	errCh := result.ErrCh()
 	for {
 		select {
 		case resp, ok := <-resCh:
 			if !ok {
-				return summaries, rawCount < limit, nil
+				return rawCount, rawCount < limit, nil
 			}
 			if rec := resp.GetRecord(); rec != nil {
 				rawCount++
 				if s := extractSummary(rec); s != nil {
-					summaries = append(summaries, s)
+					onRecord(s)
 				}
 			}
 		case streamErr, ok := <-errCh:
@@ -223,12 +246,12 @@ func (c *Client) Page(ctx context.Context, queries []Query, limit, offset uint32
 				continue
 			}
 			if streamErr != nil {
-				return nil, false, fmt.Errorf("receiving record: %w", streamErr)
+				return rawCount, false, fmt.Errorf("receiving record: %w", streamErr)
 			}
 		case <-result.DoneCh():
-			return summaries, rawCount < limit, nil
+			return rawCount, rawCount < limit, nil
 		case <-ctx.Done():
-			return nil, false, ctx.Err()
+			return rawCount, false, ctx.Err()
 		}
 	}
 }
