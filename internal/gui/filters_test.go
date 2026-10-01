@@ -5,6 +5,7 @@ package gui
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -353,4 +354,45 @@ func TestBuildServerQueries_NameWildcard(t *testing.T) {
 	if len(got) != 1 || got[0].Category != dirclient.FilterName || got[0].Value != "*assistant*" {
 		t.Fatalf("unexpected name query: %+v", got)
 	}
+}
+
+func TestApplyFilterValuesResult(t *testing.T) {
+	t.Parallel()
+
+	fresh := map[dirclient.FilterCategory][]string{dirclient.FilterSkill: {optNLP}}
+	prev := newFilterValuesFrom(map[dirclient.FilterCategory][]string{dirclient.FilterSkill: {optTranslation}})
+	errFetch := errors.New("fetch failed")
+
+	t.Run("success replaces options", func(t *testing.T) {
+		t.Parallel()
+		next, loaded, failed := applyFilterValuesResult(prev, true, fresh, nil)
+		if !loaded || failed || !next.skills[optNLP] || next.skills[optTranslation] {
+			t.Errorf("got loaded=%v failed=%v skills=%v", loaded, failed, next.skills)
+		}
+		if n := filterValuesNotice(loaded, failed); n != "" {
+			t.Errorf("notice = %q, want empty", n)
+		}
+	})
+
+	t.Run("failure after success keeps stale options", func(t *testing.T) {
+		t.Parallel()
+		next, loaded, failed := applyFilterValuesResult(prev, true, nil, errFetch)
+		if next != prev || !loaded || !failed {
+			t.Errorf("got same=%v loaded=%v failed=%v", next == prev, loaded, failed)
+		}
+		if n := filterValuesNotice(loaded, failed); !strings.Contains(n, "stale") {
+			t.Errorf("notice = %q, want stale", n)
+		}
+	})
+
+	t.Run("failure before any success leaves options empty", func(t *testing.T) {
+		t.Parallel()
+		next, loaded, failed := applyFilterValuesResult(prev, false, nil, errFetch)
+		if loaded || !failed || len(next.skills) != 0 {
+			t.Errorf("got loaded=%v failed=%v skills=%v", loaded, failed, next.skills)
+		}
+		if n := filterValuesNotice(loaded, failed); !strings.Contains(n, "unavailable") {
+			t.Errorf("notice = %q, want unavailable", n)
+		}
+	})
 }

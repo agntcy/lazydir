@@ -846,7 +846,8 @@ func (app *Gui) pollReconcile(ctx context.Context, client *dirclient.Client) {
 				}
 				app.clearSyncState()
 				// Refetch the current page so the synced records land as regular
-				// server rows (with fresh publish/option data).
+				// server rows (with fresh publish data); filter options are refreshed by the
+				// forced ListFilterValues fetch below.
 				app.startQuery(false)
 				app.startFilterValuesFetch(true)
 				app.renderStatus(g)

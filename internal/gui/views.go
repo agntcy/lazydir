@@ -59,11 +59,9 @@ func (app *Gui) renderFiltersView(g *gocui.Gui) {
 // are rendered in the category's color instead of a [ ]/[x] checkbox.
 func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 	title := titleFilters
-	if app.state.filterValuesFailed {
-		// Non-fatal: ListFilterValues failed (e.g. Unimplemented on an older
-		// server), so the pick-lists are empty. Queries still work.
-		title += "  [options unavailable]"
-	}
+	// Non-fatal: ListFilterValues failed (e.g. Unimplemented on an older
+	// server, or a transient error on refetch). Queries still work.
+	title += filterValuesNotice(app.state.filterValuesLoaded, app.state.filterValuesFailed)
 	if app.state.filters.filterQuery != "" {
 		title += fmt.Sprintf("  /: %s", app.state.filters.filterQuery)
 	}

@@ -143,7 +143,8 @@ type appState struct {
 	// fetches; filterValuesFailed records that the last fetch failed so
 	// non-forced triggers do not retry it on every query (an older server
 	// returns Unimplemented forever) and the Filters panel title can show a
-	// notice. filterValuesCancel stops an in-flight fetch.
+	// notice ("unavailable" if nothing was ever loaded, "stale" if earlier
+	// values are kept). filterValuesCancel stops an in-flight fetch.
 	filterValuesLoaded  bool
 	filterValuesLoading bool
 	filterValuesFailed  bool
@@ -151,8 +152,9 @@ type appState struct {
 
 	// classEntries caches enriched display info (ID, caption) for OASF
 	// taxonomy classes. Records may span multiple OASF schema versions, so
-	// entries are merged from every version seen in the stream; classEntriesVers
-	// tracks which versions have already been fetched (or are in flight).
+	// entries are merged from every version seen in loaded pages or returned by
+	// ListFilterValues; classEntriesVers tracks which versions have already
+	// been fetched (or are in flight).
 	classEntries     map[oasf.ClassType]map[string]oasf.ClassEntry
 	classEntriesVers map[string]bool
 
@@ -848,8 +850,9 @@ func (app *Gui) applyFilters() { app.startQuery(true) }
 // in-flight fetch is cancelled and restarted so the result reflects the latest
 // server state.
 //
-// On failure the options stay empty and the Filters panel title shows a short
-// notice; the connection status is left untouched.
+// On failure the connection status is left untouched and the Filters panel
+// title shows a short notice (see applyFilterValuesResult for what happens to
+// the options).
 func (app *Gui) startFilterValuesFetch(force bool) {
 	client := app.state.client
 	if client == nil {
@@ -875,16 +878,14 @@ func (app *Gui) startFilterValuesFetch(force bool) {
 			app.state.filterValuesLoading = false
 			app.state.filterValuesCancel = nil
 			cancel()
+			next, loaded, failed := applyFilterValuesResult(app.state.filterValues, app.state.filterValuesLoaded, values, err)
+			app.state.filterValues = next
+			app.state.filterValuesLoaded = loaded
+			app.state.filterValuesFailed = failed
 			if err != nil {
-				app.state.filterValues = newFilterValueAggregator()
-				app.state.filterValuesLoaded = false
-				app.state.filterValuesFailed = true
 				app.renderFiltersView(g)
 				return nil
 			}
-			app.state.filterValues = newFilterValuesFrom(values)
-			app.state.filterValuesLoaded = true
-			app.state.filterValuesFailed = false
 			// Resolve captions for every schema version on the server, not just
 			// the ones carried by loaded pages.
 			app.startClassEntriesFetchFor(values[dirclient.FilterSchemaVersion])
@@ -892,6 +893,37 @@ func (app *Gui) startFilterValuesFetch(force bool) {
 			return nil
 		})
 	}()
+}
+
+// applyFilterValuesResult computes the next filter-option state from a
+// ListFilterValues result. On success the options are replaced and the state
+// is loaded and not failed. On failure, options already loaded on this
+// connection are kept (shown as stale) so a transient error after a refetch
+// does not wipe the pick-lists; if nothing was ever loaded (e.g. an older
+// server returning Unimplemented) the options are empty.
+func applyFilterValuesResult(
+	prev *filterValueAggregator, loaded bool, values map[dirclient.FilterCategory][]string, err error,
+) (next *filterValueAggregator, nextLoaded, failed bool) {
+	if err == nil {
+		return newFilterValuesFrom(values), true, false
+	}
+	if loaded && prev != nil {
+		return prev, true, true
+	}
+	return newFilterValueAggregator(), false, true
+}
+
+// filterValuesNotice returns the Filters panel title suffix describing a
+// failed ListFilterValues fetch, or "" when the last fetch succeeded.
+func filterValuesNotice(loaded, failed bool) string {
+	switch {
+	case !failed:
+		return ""
+	case loaded:
+		return "  [options stale]"
+	default:
+		return "  [options unavailable]"
+	}
 }
 
 // syncCounts returns the number of overlay entries that are syncing vs reconciling.
