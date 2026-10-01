@@ -23,7 +23,6 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 │  ▶ Domains             │                                              │
 │  ▶ Modules             │                                              │
 │  ▶ OASF version        │                                              │
-│  ▶ Version             │                                              │
 │  ▶ Author              │                                              │
 │  ▶ Trusted / Verified  │                                              │
 ├────────────────────────│                                              │
@@ -37,18 +36,18 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 
 ### Features by panel
 
-**[1] Connections** — live status for Directory and OASF endpoints; switch servers with `c`/`o`; view connection details with `i`. Fetched records are cached in memory per server, so switching back to a previously visited server displays instantly without a refetch.
+**[1] Connections** — live status for Directory and OASF endpoints; switch servers with `c`/`o`; view connection details with `i`.
 
-**[2] Filters** — collapsible categories (Skills, Domains, Modules, OASF version, Version, Author, Trusted / Verified); toggle options with `enter`/`space`; `/` to search across all categories by name, caption, or ID; `i` to open a popup with the OASF class hierarchy and description.
+**[2] Filters** — collapsible categories (Skills, Domains, Modules, OASF version, Author, Trusted / Verified); toggle options with `enter`/`space`; `/` to search across all categories by name, caption, or ID; `i` to open a popup with the OASF class hierarchy and description.
 
-**[3] Records** — filtered list showing name and version; most filters (skills, domains, modules, version, author, OASF version) are applied instantly client-side from a local cache — only Trusted/Verified requires a server round-trip; multi-version records auto-grouped under collapsible headers; `/` for live name filtering; `i` for record info popup (CID, annotations, schema version, created-at); `y` to yank/copy CID or full JSON; `r` to refetch from the server. The panel title shows a `[⟳ N ago]` indicator of how long ago the records were last synced.
+**[3] Records** — filtered list showing name and version; filtering is server-side and paginated, and the filter option lists come from the server's `ListFilterValues` RPC (only values actually present are offered); records load page by page as you scroll, and the panel title shows the total count; multi-version records auto-grouped under collapsible headers; `/` for live name filtering; `i` for record info popup (CID, annotations, schema version, created-at); `y` to yank/copy CID or full JSON; `r` to refetch records and filter options from the server.
 
 **[0] Preview** — syntax-highlighted JSON of the selected record; scrollable when focused.
 
 ## Prerequisites
 
-- **Go 1.26+**
-- A running [AGNTCY Directory](https://github.com/agntcy/dir) server (local daemon or remote)
+- **Go 1.27.1+**
+- A running [AGNTCY Directory](https://github.com/agntcy/dir) server (local daemon or remote). Server `>= v1.7.1` is needed for filter options (older servers show empty filter lists with `[options unavailable]`); the total record count (`CountRecords`) needs `>= v1.6.3`, otherwise paging still works without it.
 
 To start a local daemon for testing:
 
@@ -136,7 +135,7 @@ gui:
     color2: "cyan"          # domains, class tree, accents
     color3: "magenta"       # modules, timestamps
     color4: "green"         # connected indicator, OASF version, loading
-    color5: "blue"          # version filter, options bar, section headers
+    color5: "blue"          # options bar, popup labels
     color6: "red"           # disconnected indicator
     color7: "brightRed"     # author filter
     color8: "brightYellow"  # trusted / verified filter
@@ -196,15 +195,16 @@ server:
 
 Imported contexts appear in the server selection popup with their context name as a label (e.g. `prod (ads.outshift.io:443)`). If a manually configured entry in `directoryServers` has the same address as an imported context, it replaces the imported version in-place (keeping the imported ordering); entries with new addresses are appended after the imported ones. If the dirctl file is missing or unreadable, lazydir prints a warning to stderr and continues with only the manually configured servers.
 
-### Stream tuning
+### Pagination
 
-Controls how records are batched when streaming from the directory.
+Controls how many records are fetched per page from the directory server.
 
 ```yaml
-stream:
-  firstPageSize: 100  # records in the initial batch (default: 100)
-  batchSize: 50       # records per subsequent batch (default: 50)
+pagination:
+  pageSize: 50  # records per page (default: 50)
 ```
+
+`stream.firstPageSize` is deprecated but still honoured when `pagination.pageSize` is not set; `stream.batchSize` is ignored.
 
 ## Architecture
 

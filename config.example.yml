@@ -7,7 +7,7 @@ gui:
     color2: "cyan" # domains, class tree, accents
     color3: "magenta" # modules, timestamps
     color4: "green" # connected indicator, OASF version, loading
-    color5: "blue" # version filter, options bar, section headers
+    color5: "blue" # options bar, popup labels
     color6: "red" # disconnected indicator
     color7: "brightRed" # author filter
     color8: "brightYellow" # trusted filter
@@ -41,6 +41,5 @@ server:
     - "https://schema.oasf.outshift.com"
   oasfTimeout: 10 # seconds for OASF HTTP requests
 
-stream:
-  firstPageSize: 50
-  batchSize: 100
+pagination:
+  pageSize: 50 # records per page (stream.firstPageSize is deprecated but still honoured)

@@ -28,7 +28,7 @@ const (
 // binding describes a single keybinding for display purposes.
 type binding struct {
 	key         string // e.g. "enter", "↑↓", "h/l"
-	description string // e.g. "select", hintNavigate
+	description string // e.g. "select", "navigate"
 	showInBar   bool   // shown in the bottom options bar
 }
 

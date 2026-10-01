@@ -20,7 +20,7 @@ type Theme struct {
 	Color2  string // default: cyan         — domains, class tree, accents
 	Color3  string // default: magenta      — modules, timestamps
 	Color4  string // default: green        — connected, OASF version, loading
-	Color5  string // default: blue         — version, options bar, section headers
+	Color5  string // default: blue         — options bar, popup labels
 	Color6  string // default: red          — disconnected indicator
 	Color7  string // default: bright red   — author filter
 	Color8  string // default: bright yellow— trusted filter
