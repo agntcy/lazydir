@@ -145,6 +145,45 @@ func (c *Client) Count(ctx context.Context, queries []Query) (uint32, error) {
 	return resp.GetTotalCount(), nil
 }
 
+// filterValueCategories are the categories the server's ListFilterValues RPC
+// supports. Requesting any other type (e.g. VERSION) fails the whole RPC.
+var filterValueCategories = []FilterCategory{
+	FilterSkill, FilterDomain, FilterModule, FilterAuthor, FilterSchemaVersion,
+}
+
+// ListFilterValues returns the distinct values present on the server for each
+// supported filter category, as sorted by the server.
+func (c *Client) ListFilterValues(ctx context.Context) (map[FilterCategory][]string, error) {
+	fields := make([]searchv1.RecordQueryType, 0, len(filterValueCategories))
+	for _, cat := range filterValueCategories {
+		fields = append(fields, Query{Category: cat}.toRPC().GetType())
+	}
+	resp, err := c.c.ListFilterValues(ctx, &searchv1.ListFilterValuesRequest{Fields: fields})
+	if err != nil {
+		return nil, fmt.Errorf("listing filter values: %w", err)
+	}
+	return filterValuesFromRPC(resp), nil
+}
+
+// filterValuesFromRPC converts a ListFilterValues response into a map keyed by
+// FilterCategory, skipping fields outside filterValueCategories.
+func filterValuesFromRPC(resp *searchv1.ListFilterValuesResponse) map[FilterCategory][]string {
+	byType := make(map[searchv1.RecordQueryType]FilterCategory, len(filterValueCategories))
+	for _, cat := range filterValueCategories {
+		byType[Query{Category: cat}.toRPC().GetType()] = cat
+	}
+	out := make(map[FilterCategory][]string)
+	for _, f := range resp.GetFields() {
+		if f == nil {
+			continue
+		}
+		if cat, ok := byType[f.GetField()]; ok {
+			out[cat] = f.GetValues()
+		}
+	}
+	return out
+}
+
 // Page fetches a single page of records matching queries using server-side
 // limit/offset pagination. exhausted is true when the server returned fewer
 // than limit raw records, meaning there is no further page. The raw count

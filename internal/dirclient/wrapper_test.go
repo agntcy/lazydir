@@ -263,3 +263,56 @@ func TestQueryToRPC_Name(t *testing.T) {
 		t.Error("expected Negate=false by default")
 	}
 }
+
+func TestFilterValuesFromRPC(t *testing.T) {
+	t.Parallel()
+
+	fv := func(f searchv1.RecordQueryType, vals ...string) *searchv1.ListFilterValuesResponse_FieldValues {
+		return &searchv1.ListFilterValuesResponse_FieldValues{Field: f, Values: vals}
+	}
+
+	t.Run("maps all five fields", func(t *testing.T) {
+		t.Parallel()
+		resp := &searchv1.ListFilterValuesResponse{Fields: []*searchv1.ListFilterValuesResponse_FieldValues{
+			fv(searchv1.RecordQueryType_RECORD_QUERY_TYPE_SKILL_NAME, "s1", "s2"),
+			fv(searchv1.RecordQueryType_RECORD_QUERY_TYPE_DOMAIN_NAME, "d1"),
+			fv(searchv1.RecordQueryType_RECORD_QUERY_TYPE_MODULE_NAME, "m1"),
+			fv(searchv1.RecordQueryType_RECORD_QUERY_TYPE_AUTHOR, "a1"),
+			fv(searchv1.RecordQueryType_RECORD_QUERY_TYPE_SCHEMA_VERSION, testSchemaVer),
+		}}
+		got := filterValuesFromRPC(resp)
+		want := map[FilterCategory][]string{
+			FilterSkill:         {"s1", "s2"},
+			FilterDomain:        {"d1"},
+			FilterModule:        {"m1"},
+			FilterAuthor:        {"a1"},
+			FilterSchemaVersion: {testSchemaVer},
+		}
+		if len(got) != len(want) {
+			t.Fatalf("got %d categories, want %d: %v", len(got), len(want), got)
+		}
+		for cat, vals := range want {
+			if strings.Join(got[cat], ",") != strings.Join(vals, ",") {
+				t.Errorf("category %v = %v, want %v", cat, got[cat], vals)
+			}
+		}
+	})
+
+	t.Run("ignores unsupported and nil fields", func(t *testing.T) {
+		t.Parallel()
+		resp := &searchv1.ListFilterValuesResponse{Fields: []*searchv1.ListFilterValuesResponse_FieldValues{
+			fv(searchv1.RecordQueryType_RECORD_QUERY_TYPE_VERSION, "v1"),
+			nil,
+		}}
+		if got := filterValuesFromRPC(resp); len(got) != 0 {
+			t.Errorf("expected empty map, got %v", got)
+		}
+	})
+
+	t.Run("empty response", func(t *testing.T) {
+		t.Parallel()
+		if got := filterValuesFromRPC(&searchv1.ListFilterValuesResponse{}); got == nil || len(got) != 0 {
+			t.Errorf("expected empty non-nil map, got %v", got)
+		}
+	})
+}
