@@ -311,6 +311,9 @@ func (app *Gui) deleteRecord(cid string) {
 			return nil
 		}
 		app.removeRecordFromState(cid)
+		// The deleted record may have carried the last instance of some
+		// filter values; refetch so they drop out of the pick-lists.
+		app.startFilterValuesFetch(true)
 		app.renderRecordsView(g)
 		app.renderFiltersView(g)
 		app.autoPreviewRecord(g)
@@ -845,6 +848,7 @@ func (app *Gui) pollReconcile(ctx context.Context, client *dirclient.Client) {
 				// Refetch the current page so the synced records land as regular
 				// server rows (with fresh publish/option data).
 				app.startQuery(false)
+				app.startFilterValuesFetch(true)
 				app.renderStatus(g)
 				return nil
 			})

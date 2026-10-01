@@ -189,6 +189,14 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.publishEnriching = false
 	app.state.publishOverrides = nil
 
+	if app.state.filterValuesCancel != nil {
+		app.state.filterValuesCancel()
+		app.state.filterValuesCancel = nil
+	}
+	app.state.filterValuesLoading = false
+	app.state.filterValuesLoaded = false
+	app.state.filterValuesFailed = false
+
 	// Cancel any in-flight sync pollers (runSync/pollSync/pollReconcile) so they
 	// do not bleed into the new server, and reset the sync tracking fields. The
 	// pollers' g.Update closures are ctx-guarded, so a late update after this

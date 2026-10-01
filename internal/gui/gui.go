@@ -133,10 +133,21 @@ type appState struct {
 	recordInfoError   bool   // true when recordInfoText is an error message
 	recordInfoLoading bool   // fetch in progress
 
-	// distinct values usable as filter options for each category, growing
-	// monotonically across every stream (we never forget an option once
-	// we've seen it, even if the next filtered stream wouldn't include it).
+	// distinct values usable as filter options for each category, as returned
+	// by the server's ListFilterValues RPC (complete and present-only). Empty
+	// until the first successful fetch, or when the server does not support it.
 	filterValues *filterValueAggregator
+
+	// ListFilterValues fetch state, reset per connection. filterValuesLoaded is
+	// true once a fetch succeeded; filterValuesLoading guards against duplicate
+	// fetches; filterValuesFailed records that the last fetch failed so
+	// non-forced triggers do not retry it on every query (an older server
+	// returns Unimplemented forever) and the Filters panel title can show a
+	// notice. filterValuesCancel stops an in-flight fetch.
+	filterValuesLoaded  bool
+	filterValuesLoading bool
+	filterValuesFailed  bool
+	filterValuesCancel  context.CancelFunc
 
 	// classEntries caches enriched display info (ID, caption) for OASF
 	// taxonomy classes. Records may span multiple OASF schema versions, so
@@ -758,9 +769,9 @@ func (app *Gui) startQuery(resetCursor bool) {
 			app.state.dataFetchedAt = time.Now()
 			app.startReconnectLoop()
 			app.startPublishEnrichment()
+			app.startFilterValuesFetch(false)
 			app.maybeStartClassEntriesFetch(recs)
-			app.ingestPageOptions(recs) // interim option aggregation
-			app.rebuildRecordRows()     // flat renderer
+			app.rebuildRecordRows() // flat renderer
 			app.renderRecordsView(g)
 			app.renderFiltersView(g)
 			app.renderDirectory(g)
@@ -806,7 +817,6 @@ func (app *Gui) loadNextPage() {
 			}
 			app.state.page.appendPage(recs, exhausted)
 			app.maybeStartClassEntriesFetch(recs)
-			app.ingestPageOptions(recs)
 			app.rebuildRecordRows()
 			app.renderRecordsView(g)
 			app.renderFiltersView(g)
@@ -827,17 +837,61 @@ func (app *Gui) pageSize() int {
 // resetting the cursor to the first row.
 func (app *Gui) applyFilters() { app.startQuery(true) }
 
-// ingestPageOptions feeds filter-option values from a fetched page into the
-// aggregator. INTERIM (Phase 1): options are only as complete as the pages
-// loaded so far. Phase 2 replaces this with ListRecordValues (present-only,
-// complete). See docs/superpowers/specs/2026-08-11-lazydir-pagination-design.md.
-func (app *Gui) ingestPageOptions(recs []*dirclient.RecordSummary) {
-	if app.state.filterValues == nil {
-		app.state.filterValues = newFilterValueAggregator()
+// startFilterValuesFetch fetches the complete, present-only filter option
+// values from the server's ListFilterValues RPC in the background and replaces
+// app.state.filterValues with the result. Must be called on the GUI goroutine.
+//
+// Non-forced calls (the per-query trigger) are no-ops once values are loaded,
+// while a fetch is in flight, or after a failure on the current connection, so
+// an older server without the RPC is asked once per connection, not per query.
+// Forced calls (refresh, delete, post-sync reconcile) always fetch: an
+// in-flight fetch is cancelled and restarted so the result reflects the latest
+// server state.
+//
+// On failure the options stay empty and the Filters panel title shows a short
+// notice; the connection status is left untouched.
+func (app *Gui) startFilterValuesFetch(force bool) {
+	client := app.state.client
+	if client == nil {
+		return
 	}
-	for _, r := range recs {
-		app.state.filterValues.add(r)
+	if !force && (app.state.filterValuesLoaded || app.state.filterValuesLoading || app.state.filterValuesFailed) {
+		return
 	}
+	if app.state.filterValuesCancel != nil {
+		app.state.filterValuesCancel()
+	}
+	app.state.filterValuesLoading = true
+	ctx, cancel := context.WithCancel(context.Background())
+	app.state.filterValuesCancel = cancel
+
+	go func() {
+		values, err := client.ListFilterValues(ctx)
+
+		app.g.Update(func(g *gocui.Gui) error {
+			if ctx.Err() != nil {
+				return nil // superseded by a newer fetch or a server switch
+			}
+			app.state.filterValuesLoading = false
+			app.state.filterValuesCancel = nil
+			cancel()
+			if err != nil {
+				app.state.filterValues = newFilterValueAggregator()
+				app.state.filterValuesLoaded = false
+				app.state.filterValuesFailed = true
+				app.renderFiltersView(g)
+				return nil
+			}
+			app.state.filterValues = newFilterValuesFrom(values)
+			app.state.filterValuesLoaded = true
+			app.state.filterValuesFailed = false
+			// Resolve captions for every schema version on the server, not just
+			// the ones carried by loaded pages.
+			app.startClassEntriesFetchFor(values[dirclient.FilterSchemaVersion])
+			app.renderFiltersView(g)
+			return nil
+		})
+	}()
 }
 
 // syncCounts returns the number of overlay entries that are syncing vs reconciling.
@@ -981,7 +1035,17 @@ const defaultInputDebounceDelay = 150
 //
 // It must be called on the GUI goroutine so access to classEntriesVers is safe.
 func (app *Gui) maybeStartClassEntriesFetch(summaries []*dirclient.RecordSummary) {
-	for _, v := range distinctNewSchemaVersions(summaries, app.state.classEntriesVers) {
+	app.startClassEntriesFetchFor(distinctNewSchemaVersions(summaries, app.state.classEntriesVers))
+}
+
+// startClassEntriesFetchFor kicks off a background taxonomy fetch for each
+// given OASF schema version that is non-empty and not already fetched (or in
+// flight). Must be called on the GUI goroutine.
+func (app *Gui) startClassEntriesFetchFor(versions []string) {
+	for _, v := range versions {
+		if v == "" || app.state.classEntriesVers[v] {
+			continue
+		}
 		if app.state.classEntriesVers == nil {
 			app.state.classEntriesVers = map[string]bool{}
 		}

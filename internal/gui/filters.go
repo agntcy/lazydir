@@ -12,9 +12,10 @@ import (
 	"github.com/agntcy/lazydir/internal/oasf"
 )
 
-// filterValueAggregator collects the unique values seen in the streamed
-// records for each filter category. Values become available in the [2]
-// Filters options view as soon as a record carrying them arrives.
+// filterValueAggregator holds the unique values available as options for each
+// filter category in the [2] Filters panel. It is populated from the server's
+// ListFilterValues RPC (see newFilterValuesFrom), which returns complete,
+// present-only values for the whole registry.
 type filterValueAggregator struct {
 	skills        map[string]bool
 	domains       map[string]bool
@@ -33,25 +34,34 @@ func newFilterValueAggregator() *filterValueAggregator {
 	}
 }
 
-// add folds one record's filterable fields into the aggregator.
-func (a *filterValueAggregator) add(r *dirclient.RecordSummary) {
-	for _, v := range r.Skills {
-		a.skills[v] = true
-	}
-	for _, v := range r.Domains {
-		a.domains[v] = true
-	}
-	for _, v := range r.Modules {
-		a.modules[v] = true
-	}
-	for _, v := range r.Authors {
-		if v != "" {
-			a.authors[v] = true
+// newFilterValuesFrom builds an aggregator from a ListFilterValues result.
+// Categories without a filter-panel counterpart are ignored, as are empty
+// values.
+func newFilterValuesFrom(m map[dirclient.FilterCategory][]string) *filterValueAggregator {
+	a := newFilterValueAggregator()
+	for cat, values := range m {
+		var set map[string]bool
+		switch cat {
+		case dirclient.FilterSkill:
+			set = a.skills
+		case dirclient.FilterDomain:
+			set = a.domains
+		case dirclient.FilterModule:
+			set = a.modules
+		case dirclient.FilterSchemaVersion:
+			set = a.schemaVersion
+		case dirclient.FilterAuthor:
+			set = a.authors
+		default:
+			continue
+		}
+		for _, v := range values {
+			if v != "" {
+				set[v] = true
+			}
 		}
 	}
-	if r.SchemaVersion != "" {
-		a.schemaVersion[r.SchemaVersion] = true
-	}
+	return a
 }
 
 // filterCategory identifies a filterable record field shown in the [2] Filters
@@ -137,10 +147,10 @@ func newFilterState() filterState {
 }
 
 // optionsFor returns the option labels available for a given category. Options
-// come from the filterValues aggregator, which grows monotonically as pages are
-// fetched (INTERIM Phase 1; Phase 2 replaces this with ListRecordValues).
-// Currently-applied selections are always included so the user can deselect
-// them.
+// come from the filterValues aggregator, which is replaced wholesale by each
+// successful ListFilterValues fetch (and is empty when the server does not
+// support it). Currently-applied selections are always included so the user
+// can deselect them.
 //
 // Class categories (skills, domains, modules) are sorted by OASF ID when
 // enrichment data is available; other categories are sorted alphabetically.

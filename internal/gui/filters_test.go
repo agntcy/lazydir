@@ -107,32 +107,49 @@ func TestAggregatorFieldFor(t *testing.T) {
 	}
 }
 
-func TestAggregator_Add(t *testing.T) {
+func TestNewFilterValuesFrom(t *testing.T) {
 	t.Parallel()
 
-	a := newFilterValueAggregator()
-	a.add(&dirclient.RecordSummary{
-		Skills:        []string{optNLP, optTranslation},
-		Domains:       []string{optSecurity},
-		Modules:       []string{"auth"},
-		Authors:       []string{"alice", ""},
-		Version:       ver100,
-		SchemaVersion: "1.0",
-	})
-	a.add(&dirclient.RecordSummary{
-		Skills:  []string{optNLP},
-		Authors: []string{"bob"},
-		Version: "2.0.0",
+	a := newFilterValuesFrom(map[dirclient.FilterCategory][]string{
+		dirclient.FilterSkill:         {optNLP, optTranslation},
+		dirclient.FilterDomain:        {optSecurity},
+		dirclient.FilterModule:        {classRuntimeModel},
+		dirclient.FilterAuthor:        {"carol", ""},
+		dirclient.FilterSchemaVersion: {ver100, ver070},
+		dirclient.FilterName:          {"ignored"},
 	})
 
-	if len(a.skills) != 2 {
-		t.Errorf("skills = %v, want 2 entries", a.skills)
+	tests := []struct {
+		name string
+		got  map[string]bool
+		want []string
+	}{
+		{"skillSet", a.skills, []string{optNLP, optTranslation}},
+		{"domainSet", a.domains, []string{optSecurity}},
+		{"moduleSet", a.modules, []string{classRuntimeModel}},
+		{"authorSet", a.authors, []string{"carol"}},
+		{"schemaVersionSet", a.schemaVersion, []string{ver100, ver070}},
 	}
-	if len(a.authors) != 2 {
-		t.Errorf("authors = %v, want 2 (empty string excluded)", a.authors)
+	for _, tt := range tests {
+		if len(tt.got) != len(tt.want) {
+			t.Errorf("%s = %v, want %v", tt.name, tt.got, tt.want)
+			continue
+		}
+		for _, w := range tt.want {
+			if !tt.got[w] {
+				t.Errorf("%s missing %q", tt.name, w)
+			}
+		}
 	}
-	if !a.skills[optNLP] || !a.skills[optTranslation] {
-		t.Error("expected nlp and translation in skills")
+
+	for _, set := range []map[string]bool{a.skills, a.domains, a.modules, a.authors, a.schemaVersion} {
+		if set["ignored"] {
+			t.Error("unknown category value leaked into a filter set")
+		}
+	}
+
+	if e := newFilterValuesFrom(nil); len(e.skills)+len(e.domains)+len(e.modules)+len(e.authors)+len(e.schemaVersion) != 0 {
+		t.Error("nil input should yield an empty aggregator")
 	}
 }
 

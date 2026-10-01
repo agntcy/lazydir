@@ -445,5 +445,6 @@ func (app *Gui) refresh(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 	app.startQuery(true)
+	app.startFilterValuesFetch(true)
 	return nil
 }
