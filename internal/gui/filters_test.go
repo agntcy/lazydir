@@ -401,16 +401,16 @@ func TestApplyFilterValuesResult(t *testing.T) {
 
 func TestFilterValuesUnsupported(t *testing.T) {
 	t.Parallel()
-	if !filterValuesUnsupported(status.Error(codes.Unimplemented, "nope")) {
+	if !rpcUnimplemented(status.Error(codes.Unimplemented, "nope")) {
 		t.Error("Unimplemented should be unsupported (sticky)")
 	}
-	if filterValuesUnsupported(status.Error(codes.Unavailable, "down")) {
+	if rpcUnimplemented(status.Error(codes.Unavailable, "down")) {
 		t.Error("Unavailable should be retryable")
 	}
-	if filterValuesUnsupported(errors.New("plain")) {
+	if rpcUnimplemented(errors.New("plain")) {
 		t.Error("plain error should be retryable")
 	}
-	if filterValuesUnsupported(nil) {
+	if rpcUnimplemented(nil) {
 		t.Error("nil error should not be unsupported")
 	}
 }

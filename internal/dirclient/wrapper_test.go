@@ -316,3 +316,36 @@ func TestFilterValuesFromRPC(t *testing.T) {
 		}
 	})
 }
+
+func TestSummaryFromRPC(t *testing.T) {
+	t.Parallel()
+
+	s := summaryFromRPC(&searchv1.RecordSummary{
+		Cid:           "bafytestcid",
+		Name:          " agent\nname ",
+		Version:       "v2.0.0\nrc1",
+		SchemaVersion: testSchemaVer,
+		Authors:       []string{"carol"},
+		Skills:        []string{"nlp/summarization"},
+		Domains:       []string{"technology/software"},
+		Modules:       []string{"core/llm"},
+	})
+	if s.CID != "bafytestcid" || s.SchemaVersion != testSchemaVer {
+		t.Fatalf("identity fields not mapped: %+v", s)
+	}
+	if s.Name != "agent name" || s.Version != "v2.0.0 rc1" {
+		t.Fatalf("name/version not sanitized: %q, %q", s.Name, s.Version)
+	}
+	if len(s.Authors) != 1 || len(s.Skills) != 1 || len(s.Domains) != 1 || len(s.Modules) != 1 {
+		t.Fatalf("lists not mapped: %+v", s)
+	}
+}
+
+func TestSummaryFromRPC_EmptyNameFallsBackToCID(t *testing.T) {
+	t.Parallel()
+
+	s := summaryFromRPC(&searchv1.RecordSummary{Cid: "bafy0123456789abcdefghijklmnop"})
+	if s.Name != "bafy0123456789abcdef" {
+		t.Fatalf("expected CID-prefix name, got %q", s.Name)
+	}
+}

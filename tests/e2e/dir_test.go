@@ -230,6 +230,63 @@ func TestDir_PageStream(t *testing.T) {
 	}
 }
 
+func TestDir_ListSummaries(t *testing.T) {
+	addr := requireDaemon(t)
+	dirctl := dirctlBin(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cid, _ := seedRecord(t, ctx, addr, dirctl)
+	seedRecord(t, ctx, addr, dirctl)
+
+	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
+	if err != nil {
+		t.Fatalf("Connect(%s): %v", addr, err)
+	}
+	defer c.Close()
+
+	first, err := c.ListSummaries(ctx, nil, 1, 0)
+	if err != nil {
+		t.Fatalf("ListSummaries: %v", err)
+	}
+	if len(first.Records) != 1 || !first.HasMore {
+		t.Errorf("expected 1 record and HasMore with limit 1, got %d HasMore=%v", len(first.Records), first.HasMore)
+	}
+	total, err := c.Count(ctx, nil)
+	if err != nil {
+		t.Fatalf("Count: %v", err)
+	}
+	if first.Total != total {
+		t.Errorf("Total %d does not match CountRecords %d", first.Total, total)
+	}
+
+	all, err := c.ListSummaries(ctx, nil, 100, 0)
+	if err != nil {
+		t.Fatalf("ListSummaries(all): %v", err)
+	}
+	var seeded *dirclient.RecordSummary
+	for _, s := range all.Records {
+		if s.CID == cid {
+			seeded = s
+		}
+	}
+	if seeded == nil {
+		t.Fatalf("seeded record %s not listed", cid)
+	}
+	if seeded.Name == "" || seeded.SchemaVersion == "" || len(seeded.Skills) == 0 || len(seeded.Authors) == 0 {
+		t.Errorf("seeded summary missing fields: %+v", seeded)
+	}
+
+	none, err := c.ListSummaries(ctx, nil, 1, 1_000_000)
+	if err != nil {
+		t.Fatalf("ListSummaries(large offset): %v", err)
+	}
+	if len(none.Records) != 0 || none.HasMore {
+		t.Errorf("expected empty, no more past the end, got %d HasMore=%v", len(none.Records), none.HasMore)
+	}
+}
+
 func TestDir_PushAndPull(t *testing.T) {
 	addr := requireDaemon(t)
 	dirctl := dirctlBin(t)

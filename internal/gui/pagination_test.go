@@ -100,3 +100,15 @@ func TestCompleteQueryPage_BufferedRefreshKeepsCursor(t *testing.T) {
 		t.Fatalf("unexpected page state: offset=%d exhausted=%v", app.state.page.offset, app.state.page.exhausted)
 	}
 }
+
+func TestPageState_AddSummaryPage(t *testing.T) {
+	var p pageState
+	p.addSummaryPage(&dirclient.SummaryPage{Records: []*dirclient.RecordSummary{rec("a"), rec("b")}, HasMore: true, Total: 3})
+	if p.offset != 2 || len(p.records) != 2 || p.exhausted || !p.totalKnown || p.total != 3 {
+		t.Fatalf("after first page: %+v", p)
+	}
+	p.addSummaryPage(&dirclient.SummaryPage{Records: []*dirclient.RecordSummary{rec("c")}, Total: 3})
+	if p.offset != 3 || len(p.records) != 3 || !p.exhausted || p.records[2].CID != "c" {
+		t.Fatalf("after last page: %+v", p)
+	}
+}

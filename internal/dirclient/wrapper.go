@@ -185,6 +185,54 @@ func filterValuesFromRPC(resp *searchv1.ListFilterValuesResponse) map[FilterCate
 	return out
 }
 
+// SummaryPage is one page of record summaries from ListSummaries.
+type SummaryPage struct {
+	Records []*RecordSummary
+	HasMore bool   // the server has records beyond this page
+	Total   uint32 // matches ignoring limit/offset
+}
+
+// ListSummaries fetches one page of record summaries matching queries via the
+// SearchService.ListRecordSummaries RPC (dir >= v1.8.0), which answers from
+// the server's database without pulling each record from its store. Older
+// servers return codes.Unimplemented; callers fall back to PageStream and
+// Count.
+func (c *Client) ListSummaries(ctx context.Context, queries []Query, limit, offset uint32) (*SummaryPage, error) {
+	l, o := limit, offset
+	resp, err := c.c.ListRecordSummaries(ctx, &searchv1.ListRecordSummariesRequest{
+		Queries: buildRPCQueries(queries),
+		Limit:   &l,
+		Offset:  &o,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing record summaries: %w", err)
+	}
+	page := &SummaryPage{
+		Records: make([]*RecordSummary, 0, len(resp.GetRecords())),
+		HasMore: resp.GetHasMore(),
+		Total:   resp.GetTotalCount(),
+	}
+	for _, r := range resp.GetRecords() {
+		page.Records = append(page.Records, summaryFromRPC(r))
+	}
+	return page, nil
+}
+
+// summaryFromRPC converts a server-side record summary, normalizing it the
+// same way extractSummary does.
+func summaryFromRPC(r *searchv1.RecordSummary) *RecordSummary {
+	return normalizeSummary(&RecordSummary{
+		CID:           r.GetCid(),
+		Name:          r.GetName(),
+		Version:       r.GetVersion(),
+		SchemaVersion: r.GetSchemaVersion(),
+		Authors:       r.GetAuthors(),
+		Skills:        r.GetSkills(),
+		Domains:       r.GetDomains(),
+		Modules:       r.GetModules(),
+	})
+}
+
 // Page fetches a single page of records matching queries using server-side
 // limit/offset pagination. exhausted is true when the server returned fewer
 // than limit raw records, meaning there is no further page. The raw count
@@ -678,11 +726,17 @@ func extractSummary(record *corev1.Record) *RecordSummary {
 		return nil
 	}
 
+	return normalizeSummary(s)
+}
+
+// normalizeSummary sanitizes the displayed fields and falls back to a CID
+// prefix for nameless records.
+func normalizeSummary(s *RecordSummary) *RecordSummary {
 	s.Name = sanitizeField(s.Name)
 	s.Version = sanitizeField(s.Version)
 
-	if s.Name == "" && cid != "" {
-		s.Name = cid[:min(20, len(cid))]
+	if s.Name == "" && s.CID != "" {
+		s.Name = s.CID[:min(20, len(s.CID))]
 	}
 
 	return s

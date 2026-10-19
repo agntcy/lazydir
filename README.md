@@ -46,8 +46,8 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 
 ## Prerequisites
 
-- **Go 1.27.1+**
-- A running [AGNTCY Directory](https://github.com/agntcy/dir) server (local daemon or remote). Server `>= v1.7.1` is needed for filter options (older servers show empty filter lists with `[options unavailable]`); the total record count (`CountRecords`) needs `>= v1.6.3`, otherwise paging still works without it.
+- **Go 1.27.2+**
+- A running [AGNTCY Directory](https://github.com/agntcy/dir) server (local daemon or remote). Server `>= v1.8.0` lists records straight from its database with `ListRecordSummaries`; older servers fall back to the slower `SearchRecords` stream. Filter options need `>= v1.7.1` (older servers show empty filter lists with `[options unavailable]`), and the total record count on the fallback path needs `>= v1.6.3`.
 
 To start a local daemon for testing:
 

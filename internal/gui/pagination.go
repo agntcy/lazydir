@@ -40,3 +40,14 @@ func (p *pageState) finishPage(rawCount uint32, exhausted bool) {
 	p.offset += rawCount
 	p.exhausted = exhausted
 }
+
+// addSummaryPage applies one ListRecordSummaries page: its records are
+// appended, the offset advances past them, and the server's total and
+// has-more flag replace the previous ones.
+func (p *pageState) addSummaryPage(page *dirclient.SummaryPage) {
+	p.records = append(p.records, page.Records...)
+	p.offset += uint32(len(page.Records)) //nolint:gosec // a page holds at most pageSize records
+	p.exhausted = !page.HasMore
+	p.total = page.Total
+	p.totalKnown = true
+}
