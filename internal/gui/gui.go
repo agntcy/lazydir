@@ -760,12 +760,14 @@ func (app *Gui) startQuery(resetCursor bool) {
 			}
 			app.state.page.loading = false
 			if err != nil {
-				// Surface the failure and start the health/reconnect loop so
-				// the connection can recover.
+				// Surface the failure in a Records popup, so it is not
+				// mistaken for an empty result, and start the
+				// health/reconnect loop so the connection can recover.
 				app.rebuildRecordRows()
 				app.state.dirStatus = connFailed
 				app.state.dirError = queryErrorText(err)
 				app.state.dirUnsupported = rpcUnimplemented(err)
+				app.showRecordsError(g, app.state.dirError)
 				app.startReconnectLoop()
 				app.renderRecordsView(g)
 				app.renderDirectory(g)
@@ -781,6 +783,16 @@ func (app *Gui) startQuery(resetCursor bool) {
 	}()
 }
 
+// showRecordsError opens the Records info popup with a listing error. Must be
+// called on the GUI goroutine.
+func (app *Gui) showRecordsError(g *gocui.Gui, text string) {
+	app.state.recordInfoCID = ""
+	app.state.recordInfoText = text
+	app.state.recordInfoError = true
+	app.state.recordInfoLoading = false
+	app.openInfoPopup(g, viewRecords)
+}
+
 // markQueryResponded applies the side effects of the first server response
 // to a query: a response confirms the connection is healthy, so it marks the
 // server connected and starts the health/reconnect loop, publish enrichment
@@ -791,6 +803,9 @@ func (app *Gui) markQueryResponded(g *gocui.Gui, resetCursor bool) {
 	app.state.dirStatus = connOK
 	app.state.dirLastConnected = time.Now()
 	app.state.dirError = ""
+	// A successful listing means the server supports ListRecordSummaries,
+	// e.g. after an in-place upgrade, so health pings may report it again.
+	app.state.dirUnsupported = false
 	if app.state.infoPopupPanel == viewDirectory {
 		_ = app.closeInfoPopup(g, nil)
 	}
