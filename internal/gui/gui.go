@@ -53,8 +53,8 @@ type syncStatusEntry struct {
 // the GUI goroutine (inside g.Update callbacks or key handlers).
 type appState struct {
 	// When the currently-displayed records were fetched from the directory.
-	// Set on a fresh stream completion and preserved across cache round-trips
-	// so the records panel can show how stale the data is. Zero if never loaded.
+	// Set when a query's first page lands so the records panel can show how
+	// stale the data is. Zero if never loaded.
 	dataFetchedAt time.Time
 
 	// Publish enrichment. RecordSummary.Published is filled in the background
@@ -127,13 +127,14 @@ type appState struct {
 	// loadedOnce is true once a query has completed (first page landed), used
 	// to gate the "synced N ago" staleness indicator.
 	loadedOnce bool
-	// cancelLoad cancels the current query's fetches: the startQuery page and
-	// count, plus any next-page streams loadNextPage chained onto it.
+	// dirUnsupported is set, per connection, when the server answered
+	// ListRecordSummaries with Unimplemented (dir < v1.8.0). The server stays
+	// marked failed even though it answers pings, so the health loop does not
+	// flap it back to connected and re-run the failing query.
+	dirUnsupported bool
+	// cancelLoad cancels the current query's fetches: the startQuery page plus
+	// any next-page fetches loadNextPage chained onto it.
 	cancelLoad context.CancelFunc
-	// summariesUnsupported is set, per connection, once the server answered
-	// ListRecordSummaries with Unimplemented (dir < v1.8.0); paging then uses
-	// the SearchRecords stream plus a separate CountRecords call.
-	summariesUnsupported bool
 
 	// inline record info toggle (records panel)
 	recordInfoCID     string // CID of the record whose info is expanded, "" if none
@@ -457,6 +458,9 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 					if app.state.client != snap.client {
 						return nil
 					}
+					if app.state.dirUnsupported {
+						return nil // reachable, but too old to list records
+					}
 					prev := app.state.dirStatus
 					app.state.dirStatus = connOK
 					app.state.dirLastConnected = time.Now()
@@ -717,8 +721,7 @@ func (app *Gui) pingOASF(client *oasf.Client) {
 // startQuery resets pagination and fetches the first page plus the total for
 // the current filter + name-query selection. The page and its total come from
 // one ListRecordSummaries call on a background goroutine; the result is
-// applied on the GUI goroutine. Servers without that RPC are switched to
-// streamFirstPage for the rest of the connection.
+// applied on the GUI goroutine.
 //
 // When resetCursor is true the selection resets to the first row; when false
 // the current recordCursor is preserved (clamped by rebuildRecordRows). Both
@@ -749,21 +752,11 @@ func (app *Gui) startQuery(resetCursor bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	app.state.cancelLoad = cancel
 
-	if app.state.summariesUnsupported {
-		app.streamFirstPage(ctx, client, queries, pageSize, resetCursor)
-		return
-	}
-
 	go func() {
 		page, err := client.ListSummaries(ctx, queries, uint32(pageSize), 0)
 		app.g.Update(func(g *gocui.Gui) error {
 			if ctx.Err() != nil {
 				return nil // superseded by a newer query
-			}
-			if rpcUnimplemented(err) {
-				app.state.summariesUnsupported = true
-				app.streamFirstPage(ctx, client, queries, pageSize, resetCursor)
-				return nil
 			}
 			app.state.page.loading = false
 			if err != nil {
@@ -771,7 +764,8 @@ func (app *Gui) startQuery(resetCursor bool) {
 				// the connection can recover.
 				app.rebuildRecordRows()
 				app.state.dirStatus = connFailed
-				app.state.dirError = err.Error()
+				app.state.dirError = queryErrorText(err)
+				app.state.dirUnsupported = rpcUnimplemented(err)
 				app.startReconnectLoop()
 				app.renderRecordsView(g)
 				app.renderDirectory(g)
@@ -787,122 +781,10 @@ func (app *Gui) startQuery(resetCursor bool) {
 	}()
 }
 
-// streamFirstPage is startQuery's fallback for servers older than dir v1.8.0,
-// which lack ListRecordSummaries. The page streams in from SearchRecords while
-// the total is fetched by a parallel CountRecords call, and records are
-// rendered one by one as they arrive, so the first rows appear without waiting
-// for the whole (slow) page. Must be called on the GUI goroutine.
-func (app *Gui) streamFirstPage(
-	ctx context.Context, client *dirclient.Client, queries []dirclient.Query, pageSize int, resetCursor bool,
-) {
-	// The total is fetched in parallel so the records title does not wait for
-	// the (possibly slow) record stream. Errors are ignored: the title falls
-	// back to the loaded-row count while totalKnown is false.
-	go func() {
-		total, err := client.Count(ctx, queries)
-		app.g.Update(func(g *gocui.Gui) error {
-			if ctx.Err() != nil {
-				return nil // superseded by a newer query
-			}
-			if err != nil {
-				return nil
-			}
-			app.state.page.total = total
-			app.state.page.totalKnown = true
-			app.renderRecordsView(g)
-			return nil
-		})
-	}()
-
-	// responded is only read and written inside the GUI-goroutine callbacks
-	// below, so the first-response side effects run exactly once per query
-	// without synchronization.
-	responded := false
-	firstResponse := func(g *gocui.Gui) {
-		if responded {
-			return
-		}
-		responded = true
-		app.markQueryResponded(g, resetCursor)
-	}
-
-	// UpdateAsync (not Update) is used for the stream: it enqueues on the
-	// GUI's FIFO event channel from this goroutine, so records render in
-	// server order and the completion callback runs after the last record.
-	// Update would spawn a goroutine per call and lose that ordering.
-	//
-	// Only the cursor-resetting path streams rows into the view. The silent
-	// refresh buffers the page on this goroutine and applies it in one go at
-	// completion, so the cursor is clamped against the full page.
-	go func() {
-		var buffered []*dirclient.RecordSummary
-		rawCount, exhausted, err := client.PageStream(ctx, queries, uint32(pageSize), 0,
-			func(r *dirclient.RecordSummary) {
-				if !resetCursor {
-					buffered = append(buffered, r)
-					return
-				}
-				app.g.UpdateAsync(func(g *gocui.Gui) error {
-					if ctx.Err() != nil {
-						return nil // superseded by a newer query
-					}
-					app.state.page.addRecord(r)
-					app.maybeStartClassEntriesFetch([]*dirclient.RecordSummary{r})
-					app.rebuildRecordRows() // flat renderer
-					app.renderRecordsView(g)
-					firstResponse(g)
-					return nil
-				})
-			})
-		app.g.UpdateAsync(func(g *gocui.Gui) error {
-			if ctx.Err() != nil {
-				return nil // superseded by a newer query
-			}
-			app.state.page.loading = false
-			if err != nil {
-				// The query failed: surface it and start the health/reconnect
-				// loop so the connection can recover. Rows already received
-				// are kept; the offset advances past them (exhausted stays
-				// false) so a later page does not duplicate them.
-				app.completeQueryPage(buffered, rawCount, false)
-				app.state.dirStatus = connFailed
-				app.state.dirError = err.Error()
-				app.startReconnectLoop()
-				app.renderRecordsView(g)
-				app.renderDirectory(g)
-				return nil
-			}
-			app.completeQueryPage(buffered, rawCount, exhausted)
-			// An empty result (or a buffered silent refresh) is still a
-			// healthy response.
-			firstResponse(g)
-			app.renderRecordsView(g)
-			app.renderFiltersView(g)
-			app.renderDirectory(g)
-			return nil
-		})
-	}()
-}
-
-// completeQueryPage applies a finished page fetch: it adds any records
-// buffered during the stream, advances pagination by the server's raw count
-// and rebuilds the display rows, so an empty result clears the previous
-// query's rows and the cursor is clamped against the full page. Must be
-// called on the GUI goroutine.
-func (app *Gui) completeQueryPage(buffered []*dirclient.RecordSummary, rawCount uint32, exhausted bool) {
-	for _, r := range buffered {
-		app.state.page.addRecord(r)
-	}
-	app.maybeStartClassEntriesFetch(buffered)
-	app.state.page.finishPage(rawCount, exhausted)
-	app.rebuildRecordRows()
-}
-
 // markQueryResponded applies the side effects of the first server response
-// to a query: a response confirms the connection is healthy. startQuery
-// replaced the old records stream, so the side effects that used to live in
-// its OnDone (mark connected, start the health/reconnect loop, publish
-// enrichment, staleness stamp) are re-established here. Both loops are
+// to a query: a response confirms the connection is healthy, so it marks the
+// server connected and starts the health/reconnect loop, publish enrichment
+// and the filter-values fetch, and stamps staleness. Both loops are
 // idempotent (guarded against duplicate goroutines), so firing them on every
 // query is safe. Must be called on the GUI goroutine.
 func (app *Gui) markQueryResponded(g *gocui.Gui, resetCursor bool) {
@@ -940,7 +822,7 @@ func (app *Gui) loadNextPage() {
 
 	// Next-page fetches are not cancelled by cursor moves — only superseded by
 	// a new startQuery (or a server switch). Chaining this fetch's cancel onto
-	// cancelLoad stops a superseded stream early; the queryGen guard below
+	// cancelLoad stops a superseded fetch early; the queryGen guard below
 	// drops any results already queued for the GUI goroutine.
 	ctx, cancel := context.WithCancel(context.Background())
 	if prev := app.state.cancelLoad; prev != nil {
@@ -950,11 +832,6 @@ func (app *Gui) loadNextPage() {
 	}
 	gen := app.state.queryGen
 
-	if app.state.summariesUnsupported {
-		app.streamNextPage(ctx, client, queries, pageSize, offset, gen)
-		return
-	}
-
 	go func() {
 		page, err := client.ListSummaries(ctx, queries, uint32(pageSize), offset)
 		app.g.Update(func(g *gocui.Gui) error {
@@ -963,11 +840,6 @@ func (app *Gui) loadNextPage() {
 			}
 			if ctx.Err() != nil {
 				return nil // query cancelled (e.g. server switch)
-			}
-			if rpcUnimplemented(err) {
-				app.state.summariesUnsupported = true
-				app.streamNextPage(ctx, client, queries, pageSize, offset, gen)
-				return nil
 			}
 			app.state.page.loading = false
 			if err != nil {
@@ -985,52 +857,14 @@ func (app *Gui) loadNextPage() {
 	}()
 }
 
-// streamNextPage is loadNextPage's SearchRecords fallback for servers older
-// than dir v1.8.0, rendering records as they stream in. Must be called on the
-// GUI goroutine.
-func (app *Gui) streamNextPage(
-	ctx context.Context, client *dirclient.Client, queries []dirclient.Query, pageSize int, offset uint32, gen uint64,
-) {
-	// UpdateAsync keeps records and the completion in stream order; see
-	// streamFirstPage.
-	go func() {
-		rawCount, exhausted, err := client.PageStream(ctx, queries, uint32(pageSize), offset,
-			func(r *dirclient.RecordSummary) {
-				app.g.UpdateAsync(func(g *gocui.Gui) error {
-					if gen != app.state.queryGen {
-						return nil // superseded by a newer query; drop this record
-					}
-					if ctx.Err() != nil {
-						return nil // query cancelled (e.g. server switch)
-					}
-					app.state.page.addRecord(r)
-					app.maybeStartClassEntriesFetch([]*dirclient.RecordSummary{r})
-					app.rebuildRecordRows()
-					app.renderRecordsView(g)
-					return nil
-				})
-			})
-		app.g.UpdateAsync(func(g *gocui.Gui) error {
-			if gen != app.state.queryGen {
-				return nil // superseded by a newer query; drop these results
-			}
-			if ctx.Err() != nil {
-				return nil // query cancelled (e.g. server switch)
-			}
-			app.state.page.loading = false
-			if err != nil {
-				// Keep the rows received so far and advance past them so a
-				// retry continues from there instead of duplicating them.
-				app.completeQueryPage(nil, rawCount, false)
-				app.renderRecordsView(g)
-				return nil
-			}
-			app.completeQueryPage(nil, rawCount, exhausted)
-			app.renderRecordsView(g)
-			app.renderFiltersView(g)
-			return nil
-		})
-	}()
+// queryErrorText describes a failed record listing. A server older than dir
+// v1.8.0 lacks ListRecordSummaries; say so instead of showing the raw gRPC
+// error.
+func queryErrorText(err error) string {
+	if rpcUnimplemented(err) {
+		return "server does not support ListRecordSummaries; lazydir requires dir v1.8.0 or newer"
+	}
+	return err.Error()
 }
 
 // pageSize returns the configured page size, defaulting defensively.
@@ -1124,8 +958,7 @@ func applyFilterValuesResult(
 
 // rpcUnimplemented reports whether err means the server does not implement
 // the called RPC (an older dir release). For ListFilterValues it is the only
-// failure not retried by non-forced triggers; for ListRecordSummaries it
-// switches paging to the SearchRecords fallback.
+// failure not retried by non-forced triggers.
 func rpcUnimplemented(err error) bool {
 	return err != nil && status.Code(err) == codes.Unimplemented
 }

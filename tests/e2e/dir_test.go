@@ -122,114 +122,6 @@ func TestDir_Ping(t *testing.T) {
 	}
 }
 
-func TestDir_Count(t *testing.T) {
-	addr := requireDaemon(t)
-	dirctl := dirctlBin(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	seedRecord(t, ctx, addr, dirctl)
-
-	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
-	if err != nil {
-		t.Fatalf("Connect(%s): %v", addr, err)
-	}
-	defer c.Close()
-
-	total, err := c.Count(ctx, nil)
-	if err != nil {
-		t.Fatalf("Count: %v", err)
-	}
-	if total == 0 {
-		t.Fatal("expected at least one record after seeding")
-	}
-
-	t.Logf("counted %d records", total)
-}
-
-func TestDir_Page(t *testing.T) {
-	addr := requireDaemon(t)
-	dirctl := dirctlBin(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	seedRecord(t, ctx, addr, dirctl)
-	seedRecord(t, ctx, addr, dirctl)
-
-	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
-	if err != nil {
-		t.Fatalf("Connect(%s): %v", addr, err)
-	}
-	defer c.Close()
-
-	first, exhausted, err := c.Page(ctx, nil, 1, 0)
-	if err != nil {
-		t.Fatalf("Page: %v", err)
-	}
-	if len(first) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(first))
-	}
-	if exhausted {
-		t.Error("expected not exhausted with 2+ records and limit 1")
-	}
-
-	none, exhausted, err := c.Page(ctx, nil, 1, 1_000_000)
-	if err != nil {
-		t.Fatalf("Page(large offset): %v", err)
-	}
-	if len(none) != 0 || !exhausted {
-		t.Errorf("expected empty+exhausted past the end, got %d exhausted=%v", len(none), exhausted)
-	}
-}
-
-func TestDir_PageStream(t *testing.T) {
-	addr := requireDaemon(t)
-	dirctl := dirctlBin(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	seedRecord(t, ctx, addr, dirctl)
-	seedRecord(t, ctx, addr, dirctl)
-
-	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
-	if err != nil {
-		t.Fatalf("Connect(%s): %v", addr, err)
-	}
-	defer c.Close()
-
-	const limit = 2
-	var streamed int
-	rawCount, exhausted, err := c.PageStream(ctx, nil, limit, 0, func(s *dirclient.RecordSummary) {
-		if s == nil {
-			t.Error("onRecord received nil summary")
-		}
-		streamed++
-	})
-	if err != nil {
-		t.Fatalf("PageStream: %v", err)
-	}
-	if rawCount != limit {
-		t.Errorf("expected rawCount %d with 2+ records seeded, got %d", limit, rawCount)
-	}
-	if exhausted {
-		t.Error("expected not exhausted when rawCount == limit")
-	}
-	if uint32(streamed) > rawCount {
-		t.Errorf("onRecord called %d times, more than rawCount %d", streamed, rawCount)
-	}
-
-	page, _, err := c.Page(ctx, nil, limit, 0)
-	if err != nil {
-		t.Fatalf("Page: %v", err)
-	}
-	if streamed != len(page) {
-		t.Errorf("onRecord called %d times, Page returned %d records", streamed, len(page))
-	}
-}
-
 func TestDir_ListSummaries(t *testing.T) {
 	addr := requireDaemon(t)
 	dirctl := dirctlBin(t)
@@ -253,12 +145,8 @@ func TestDir_ListSummaries(t *testing.T) {
 	if len(first.Records) != 1 || !first.HasMore {
 		t.Errorf("expected 1 record and HasMore with limit 1, got %d HasMore=%v", len(first.Records), first.HasMore)
 	}
-	total, err := c.Count(ctx, nil)
-	if err != nil {
-		t.Fatalf("Count: %v", err)
-	}
-	if first.Total != total {
-		t.Errorf("Total %d does not match CountRecords %d", first.Total, total)
+	if first.Total < 2 {
+		t.Errorf("expected Total >= 2 after seeding two records, got %d", first.Total)
 	}
 
 	all, err := c.ListSummaries(ctx, nil, 100, 0)

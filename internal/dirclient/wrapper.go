@@ -13,7 +13,6 @@ import (
 	routingv1 "github.com/agntcy/dir/api/routing/v1"
 	searchv1 "github.com/agntcy/dir/api/search/v1"
 	"github.com/agntcy/dir/client"
-	"github.com/agntcy/dir/client/streaming"
 	"github.com/agntcy/oasf-sdk/pkg/decoder"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -44,8 +43,7 @@ const (
 )
 
 // RecordSummary is a lightweight representation of a directory record. It
-// exposes only the fields the TUI renders or filters on; everything else from
-// the wire record is discarded by extractSummary.
+// exposes only the fields the TUI renders or filters on.
 type RecordSummary struct {
 	CID           string
 	Name          string
@@ -135,17 +133,6 @@ func (c *Client) Ping(ctx context.Context) error {
 	}
 }
 
-// Count returns the total number of records matching queries via the
-// SearchService.CountRecords RPC. Pagination/sorting are irrelevant to a total.
-func (c *Client) Count(ctx context.Context, queries []Query) (uint32, error) {
-	req := &searchv1.CountRecordsRequest{Queries: buildRPCQueries(queries)}
-	resp, err := c.c.CountRecords(ctx, req)
-	if err != nil {
-		return 0, fmt.Errorf("counting records: %w", err)
-	}
-	return resp.GetTotalCount(), nil
-}
-
 // filterValueCategories are the categories the server's ListFilterValues RPC
 // supports. Requesting any other type (e.g. VERSION) fails the whole RPC.
 var filterValueCategories = []FilterCategory{
@@ -195,8 +182,7 @@ type SummaryPage struct {
 // ListSummaries fetches one page of record summaries matching queries via the
 // SearchService.ListRecordSummaries RPC (dir >= v1.8.0), which answers from
 // the server's database without pulling each record from its store. Older
-// servers return codes.Unimplemented; callers fall back to PageStream and
-// Count.
+// servers return codes.Unimplemented.
 func (c *Client) ListSummaries(ctx context.Context, queries []Query, limit, offset uint32) (*SummaryPage, error) {
 	l, o := limit, offset
 	resp, err := c.c.ListRecordSummaries(ctx, &searchv1.ListRecordSummariesRequest{
@@ -218,8 +204,7 @@ func (c *Client) ListSummaries(ctx context.Context, queries []Query, limit, offs
 	return page, nil
 }
 
-// summaryFromRPC converts a server-side record summary, normalizing it the
-// same way extractSummary does.
+// summaryFromRPC converts a server-side record summary to a RecordSummary.
 func summaryFromRPC(r *searchv1.RecordSummary) *RecordSummary {
 	return normalizeSummary(&RecordSummary{
 		CID:           r.GetCid(),
@@ -231,104 +216,6 @@ func summaryFromRPC(r *searchv1.RecordSummary) *RecordSummary {
 		Domains:       r.GetDomains(),
 		Modules:       r.GetModules(),
 	})
-}
-
-// Page fetches a single page of records matching queries using server-side
-// limit/offset pagination. exhausted is true when the server returned fewer
-// than limit raw records, meaning there is no further page. The raw count
-// (not the extracted-summary count) drives exhausted, so records dropped by
-// extractSummary do not cause premature termination.
-func (c *Client) Page(ctx context.Context, queries []Query, limit, offset uint32) ([]*RecordSummary, bool, error) {
-	var summaries []*RecordSummary
-	_, exhausted, err := c.PageStream(ctx, queries, limit, offset, func(s *RecordSummary) {
-		summaries = append(summaries, s)
-	})
-	if err != nil {
-		return nil, false, err
-	}
-	return summaries, exhausted, nil
-}
-
-// PageStream is the incremental form of Page: it issues the same request but
-// invokes onRecord for each successfully extracted summary as soon as it
-// arrives, instead of collecting the whole page first.
-//
-// rawCount is the number of raw records the server sent (including any that
-// extractSummary dropped), so callers can advance their offset by what the
-// server actually consumed. exhausted is rawCount < limit. On error, rawCount
-// still reports the records received before the failure and exhausted is
-// false.
-//
-// onRecord runs on the calling (RPC) goroutine: it must not block, and GUI
-// callers must hop to their UI goroutine themselves.
-func (c *Client) PageStream(
-	ctx context.Context, queries []Query, limit, offset uint32, onRecord func(*RecordSummary),
-) (rawCount uint32, exhausted bool, err error) {
-	l, o := limit, offset
-	req := &searchv1.SearchRecordsRequest{
-		Queries: buildRPCQueries(queries),
-		Limit:   &l,
-		Offset:  &o,
-	}
-	result, err := c.c.SearchRecords(ctx, req)
-	if err != nil {
-		return 0, false, fmt.Errorf("searching records: %w", err)
-	}
-
-	resCh := result.ResCh()
-	errCh := result.ErrCh()
-	for {
-		select {
-		case resp, ok := <-resCh:
-			if !ok {
-				return rawCount, rawCount < limit, nil
-			}
-			if rec := resp.GetRecord(); rec != nil {
-				rawCount++
-				if s := extractSummary(rec); s != nil {
-					onRecord(s)
-				}
-			}
-		case streamErr, ok := <-errCh:
-			if !ok {
-				errCh = nil
-				continue
-			}
-			if streamErr != nil {
-				return rawCount, false, fmt.Errorf("receiving record: %w", streamErr)
-			}
-		case <-result.DoneCh():
-			return rawCount, rawCount < limit, nil
-		case <-ctx.Done():
-			drainStream(result)
-			return rawCount, false, ctx.Err()
-		}
-	}
-}
-
-// drainStream consumes a stream result in the background until its DoneCh
-// closes. The dir client's receiver goroutine sends on unbuffered channels,
-// so abandoning a result after cancellation would leave that goroutine
-// blocked on its send forever. Cancellation makes its Recv fail, after which
-// it sends the error, returns and closes DoneCh, ending the drain.
-func drainStream[T any](r streaming.StreamResult[T]) {
-	go func() {
-		resCh, errCh := r.ResCh(), r.ErrCh()
-		for {
-			select {
-			case _, ok := <-resCh:
-				if !ok {
-					resCh = nil
-				}
-			case _, ok := <-errCh:
-				if !ok {
-					errCh = nil
-				}
-			case <-r.DoneCh():
-				return
-			}
-		}
-	}()
 }
 
 // FilterCategory identifies a server-side filter predicate. Each value maps
@@ -649,84 +536,6 @@ func (c *Client) DeleteSync(ctx context.Context, syncID string) error {
 		return fmt.Errorf("deleting sync %s: %w", syncID, err)
 	}
 	return nil
-}
-
-// namesOf collects the non-empty names from a slice of OASF sub-objects
-// (skills, domains, modules), each of which exposes GetName().
-func namesOf[T interface{ GetName() string }](items []T) []string {
-	if len(items) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(items))
-	for _, it := range items {
-		if n := it.GetName(); n != "" {
-			names = append(names, n)
-		}
-	}
-	return names
-}
-
-// extractSummary pulls name/version/skills/domains/modules from a raw record.
-func extractSummary(record *corev1.Record) *RecordSummary {
-	cid := record.GetCid()
-	data := record.GetData()
-	if data == nil {
-		return nil
-	}
-
-	decoded, err := decoder.DecodeRecord(data)
-	if err != nil || decoded == nil {
-		return nil
-	}
-
-	s := &RecordSummary{CID: cid}
-
-	// Every supported OASF schema version (v1alpha1/0.7.x, v1alpha2/0.8.x,
-	// v1/1.x) exposes the same skill/domain/module accessors, so extract them
-	// uniformly. Skipping the older versions here left their records out of the
-	// filter option lists.
-	switch {
-	case decoded.HasV1():
-		r := decoded.GetV1()
-		if r == nil {
-			return nil
-		}
-		s.Name = r.GetName()
-		s.Version = r.GetVersion()
-		s.SchemaVersion = r.GetSchemaVersion()
-		s.Authors = append(s.Authors, r.GetAuthors()...)
-		s.Skills = namesOf(r.GetSkills())
-		s.Domains = namesOf(r.GetDomains())
-		s.Modules = namesOf(r.GetModules())
-	case decoded.HasV1Alpha2():
-		r := decoded.GetV1Alpha2()
-		if r == nil {
-			return nil
-		}
-		s.Name = r.GetName()
-		s.Version = r.GetVersion()
-		s.SchemaVersion = r.GetSchemaVersion()
-		s.Authors = append(s.Authors, r.GetAuthors()...)
-		s.Skills = namesOf(r.GetSkills())
-		s.Domains = namesOf(r.GetDomains())
-		s.Modules = namesOf(r.GetModules())
-	case decoded.HasV1Alpha1():
-		r := decoded.GetV1Alpha1()
-		if r == nil {
-			return nil
-		}
-		s.Name = r.GetName()
-		s.Version = r.GetVersion()
-		s.SchemaVersion = r.GetSchemaVersion()
-		s.Authors = append(s.Authors, r.GetAuthors()...)
-		s.Skills = namesOf(r.GetSkills())
-		s.Domains = namesOf(r.GetDomains())
-		s.Modules = namesOf(r.GetModules())
-	default:
-		return nil
-	}
-
-	return normalizeSummary(s)
 }
 
 // normalizeSummary sanitizes the displayed fields and falls back to a CID

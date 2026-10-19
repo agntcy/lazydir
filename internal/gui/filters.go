@@ -315,6 +315,10 @@ func categoryToFilter(c filterCategory) dirclient.FilterCategory {
 // query into server-side dirclient predicates. Include -> positive query;
 // Exclude -> Negate. Trusted/Verified map to their own categories with value
 // "true". The name query becomes a wildcarded NAME predicate.
+//
+// The server ORs repeated positive predicates of one category (two skills
+// match records with either) and ANDs categories; negated predicates exclude
+// records carrying any of the excluded values.
 func buildServerQueries(fs filterState, nameQuery string) []dirclient.Query {
 	var qs []dirclient.Query
 	for _, cat := range allFilterCategories {

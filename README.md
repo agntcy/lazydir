@@ -38,7 +38,7 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 
 **[1] Connections** — live status for Directory and OASF endpoints; switch servers with `c`/`o`; view connection details with `i`.
 
-**[2] Filters** — collapsible categories (Skills, Domains, Modules, OASF version, Author, Trusted / Verified); toggle options with `enter`/`space`; `/` to search across all categories by name, caption, or ID; `i` to open a popup with the OASF class hierarchy and description.
+**[2] Filters** — collapsible categories (Skills, Domains, Modules, OASF version, Author, Trusted / Verified); toggle options with `enter`/`space` (include, then exclude); selected values within one category are combined with OR (two skills match records with either), categories with AND, and an excluded value drops every record that carries it; `/` to search across all categories by name, caption, or ID; `i` to open a popup with the OASF class hierarchy and description.
 
 **[3] Records** — filtered list showing name and version; filtering is server-side and paginated, and the filter option lists come from the server's `ListFilterValues` RPC (only values actually present are offered); records load page by page as you scroll, and the panel title shows the total count; records are a flat list ordered by recency, one row per record version; `/` for live name filtering; `i` for record info popup (CID, annotations, schema version, created-at); `y` to yank/copy CID or full JSON; `r` to refetch records and filter options from the server.
 
@@ -47,7 +47,7 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 ## Prerequisites
 
 - **Go 1.27.2+**
-- A running [AGNTCY Directory](https://github.com/agntcy/dir) server (local daemon or remote). Server `>= v1.8.0` lists records straight from its database with `ListRecordSummaries`; older servers fall back to the slower `SearchRecords` stream. Filter options need `>= v1.7.1` (older servers show empty filter lists with `[options unavailable]`), and the total record count on the fallback path needs `>= v1.6.3`.
+- A running [AGNTCY Directory](https://github.com/agntcy/dir) server (local daemon or remote), **`>= v1.8.0`**. lazydir lists records with `ListRecordSummaries` and fills the filter options with `ListFilterValues`; against an older server the Records panel shows an error asking for v1.8.0 or newer.
 
 To start a local daemon for testing:
 

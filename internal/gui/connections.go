@@ -217,7 +217,7 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.dirStatus = connTrying
 	app.state.recordCursor = 0
 	app.state.page.reset()
-	app.state.summariesUnsupported = false
+	app.state.dirUnsupported = false
 	app.state.filters = newFilterState()
 	app.state.filterQuery = ""
 	app.state.classEntries = nil

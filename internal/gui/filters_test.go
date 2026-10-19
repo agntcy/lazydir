@@ -414,3 +414,12 @@ func TestFilterValuesUnsupported(t *testing.T) {
 		t.Error("nil error should not be unsupported")
 	}
 }
+
+func TestQueryErrorText(t *testing.T) {
+	if got := queryErrorText(status.Error(codes.Unimplemented, "unknown method")); !strings.Contains(got, "v1.8.0") {
+		t.Fatalf("Unimplemented: want a v1.8.0 hint, got %q", got)
+	}
+	if got := queryErrorText(errors.New("boom")); got != "boom" {
+		t.Fatalf("other errors pass through: got %q", got)
+	}
+}
