@@ -36,3 +36,21 @@ func (p *pageState) addSummaryPage(page *dirclient.SummaryPage) {
 	p.total = page.Total
 	p.totalKnown = true
 }
+
+// removeRecord drops a deleted record from the loaded pages. Every later
+// record on the server shifts down by one, so the offset and the total shrink
+// with it; otherwise the next page would skip the record that moved into the
+// last loaded slot.
+func (p *pageState) removeRecord(cid string) {
+	n := len(p.records)
+	p.records = removeRecordByCID(p.records, cid)
+	if len(p.records) == n {
+		return // not loaded; nothing shifted within the loaded window
+	}
+	if p.offset > 0 {
+		p.offset--
+	}
+	if p.total > 0 {
+		p.total--
+	}
+}

@@ -86,3 +86,16 @@ func TestPageState_AddSummaryPage(t *testing.T) {
 		t.Fatalf("after last page: %+v", p)
 	}
 }
+
+func TestPageState_RemoveRecordShiftsOffsetAndTotal(t *testing.T) {
+	var p pageState
+	p.addSummaryPage(&dirclient.SummaryPage{Records: recs(3), HasMore: true, Total: 10})
+	p.removeRecord("b")
+	if p.offset != 2 || p.total != 9 || len(p.records) != 2 {
+		t.Fatalf("after removing a loaded record: offset=%d total=%d len=%d", p.offset, p.total, len(p.records))
+	}
+	p.removeRecord("zz")
+	if p.offset != 2 || p.total != 9 {
+		t.Fatalf("removing an unloaded record changed paging: offset=%d total=%d", p.offset, p.total)
+	}
+}

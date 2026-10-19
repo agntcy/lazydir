@@ -469,7 +469,7 @@ func (app *Gui) unpublishRecord(cid string) {
 // stale sync-status overlay entry, then rebuilds the flat display rows so the
 // deleted record disappears immediately without a refetch.
 func (app *Gui) removeRecordFromState(cid string) {
-	app.state.page.records = removeRecordByCID(app.state.page.records, cid)
+	app.state.page.removeRecord(cid)
 	delete(app.state.syncStatus, cid)
 	app.rebuildRecordRows()
 }
