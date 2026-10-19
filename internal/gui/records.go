@@ -711,6 +711,21 @@ func markPublished(records []*dirclient.RecordSummary, set map[string]bool) {
 	}
 }
 
+// invalidatePublishEnrichment cancels any in-flight resolution and marks the
+// published set stale, so the next query response re-resolves it. Used by the
+// explicit refresh and after a sync reconcile, where publish state may have
+// changed on the server; plain filter changes keep the cached set. The cached
+// publishedCIDs stay in place until the fresh set lands. Must be called on the
+// GUI goroutine.
+func (app *Gui) invalidatePublishEnrichment() {
+	if app.state.publishCancel != nil {
+		app.state.publishCancel()
+		app.state.publishCancel = nil
+	}
+	app.state.publishEnriched = false
+	app.state.publishEnriching = false
+}
+
 // startPublishEnrichment resolves the published-CID set from the server in the
 // background and stamps the matching current-page records. No-op if already
 // enriched, already running, or no client. Failures (e.g. a server without
@@ -848,6 +863,7 @@ func (app *Gui) pollReconcile(ctx context.Context, client *dirclient.Client) {
 				// Refetch the current page so the synced records land as regular
 				// server rows (with fresh publish data); filter options are refreshed by the
 				// forced ListFilterValues fetch below.
+				app.invalidatePublishEnrichment()
 				app.startQuery(false)
 				app.startFilterValuesFetch(true)
 				app.renderStatus(g)

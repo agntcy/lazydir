@@ -444,6 +444,7 @@ func (app *Gui) refresh(g *gocui.Gui, v *gocui.View) error {
 	if app.state.client == nil {
 		return nil
 	}
+	app.invalidatePublishEnrichment()
 	app.startQuery(true)
 	app.startFilterValuesFetch(true)
 	return nil

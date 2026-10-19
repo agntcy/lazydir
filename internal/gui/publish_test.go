@@ -4,6 +4,7 @@
 package gui
 
 import (
+	"context"
 	"testing"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
@@ -113,5 +114,26 @@ func TestPublishOverrideClearsWhenServerAgrees(t *testing.T) {
 	}
 	if _, ok := app.state.publishOverrides["x"]; ok {
 		t.Error("override for x should be cleared once the server set agrees")
+	}
+}
+
+func TestInvalidatePublishEnrichment(t *testing.T) {
+	app := &Gui{}
+	ctx, cancel := context.WithCancel(context.Background())
+	app.state.publishCancel = cancel
+	app.state.publishEnriched = true
+	app.state.publishEnriching = true
+	app.state.publishedCIDs = map[string]bool{"a": true}
+
+	app.invalidatePublishEnrichment()
+
+	if ctx.Err() == nil {
+		t.Fatal("in-flight resolution not cancelled")
+	}
+	if app.state.publishEnriched || app.state.publishEnriching || app.state.publishCancel != nil {
+		t.Fatalf("enrichment state not reset: enriched=%v enriching=%v", app.state.publishEnriched, app.state.publishEnriching)
+	}
+	if !app.state.publishedCIDs["a"] {
+		t.Fatal("cached published set should be kept until the fresh one lands")
 	}
 }
