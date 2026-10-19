@@ -263,34 +263,40 @@ func (app *Gui) recordDeleteSync(g *gocui.Gui) error {
 	total := syncing + reconciling
 	body := fmt.Sprintf("Cancel sync? This will cancel all %d record(s) currently being synced.", total)
 
-	app.openConfirmPopup(g, "Cancel sync", body, func() {
-		go app.cancelSync()
-	})
+	app.openConfirmPopup(g, "Cancel sync", body, app.cancelSync)
 	return nil
 }
 
-func (app *Gui) cancelSync() {
-	var cancelFn context.CancelFunc
-	var syncID string
-	var client *dirclient.Client
-
-	app.g.Update(func(g *gocui.Gui) error {
-		cancelFn = app.state.syncCancelFunc
-		syncID = app.state.syncID
-		client = app.state.client
-		app.removeRecordsByStatus(dirclient.StatusSyncing)
-		app.removeRecordsByStatus(dirclient.StatusReconciling)
-		app.clearSyncState()
-		app.renderRecordsView(g)
-		app.renderStatus(g)
+// recordCancelSync cancels the running sync from anywhere in the Records
+// panel. Records pasted from another server have no rows until they are
+// reconciled, so cancelling cannot depend on selecting one of them.
+func (app *Gui) recordCancelSync(g *gocui.Gui, _ *gocui.View) error {
+	if !app.hasSyncingRecords() {
 		return nil
-	})
+	}
+	return app.recordDeleteSync(g)
+}
+
+// cancelSync stops the running sync: it drops the sync overlay and tracking
+// state, cancels the pollers, and deletes the sync on the server in the
+// background. Must be called on the GUI goroutine, so the sync state is read
+// before it is cleared.
+func (app *Gui) cancelSync() {
+	cancelFn := app.state.syncCancelFunc
+	syncID := app.state.syncID
+	client := app.state.client
+
+	app.removeRecordsByStatus(dirclient.StatusSyncing)
+	app.removeRecordsByStatus(dirclient.StatusReconciling)
+	app.clearSyncState()
+	app.renderRecordsView(app.g)
+	app.renderStatus(app.g)
 
 	if cancelFn != nil {
 		cancelFn()
 	}
 	if syncID != "" && client != nil {
-		_ = client.DeleteSync(context.Background(), syncID)
+		go func() { _ = client.DeleteSync(context.Background(), syncID) }()
 	}
 }
 

@@ -85,6 +85,7 @@ var perPanelBindings = map[string]panelBindings{
 			{"d", "delete record", true},
 			{"P", "publish record", true},
 			{"U", "unpublish record", true},
+			{"X", "cancel sync", false},
 			{keyEsc, "clear filter / clipboard", false},
 			{keyWheel, hintScroll, false},
 		},
@@ -134,6 +135,9 @@ func optionsBarText(focused string, availableWidth int, clipboardCount, syncingC
 	}
 	if reconcilingCount > 0 {
 		items = append(items, fmt.Sprintf("%d reconciling", reconcilingCount))
+	}
+	if syncingCount+reconcilingCount > 0 && focused == viewRecords {
+		items = append(items, "cancel sync: X")
 	}
 
 	if pb, ok := perPanelBindings[focused]; ok {
