@@ -159,6 +159,9 @@ func (app *Gui) recordsTitle() string {
 	} else if loaded > 0 {
 		title += fmt.Sprintf(" (%d)", loaded)
 	}
+	if n := len(app.state.selection); n > 0 {
+		title += fmt.Sprintf(" [%d selected]", n)
+	}
 	if app.state.filterQuery != "" {
 		title += fmt.Sprintf("  /: %s", app.state.filterQuery)
 	}
@@ -231,17 +234,24 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		if len(name) > nameW {
 			name = name[:nameW-1] + "…"
 		}
-		if statusColor != "" {
-			line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
-			fmt.Fprintf(v, "%s%-*s%s\n", statusColor, viewW, line, reset)
-		} else if inClip {
-			line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
-			fmt.Fprintf(v, "%s%-*s%s\n", clipBg, viewW, line, reset)
-		} else if rec.Published {
-			line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
-			fmt.Fprintf(v, "%s%-*s%s\n", green, viewW, line, reset)
-		} else {
-			fmt.Fprintf(v, " %-*s  %s\n", nameW, name, version)
+		// Selected rows replace the leading space with a marker. It is
+		// multi-byte, so the padding width grows by the extra bytes to keep
+		// colored rows spanning the panel.
+		mark, padW := " ", viewW
+		if app.isSelected(rec.CID) {
+			mark = selectedMark
+			padW += len(selectedMark) - 1
+		}
+		line := fmt.Sprintf("%s%-*s  %s", mark, nameW, name, version)
+		switch {
+		case statusColor != "":
+			fmt.Fprintf(v, "%s%-*s%s\n", statusColor, padW, line, reset)
+		case inClip:
+			fmt.Fprintf(v, "%s%-*s%s\n", clipBg, padW, line, reset)
+		case rec.Published:
+			fmt.Fprintf(v, "%s%-*s%s\n", green, padW, line, reset)
+		default:
+			fmt.Fprintln(v, line)
 		}
 		lineNum++
 	}

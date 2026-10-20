@@ -80,13 +80,15 @@ var perPanelBindings = map[string]panelBindings{
 			{"/", "filter by name", true},
 			{"i", "toggle record info", true},
 			{"y", "yank/copy options", true},
+			{"space", "select record", true},
+			{"ctrl+a", "select all loaded", false},
 			{"C", "clipboard toggle", true},
 			{"V", "paste records", true},
-			{"d", "delete record", true},
-			{"P", "publish record", true},
-			{"U", "unpublish record", true},
+			{"d", "delete record / selection", true},
+			{"P", "publish record / selection", true},
+			{"U", "unpublish record / selection", true},
 			{"X", "cancel sync", false},
-			{keyEsc, "clear filter / clipboard", false},
+			{keyEsc, "clear filter / selection / clipboard", false},
 			{keyWheel, hintScroll, false},
 		},
 	},
@@ -121,22 +123,37 @@ var perPanelBindings = map[string]panelBindings{
 	},
 }
 
+// barStatus is the transient state shown ahead of the hints in the options bar.
+type barStatus struct {
+	selected    int
+	copied      int
+	syncing     int
+	reconciling int
+	progress    string // running batch, e.g. "deleting 3/5"
+}
+
 // optionsBarText returns the keybinding hints for the bottom-left options bar,
 // truncated with "…" if they don't fit in availableWidth.
 // Format matches lazygit: "description: key | description: key"
-func optionsBarText(focused string, availableWidth int, clipboardCount, syncingCount, reconcilingCount int) string {
+func optionsBarText(focused string, availableWidth int, st barStatus) string {
 	var items []string
 
-	if clipboardCount > 0 {
-		items = append(items, fmt.Sprintf("%d copied", clipboardCount))
+	if st.progress != "" {
+		items = append(items, st.progress)
 	}
-	if syncingCount > 0 {
-		items = append(items, fmt.Sprintf("%d syncing", syncingCount))
+	if st.selected > 0 {
+		items = append(items, fmt.Sprintf("%d selected", st.selected))
 	}
-	if reconcilingCount > 0 {
-		items = append(items, fmt.Sprintf("%d reconciling", reconcilingCount))
+	if st.copied > 0 {
+		items = append(items, fmt.Sprintf("%d copied", st.copied))
 	}
-	if syncingCount+reconcilingCount > 0 && focused == viewRecords {
+	if st.syncing > 0 {
+		items = append(items, fmt.Sprintf("%d syncing", st.syncing))
+	}
+	if st.reconciling > 0 {
+		items = append(items, fmt.Sprintf("%d reconciling", st.reconciling))
+	}
+	if st.syncing+st.reconciling > 0 && focused == viewRecords {
 		items = append(items, "cancel sync: X")
 	}
 
