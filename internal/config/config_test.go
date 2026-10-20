@@ -9,6 +9,12 @@ import (
 	"testing"
 )
 
+// Sample directory addresses reused across the config tests.
+const (
+	testAddress       = "example.com:443"
+	testManualAddress = "manual.example.com:443"
+)
+
 func TestResolveColor_Named(t *testing.T) {
 	t.Parallel()
 
@@ -169,9 +175,9 @@ func TestResolveOASFServers(t *testing.T) {
 
 func TestDirectoryEntry_Label(t *testing.T) {
 	t.Parallel()
-	e := DirectoryEntry{Address: "example.com:443"}
-	if got := e.Label(); got != "example.com:443" {
-		t.Errorf("Label() = %q, want %q", got, "example.com:443")
+	e := DirectoryEntry{Address: testAddress}
+	if got := e.Label(); got != testAddress {
+		t.Errorf("Label() = %q, want %q", got, testAddress)
 	}
 }
 
@@ -221,5 +227,25 @@ server:
 	}
 	if len(cfg.Server.OASFServers) != 1 || cfg.Server.OASFServers[0] != "https://test.example.com" {
 		t.Errorf("OASFServers = %v, want [https://test.example.com]", cfg.Server.OASFServers)
+	}
+}
+
+func TestPageSize_Default(t *testing.T) {
+	if got := (Config{}).PageSize(); got != 50 {
+		t.Fatalf("expected default 50, got %d", got)
+	}
+}
+
+func TestPageSize_Explicit(t *testing.T) {
+	c := Config{Pagination: PaginationConfig{PageSize: 25}}
+	if got := c.PageSize(); got != 25 {
+		t.Fatalf("expected 25, got %d", got)
+	}
+}
+
+func TestPageSize_LegacyStreamFallback(t *testing.T) {
+	c := Config{Stream: StreamConfig{FirstPageSize: 30}}
+	if got := c.PageSize(); got != 30 {
+		t.Fatalf("expected legacy fallback 30, got %d", got)
 	}
 }

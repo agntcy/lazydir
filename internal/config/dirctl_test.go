@@ -284,7 +284,7 @@ contexts:
 
 	s := ServerConfig{
 		DirctlConfigPath: path,
-		DirectoryServers: []DirectoryEntry{{Address: "manual.example.com:443"}},
+		DirectoryServers: []DirectoryEntry{{Address: testManualAddress}},
 	}
 
 	got, err := s.ResolveDirectoryServers()
@@ -297,8 +297,8 @@ contexts:
 	if got[0].ContextName != "imported" || got[0].Address != "imported.example.com:443" {
 		t.Errorf("entries[0] = %+v, want imported context first", got[0])
 	}
-	if got[1].Address != "manual.example.com:443" {
-		t.Errorf("entries[1].Address = %q, want %q", got[1].Address, "manual.example.com:443")
+	if got[1].Address != testManualAddress {
+		t.Errorf("entries[1].Address = %q, want %q", got[1].Address, testManualAddress)
 	}
 }
 
@@ -322,7 +322,7 @@ contexts:
 
 	s := ServerConfig{
 		DirctlConfigPath: path,
-		DirectoryServers: []DirectoryEntry{{Address: "manual.example.com:443"}},
+		DirectoryServers: []DirectoryEntry{{Address: testManualAddress}},
 	}
 
 	got, err := s.ResolveDirectoryServers()
@@ -335,8 +335,8 @@ contexts:
 	if got[0].ContextName != "good" || got[0].Address != "good.example.com:443" {
 		t.Errorf("entries[0] = %+v, want imported 'good' context first", got[0])
 	}
-	if got[1].Address != "manual.example.com:443" {
-		t.Errorf("entries[1].Address = %q, want %q", got[1].Address, "manual.example.com:443")
+	if got[1].Address != testManualAddress {
+		t.Errorf("entries[1].Address = %q, want %q", got[1].Address, testManualAddress)
 	}
 }
 
@@ -425,7 +425,7 @@ func TestResolveDirectoryServers_DirctlMissing(t *testing.T) {
 func TestDirectoryEntry_Label_WithContext(t *testing.T) {
 	t.Parallel()
 
-	e := DirectoryEntry{Address: "example.com:443", ContextName: "prod"}
+	e := DirectoryEntry{Address: testAddress, ContextName: "prod"}
 	want := "prod (example.com:443)"
 	if got := e.Label(); got != want {
 		t.Errorf("Label() = %q, want %q", got, want)
@@ -435,8 +435,8 @@ func TestDirectoryEntry_Label_WithContext(t *testing.T) {
 func TestDirectoryEntry_Label_WithoutContext(t *testing.T) {
 	t.Parallel()
 
-	e := DirectoryEntry{Address: "example.com:443"}
-	want := "example.com:443"
+	e := DirectoryEntry{Address: testAddress}
+	want := testAddress
 	if got := e.Label(); got != want {
 		t.Errorf("Label() = %q, want %q", got, want)
 	}

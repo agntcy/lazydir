@@ -20,7 +20,7 @@ type Theme struct {
 	Color2  string // default: cyan         — domains, class tree, accents
 	Color3  string // default: magenta      — modules, timestamps
 	Color4  string // default: green        — connected, OASF version, loading
-	Color5  string // default: blue         — version, options bar, section headers
+	Color5  string // default: blue         — options bar, popup labels
 	Color6  string // default: red          — disconnected indicator
 	Color7  string // default: bright red   — author filter
 	Color8  string // default: bright yellow— trusted filter
@@ -35,6 +35,9 @@ type Theme struct {
 	DimFrameColor     gocui.Attribute // gocui color for preview frame/title when dimmed
 }
 
+// ansiReset is the ANSI escape that resets all text attributes.
+const ansiReset = "\033[0m"
+
 var defaultTheme = Theme{
 	Color1:  "\033[33m",
 	Color2:  "\033[36m",
@@ -46,7 +49,7 @@ var defaultTheme = Theme{
 	Color8:  "\033[93m",
 	Color9:  "\033[92m",
 	Color10: "\033[90m",
-	Reset:   "\033[0m",
+	Reset:   ansiReset,
 	Strike:  "\033[9m",
 
 	ActiveBorderColor: gocui.ColorGreen,
@@ -132,8 +135,6 @@ func (t Theme) filterColor(c filterCategory) string {
 		return t.Color3
 	case filterOASFVersion:
 		return t.Color4
-	case filterVersion:
-		return t.Color5
 	case filterAuthor:
 		return t.Color7
 	case filterTrustedVerified:

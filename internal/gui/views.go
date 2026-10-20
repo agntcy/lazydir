@@ -36,12 +36,11 @@ func syncedAgo(t time.Time) string {
 // the TUI (applied filter selections, inline descriptions, inline record info).
 const indent1 = "    "
 
-// recordDisplayRow describes one rendered line in the records panel.
-// It is either a group header (when record is nil) or a record entry.
+// recordDisplayRow describes one rendered line in the records panel. In the
+// server-side pagination model there is exactly one row per record (no version
+// grouping), so record is always non-nil.
 type recordDisplayRow struct {
-	groupName string                   // non-empty for group headers
-	record    *dirclient.RecordSummary // non-nil for actual record entries
-	grouped   bool                     // true if this record is part of a multi-version group
+	record *dirclient.RecordSummary
 }
 
 // renderFiltersView redraws the [2] Filters panel as a collapsible tree of
@@ -59,7 +58,10 @@ func (app *Gui) renderFiltersView(g *gocui.Gui) {
 // collapse/expand triangle, child options are indented, and selected options
 // are rendered in the category's color instead of a [ ]/[x] checkbox.
 func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
-	title := "[2] Filters"
+	title := titleFilters
+	// Non-fatal: ListFilterValues failed (e.g. Unimplemented on an older
+	// server, or a transient error on refetch). Queries still work.
+	title += filterValuesNotice(app.state.filterValuesLoaded, app.state.filterValuesFailed)
 	if app.state.filters.filterQuery != "" {
 		title += fmt.Sprintf("  /: %s", app.state.filters.filterQuery)
 	}
@@ -149,49 +151,21 @@ func (app *Gui) writeFilterOption(w io.Writer, r listRow, mode filterMode) {
 // record count, name filter, and (once loaded) the relative staleness of the
 // displayed data.
 func (app *Gui) recordsTitle() string {
-	total := len(app.state.records)
+	loaded := len(app.state.page.records)
 
-	title := "[3] Records"
-	if total > 0 || app.state.stream == streamDone {
-		if app.state.filterQuery != "" {
-			title += fmt.Sprintf(" (%d/%d)", len(app.state.filteredRecords), total)
-		} else {
-			title += fmt.Sprintf(" (%d)", total)
-		}
+	title := titleRecords
+	if app.state.page.totalKnown {
+		title += fmt.Sprintf(" (%d/%d)", loaded, app.state.page.total)
+	} else if loaded > 0 {
+		title += fmt.Sprintf(" (%d)", loaded)
 	}
 	if app.state.filterQuery != "" {
 		title += fmt.Sprintf("  /: %s", app.state.filterQuery)
 	}
-	if app.state.tvEnriching && len(app.state.filters.applied[filterTrustedVerified]) > 0 {
-		title += "  [resolving trusted/verified…]"
-	}
-	if app.state.stream == streamDone && !app.state.dataFetchedAt.IsZero() {
+	if app.state.loadedOnce && !app.state.dataFetchedAt.IsZero() {
 		title += fmt.Sprintf("  [⟳ %s]", syncedAgo(app.state.dataFetchedAt))
 	}
 	return title
-}
-
-// groupPublishStatus reports, per group name, whether every record in that
-// group is published. Group name mirrors the records-panel grouping key: the
-// record Name, falling back to CID when Name is empty. Empty groups are absent
-// from the result.
-func groupPublishStatus(records []*dirclient.RecordSummary) map[string]bool {
-	all := map[string]bool{}
-	seen := map[string]bool{}
-	for _, r := range records {
-		name := r.Name
-		if name == "" {
-			name = r.CID
-		}
-		if !seen[name] {
-			seen[name] = true
-			all[name] = true
-		}
-		if !r.Published {
-			all[name] = false
-		}
-	}
-	return all
 }
 
 // renderRecordsView redraws the [3] Records panel and updates its title to
@@ -217,27 +191,10 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	}
 
 	clipBg := "\033[41m"
-	reset := "\033[0m"
+	reset := ansiReset
 	yellow := "\033[33m"
 	red := "\033[31m"
 	green := "\033[32m"
-
-	// Precompute which group names have non-local children.
-	groupSyncStatus := map[string]dirclient.RecordStatus{}
-	for _, r := range app.state.filteredRecords {
-		if r.Status == dirclient.StatusLocal {
-			continue
-		}
-		name := r.Name
-		if name == "" {
-			name = r.CID
-		}
-		if cur, ok := groupSyncStatus[name]; !ok || r.Status > cur {
-			groupSyncStatus[name] = r.Status
-		}
-	}
-
-	groupAllPublished := groupPublishStatus(app.state.filteredRecords)
 
 	lineNum := 0
 	targetLine := 0
@@ -247,77 +204,44 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 			targetLine = lineNum
 		}
 
-		if row.groupName != "" {
-			triangle := triangleCollapsed
-			if app.state.recordGroupExpanded[row.groupName] {
-				triangle = triangleExpanded
-			}
-			name := row.groupName
-			if len(name) > nameW-2 {
-				name = name[:nameW-3] + "…"
-			}
-			if gs, ok := groupSyncStatus[row.groupName]; ok {
-				color := yellow
-				if gs == dirclient.StatusFailed {
-					color = red
-				}
-				line := fmt.Sprintf(" %s %s", triangle, name)
-				fmt.Fprintf(v, "%s%-*s%s\n", color, viewW, line, reset)
-			} else if groupAllPublished[row.groupName] {
-				line := fmt.Sprintf(" %s %s", triangle, name)
-				fmt.Fprintf(v, "%s%-*s%s\n", green, viewW, line, reset)
-			} else {
-				fmt.Fprintf(v, " %s %s\n", triangle, name)
-			}
-		} else if row.record != nil {
-			_, inClip := app.state.clipboard[row.record.CID]
-			name := row.record.Name
-			if name == "" {
-				name = row.record.CID
-			}
-			version := row.record.Version
-			if version == "" {
-				version = "n/a"
-			}
+		rec := row.record
+		if rec == nil {
+			lineNum++
+			continue
+		}
 
-			statusColor := ""
-			switch row.record.Status {
-			case dirclient.StatusSyncing, dirclient.StatusReconciling:
-				statusColor = yellow
-			case dirclient.StatusFailed:
-				statusColor = red
-			}
+		_, inClip := app.state.clipboard[rec.CID]
+		name := rec.Name
+		if name == "" {
+			name = rec.CID
+		}
+		version := rec.Version
+		if version == "" {
+			version = "n/a"
+		}
 
-			if row.grouped {
-				if statusColor != "" {
-					line := fmt.Sprintf("%s%s", indent1, version)
-					fmt.Fprintf(v, "%s%-*s%s\n", statusColor, viewW, line, reset)
-				} else if inClip {
-					line := fmt.Sprintf("%s%s", indent1, version)
-					fmt.Fprintf(v, "%s%-*s%s\n", clipBg, viewW, line, reset)
-				} else if row.record.Published {
-					line := fmt.Sprintf("%s%s", indent1, version)
-					fmt.Fprintf(v, "%s%-*s%s\n", green, viewW, line, reset)
-				} else {
-					fmt.Fprintf(v, "%s%s\n", indent1, version)
-				}
-			} else {
-				if len(name) > nameW {
-					name = name[:nameW-1] + "…"
-				}
-				if statusColor != "" {
-					line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
-					fmt.Fprintf(v, "%s%-*s%s\n", statusColor, viewW, line, reset)
-				} else if inClip {
-					line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
-					fmt.Fprintf(v, "%s%-*s%s\n", clipBg, viewW, line, reset)
-				} else if row.record.Published {
-					line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
-					fmt.Fprintf(v, "%s%-*s%s\n", green, viewW, line, reset)
-				} else {
-					fmt.Fprintf(v, " %-*s  %s\n", nameW, name, version)
-				}
-			}
+		statusColor := ""
+		switch status, _ := app.recordStatus(rec.CID); status {
+		case dirclient.StatusSyncing, dirclient.StatusReconciling:
+			statusColor = yellow
+		case dirclient.StatusFailed:
+			statusColor = red
+		}
+
+		if len(name) > nameW {
+			name = name[:nameW-1] + "…"
+		}
+		if statusColor != "" {
+			line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
+			fmt.Fprintf(v, "%s%-*s%s\n", statusColor, viewW, line, reset)
+		} else if inClip {
+			line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
+			fmt.Fprintf(v, "%s%-*s%s\n", clipBg, viewW, line, reset)
+		} else if rec.Published {
+			line := fmt.Sprintf(" %-*s  %s", nameW, name, version)
+			fmt.Fprintf(v, "%s%-*s%s\n", green, viewW, line, reset)
+		} else {
+			fmt.Fprintf(v, " %-*s  %s\n", nameW, name, version)
 		}
 		lineNum++
 	}

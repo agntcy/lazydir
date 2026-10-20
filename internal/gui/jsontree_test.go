@@ -388,15 +388,15 @@ func TestClassObjectCaptionResolution(t *testing.T) {
 	rc := &jsonRenderCtx{
 		classEntries: map[oasf.ClassType]map[string]oasf.ClassEntry{
 			oasf.ClassTypeSkill: {
-				"nlp":         {ID: 1, Name: "nlp", Caption: "Natural Language Processing"},
-				"translation": {ID: 2, Name: "translation", Caption: "Translation"},
+				optNLP:         {ID: 1, Name: optNLP, Caption: captionNLP},
+				optTranslation: {ID: 2, Name: optTranslation, Caption: "Translation"},
 			},
 		},
 		theme: &theme,
 	}
 
 	out := tree.renderLines(rc)
-	if !strings.Contains(out, "Natural Language Processing") {
+	if !strings.Contains(out, captionNLP) {
 		t.Errorf("expected OASF caption for collapsed skill object, got:\n%s", out)
 	}
 	if !strings.Contains(out, "Translation") {
@@ -415,7 +415,7 @@ func TestClassObjectCaptionDisappearsOnExpand(t *testing.T) {
 	rc := &jsonRenderCtx{
 		classEntries: map[oasf.ClassType]map[string]oasf.ClassEntry{
 			oasf.ClassTypeSkill: {
-				"nlp": {ID: 1, Name: "nlp", Caption: "Natural Language Processing"},
+				optNLP: {ID: 1, Name: optNLP, Caption: captionNLP},
 			},
 		},
 		theme: &theme,
@@ -423,7 +423,7 @@ func TestClassObjectCaptionDisappearsOnExpand(t *testing.T) {
 
 	// Before expand: caption visible.
 	out := tree.renderLines(rc)
-	if !strings.Contains(out, "Natural Language Processing") {
+	if !strings.Contains(out, captionNLP) {
 		t.Fatalf("expected caption before expand, got:\n%s", out)
 	}
 
@@ -431,7 +431,7 @@ func TestClassObjectCaptionDisappearsOnExpand(t *testing.T) {
 	skillObj := tree.root.children[0].children[0]
 	skillObj.expanded = true
 	out = tree.renderLines(rc)
-	if strings.Contains(out, "Natural Language Processing") {
+	if strings.Contains(out, captionNLP) {
 		t.Errorf("expected caption to disappear after expand, got:\n%s", out)
 	}
 	if !strings.Contains(out, `"name"`) {
@@ -450,14 +450,14 @@ func TestClassCaptionFallbackToName(t *testing.T) {
 	rc := &jsonRenderCtx{
 		classEntries: map[oasf.ClassType]map[string]oasf.ClassEntry{
 			oasf.ClassTypeDomain: {
-				"security": {ID: 1, Name: "security", Caption: ""},
+				optSecurity: {ID: 1, Name: optSecurity, Caption: ""},
 			},
 		},
 		theme: &theme,
 	}
 
 	out := tree.renderLines(rc)
-	if !strings.Contains(out, "security") {
+	if !strings.Contains(out, optSecurity) {
 		t.Errorf("expected fallback to name when caption is empty, got:\n%s", out)
 	}
 }

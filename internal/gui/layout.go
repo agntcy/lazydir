@@ -139,7 +139,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
-		v.Title = "[2] Filters"
+		v.Title = titleFilters
 		v.Frame = true
 		v.Highlight = false
 		v.SelBgColor = g.theme.SelectedRowBg
@@ -152,7 +152,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
-		v.Title = "[3] Records"
+		v.Title = titleRecords
 		v.Frame = true
 		v.Highlight = false
 		v.SelBgColor = g.theme.SelectedRowBg
@@ -165,7 +165,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
-		v.Title = "[0] Preview"
+		v.Title = titlePreview
 		v.Frame = true
 		v.Wrap = true
 		v.FrameRunes = roundedFrame

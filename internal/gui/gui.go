@@ -5,11 +5,7 @@ package gui
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +13,8 @@ import (
 	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/agntcy/lazydir/internal/oasf"
 	"github.com/jesseduffield/gocui"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // connStatus describes the connectivity state of a remote service (Directory
@@ -29,17 +27,6 @@ const (
 	connTrying                   // check in progress (gray ○ + ↻)
 	connOK                       // confirmed working (green ●)
 	connFailed                   // confirmed broken (red ●)
-)
-
-// streamState describes the lifecycle phase of the records stream.
-type streamState int
-
-const (
-	streamIdle      streamState = iota // no client yet, or no stream issued
-	streamLoading                      // first page hasn't arrived yet
-	streamStreaming                    // first page rendered, still receiving the rest
-	streamDone                         // stream finished cleanly
-	streamErrored                      // stream finished with an error
 )
 
 // menuOption describes one selectable row in a popup option menu.
@@ -55,43 +42,26 @@ type menuState struct {
 	view    string // the gocui view name this menu is rendered in
 }
 
-// serverCacheEntry holds the cached record data for a previously visited
-// directory server. It is stored when the user switches away from a server
-// and restored (displaying cached records instantly) when switching back.
-type serverCacheEntry struct {
-	fullCache       []*dirclient.RecordSummary
-	filterValues    *filterValueAggregator
-	cachedAt        time.Time
-	tvEnriched      bool // trusted/verified flags already resolved for this cache
-	publishEnriched bool // publish flags already resolved for this cache
+// syncStatusEntry is a single transient sync-status overlay record: the
+// in-flight status of a synced CID plus an optional error message.
+type syncStatusEntry struct {
+	status dirclient.RecordStatus
+	err    string
 }
 
 // appState holds all mutable application state. Fields are only mutated on
 // the GUI goroutine (inside g.Update callbacks or key handlers).
 type appState struct {
-	// Per-server record cache: keyed by address + auth identity (see
-	// serverCacheKey), stores records fetched from previously visited servers
-	// so switching back is instant.
-	serverCache map[string]*serverCacheEntry
-
 	// When the currently-displayed records were fetched from the directory.
-	// Set on a fresh stream completion and preserved across cache round-trips
-	// so the records panel can show how stale the data is. Zero if never loaded.
+	// Set when a query's first page lands so the records panel can show how
+	// stale the data is. Zero if never loaded.
 	dataFetchedAt time.Time
 
-	// Trusted/Verified enrichment. RecordSummary.Trusted/.Verified are filled
-	// in the background from server search predicates. tvEnriched is true once
-	// resolution completed for the current fullCache; tvEnriching guards against
-	// launching concurrent resolutions; tvCancel stops an in-flight resolution.
-	tvEnriched  bool
-	tvEnriching bool
-	tvCancel    context.CancelFunc
-
 	// Publish enrichment. RecordSummary.Published is filled in the background
-	// from RoutingService.List after a records stream completes. publishEnriched
-	// is true once resolution completed for the current fullCache;
-	// publishEnriching guards against concurrent resolutions; publishCancel
-	// stops an in-flight resolution.
+	// from RoutingService.List after the first page lands. publishEnriched is
+	// true once resolution completed for the current server; publishEnriching
+	// guards against concurrent resolutions; publishCancel stops an in-flight
+	// resolution.
 	publishEnriched  bool
 	publishEnriching bool
 	publishCancel    context.CancelFunc
@@ -100,6 +70,10 @@ type appState struct {
 	// snapshot predates the change. Each entry is dropped once the server set
 	// agrees with it (self-healing). Cleared on server switch.
 	publishOverrides map[string]bool
+	// publishedCIDs is the last-known published set from enrichment, retained so
+	// pages appended later by loadNextPage (or a rebuild) can be colored without
+	// re-querying the routing service. Cleared on server switch.
+	publishedCIDs map[string]bool
 
 	// Connections panel cursor (0 = Directory, 1 = OASF)
 	connCursor int
@@ -131,27 +105,35 @@ type appState struct {
 	// Auth popup content (for dynamic sizing via popupContentSize)
 	authPopupText string
 
-	// fullCache holds every record received from the unfiltered server stream.
-	// Client-side filters narrow this into records; a new server stream is
-	// only started on explicit refresh or server change.
-	fullCache []*dirclient.RecordSummary
+	// syncStatus is a transient per-CID overlay of in-flight sync state, keyed by
+	// record CID. It decorates matching rows in the current page; it is NOT a
+	// record store. Cleared when a reconcile refetch lands or on server switch.
+	syncStatus map[string]syncStatusEntry
 
-	// records holds the subset of fullCache that matches the current
-	// server-side filter selection (or all of fullCache when no Trusted/
-	// Verified filter is active). filteredRecords is the further subset
-	// after the local name query.
-	records         []*dirclient.RecordSummary
-	filteredRecords []*dirclient.RecordSummary
-	recordCursor    int
+	recordCursor int
 
-	// Record grouping: records with the same Name but different versions
-	// are grouped together with a collapsible header.
-	recordDisplayRows   []recordDisplayRow
-	recordGroupExpanded map[string]bool
+	// recordDisplayRows are the flat display rows for the records panel: one
+	// row per record in the current page (no version grouping).
+	recordDisplayRows []recordDisplayRow
 
-	// records-stream lifecycle
-	stream     streamState
-	streamErr  string
+	// page holds the server-side pagination state for the records panel
+	// (accumulated pages, offset, total, exhausted/loading flags).
+	page pageState
+
+	// queryGen is a monotonic query generation; loadNextPage drops results
+	// from a superseded query.
+	queryGen uint64
+
+	// loadedOnce is true once a query has completed (first page landed), used
+	// to gate the "synced N ago" staleness indicator.
+	loadedOnce bool
+	// dirUnsupported is set, per connection, when the server answered
+	// ListRecordSummaries with Unimplemented (dir < v1.8.0). The server stays
+	// marked failed even though it answers pings, so the health loop does not
+	// flap it back to connected and re-run the failing query.
+	dirUnsupported bool
+	// cancelLoad cancels the current query's fetches: the startQuery page plus
+	// any next-page fetches loadNextPage chained onto it.
 	cancelLoad context.CancelFunc
 
 	// inline record info toggle (records panel)
@@ -160,21 +142,31 @@ type appState struct {
 	recordInfoError   bool   // true when recordInfoText is an error message
 	recordInfoLoading bool   // fetch in progress
 
-	// distinct values usable as filter options for each category, growing
-	// monotonically across every stream (we never forget an option once
-	// we've seen it, even if the next filtered stream wouldn't include it).
+	// distinct values usable as filter options for each category, as returned
+	// by the server's ListFilterValues RPC (complete and present-only). Empty
+	// until the first successful fetch, or when the server does not support it.
 	filterValues *filterValueAggregator
 
-	// activeFilterValues is recomputed from state.records each time
-	// applyFilters runs. optionsFor reads from it so the Filters panel
-	// only shows values present in the current filtered result set.
-	// nil when no filters are active (falls back to filterValues).
-	activeFilterValues *filterValueAggregator
+	// ListFilterValues fetch state, reset per connection. filterValuesLoaded is
+	// true once a fetch succeeded; filterValuesLoading guards against duplicate
+	// fetches; filterValuesFailed records that the last fetch failed so
+	// non-forced triggers do not retry it on every query (an older server
+	// returns Unimplemented forever) and the Filters panel title can show a
+	// notice ("unavailable" if nothing was ever loaded, "stale" if earlier
+	// values are kept). filterValuesCancel stops an in-flight fetch.
+	filterValuesLoaded  bool
+	filterValuesLoading bool
+	filterValuesFailed  bool
+	// filterValuesUnsupported is the sticky subset of failure: the server
+	// returned Unimplemented, so non-forced triggers stop retrying.
+	filterValuesUnsupported bool
+	filterValuesCancel      context.CancelFunc
 
 	// classEntries caches enriched display info (ID, caption) for OASF
 	// taxonomy classes. Records may span multiple OASF schema versions, so
-	// entries are merged from every version seen in the stream; classEntriesVers
-	// tracks which versions have already been fetched (or are in flight).
+	// entries are merged from every version seen in loaded pages or returned by
+	// ListFilterValues; classEntriesVers tracks which versions have already
+	// been fetched (or are in flight).
 	classEntries     map[oasf.ClassType]map[string]oasf.ClassEntry
 	classEntriesVers map[string]bool
 
@@ -232,8 +224,7 @@ type Config struct {
 	SplitRatio         float64
 	InputDebounceDelay int
 	DimLevel           float64
-	FirstPageSize      int
-	BatchSize          int
+	PageSize           int
 }
 
 // Gui is the top-level lazydir GUI object.
@@ -311,7 +302,7 @@ func New(cfg Config) error {
 	defer close(uiStop)
 	go app.uiRefreshLoop(uiStop)
 
-	if err := g.MainLoop(); err != nil && !gocui.IsQuit(err) {
+	if err := g.MainLoop(); !gocui.IsQuit(err) {
 		return fmt.Errorf("main loop: %w", err)
 	}
 
@@ -327,7 +318,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 			app.state.dirStatus = connFailed
 			app.state.dirError = err.Error()
 			app.state.dirLastCfg = &cfg
-			app.state.stream = streamIdle
+			app.state.loadedOnce = false
 			app.renderDirectory(g)
 			app.renderStatus(g)
 			app.openInfoPopup(g, viewDirectory)
@@ -342,8 +333,6 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		if app.state.client != nil {
 			app.state.client.Close()
 		}
-		c.FirstPageSize = app.cfg.FirstPageSize
-		c.BatchSize = app.cfg.BatchSize
 		app.state.client = c
 		app.state.serverAddr = cfg.ServerAddress
 		app.state.authMode = cfg.AuthMode
@@ -351,19 +340,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		app.state.dirStatus = connTrying
 		app.renderDirectory(g)
 		app.renderStatus(g)
-		// A completed stream means connectToDirectory restored a cached
-		// snapshot (which may legitimately be empty) — display it instantly
-		// rather than refetching.
-		if app.state.stream == streamDone {
-			app.state.dirStatus = connOK
-			app.state.dirLastConnected = time.Now()
-			app.state.dirError = ""
-			app.renderDirectory(g)
-			app.startReconnectLoop()
-			app.startPublishEnrichment()
-		} else {
-			app.startRecordsStream()
-		}
+		app.startQuery(true)
 		return nil
 	})
 }
@@ -408,7 +385,7 @@ func (app *Gui) uiRefreshLoop(stop chan struct{}) {
 			return
 		case <-ticker.C:
 			app.g.Update(func(g *gocui.Gui) error {
-				if app.state.stream != streamDone || app.state.dataFetchedAt.IsZero() {
+				if !app.state.loadedOnce || app.state.dataFetchedAt.IsZero() {
 					return nil
 				}
 				v, err := g.View(viewRecords)
@@ -481,6 +458,9 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 					if app.state.client != snap.client {
 						return nil
 					}
+					if app.state.dirUnsupported {
+						return nil // reachable, but too old to list records
+					}
 					prev := app.state.dirStatus
 					app.state.dirStatus = connOK
 					app.state.dirLastConnected = time.Now()
@@ -488,8 +468,8 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 					if prev != connOK {
 						app.renderDirectory(g)
 					}
-					if prev != connOK && len(app.state.records) == 0 {
-						app.startRecordsStream()
+					if prev != connOK && len(app.state.page.records) == 0 {
+						app.startQuery(true)
 					}
 					return nil
 				})
@@ -575,8 +555,6 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 				c.Close()
 				return nil
 			}
-			c.FirstPageSize = app.cfg.FirstPageSize
-			c.BatchSize = app.cfg.BatchSize
 			app.state.client = c
 			app.state.dirStatus = connOK
 			app.state.dirLastConnected = time.Now()
@@ -585,7 +563,7 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 				_ = app.closeInfoPopup(g, nil)
 			}
 			app.renderDirectory(g)
-			app.startRecordsStream()
+			app.startQuery(true)
 			return nil
 		})
 		ticker.Reset(healthInterval)
@@ -638,8 +616,6 @@ func (app *Gui) tryOIDCTokenRefresh(
 			return nil
 		}
 		snap.client.Close()
-		c.FirstPageSize = app.cfg.FirstPageSize
-		c.BatchSize = app.cfg.BatchSize
 		app.state.client = c
 		app.state.dirLastCfg = &cfg
 		app.state.dirStatus = connOK
@@ -742,345 +718,283 @@ func (app *Gui) pingOASF(client *oasf.Client) {
 	})
 }
 
-// markStreaming advances the records-stream state to streamStreaming when the
-// first page arrives, but only from streamLoading — never regressing a stream
-// that has already finished. When every record fits in the first page,
-// OnFirstPage and OnDone fire back-to-back and gocui's async g.Update can run
-// them out of order; without this guard a late OnFirstPage would clobber
-// streamDone back to streamStreaming, leaving the panel "streaming" forever and
-// hiding the "synced N ago" indicator. Must run on the GUI goroutine.
-func (app *Gui) markStreaming() {
-	if app.state.stream == streamLoading {
-		app.state.stream = streamStreaming
-	}
-}
-
-// startRecordsStream cancels any in-flight records stream and issues a fresh
-// unfiltered SearchRecords RPC to populate the full cache. Client-side filters
-// are re-applied once the cache is populated. It must run on the GUI goroutine
-// (i.e. inside a g.Update callback or a key handler) because it touches state
-// without taking state.mu.
-func (app *Gui) startRecordsStream() {
-	if app.state.client == nil {
+// startQuery resets pagination and fetches the first page plus the total for
+// the current filter + name-query selection. The page and its total come from
+// one ListRecordSummaries call on a background goroutine; the result is
+// applied on the GUI goroutine.
+//
+// When resetCursor is true the selection resets to the first row; when false
+// the current recordCursor is preserved (clamped by rebuildRecordRows). Both
+// perform the same fetch.
+func (app *Gui) startQuery(resetCursor bool) {
+	client := app.state.client
+	if client == nil {
 		return
+	}
+	queries := buildServerQueries(app.state.filters, app.state.filterQuery)
+	pageSize := app.pageSize()
+
+	app.state.page.reset()
+	app.state.queryGen++
+	app.state.page.loading = true
+	if resetCursor {
+		app.state.recordCursor = 0
+		// Clear the previous query's rows right away. The silent
+		// (resetCursor=false) refresh keeps them on screen until the new page
+		// lands, so the list does not collapse under the cursor.
+		app.rebuildRecordRows()
+		app.renderRecordsView(app.g)
 	}
 
 	if app.state.cancelLoad != nil {
 		app.state.cancelLoad()
-		app.state.cancelLoad = nil
 	}
-
-	if app.state.tvCancel != nil {
-		app.state.tvCancel()
-		app.state.tvCancel = nil
-	}
-	app.state.tvEnriched = false
-	app.state.tvEnriching = false
-
-	if app.state.publishCancel != nil {
-		app.state.publishCancel()
-		app.state.publishCancel = nil
-	}
-	app.state.publishEnriched = false
-	app.state.publishEnriching = false
-
-	app.state.fullCache = nil
-	app.state.records = nil
-	app.state.recordCursor = 0
-	app.state.streamErr = ""
-	app.state.stream = streamLoading
-	app.state.recordInfoCID = ""
-	app.state.recordInfoText = ""
-	app.state.recordInfoLoading = false
-	app.applyNameFilter()
-	app.renderRecordsView(app.g)
-	app.renderDirectory(app.g)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	app.state.cancelLoad = cancel
 
+	go func() {
+		page, err := client.ListSummaries(ctx, queries, uint32(pageSize), 0)
+		app.g.Update(func(g *gocui.Gui) error {
+			if ctx.Err() != nil {
+				return nil // superseded by a newer query
+			}
+			app.state.page.loading = false
+			if err != nil {
+				// Surface the failure in a Records popup, so it is not
+				// mistaken for an empty result, and start the
+				// health/reconnect loop so the connection can recover.
+				app.rebuildRecordRows()
+				app.state.dirStatus = connFailed
+				app.state.dirError = queryErrorText(err)
+				app.state.dirUnsupported = rpcUnimplemented(err)
+				app.showRecordsError(g, app.state.dirError)
+				app.startReconnectLoop()
+				app.renderRecordsView(g)
+				app.renderDirectory(g)
+				return nil
+			}
+			app.state.page.addSummaryPage(page)
+			app.maybeStartClassEntriesFetch(page.Records)
+			app.rebuildRecordRows()
+			app.markQueryResponded(g, resetCursor)
+			app.renderRecordsView(g)
+			return nil
+		})
+	}()
+}
+
+// showRecordsError opens the Records info popup with a listing error. Must be
+// called on the GUI goroutine.
+func (app *Gui) showRecordsError(g *gocui.Gui, text string) {
+	app.state.recordInfoCID = ""
+	app.state.recordInfoText = text
+	app.state.recordInfoError = true
+	app.state.recordInfoLoading = false
+	app.openInfoPopup(g, viewRecords)
+}
+
+// markQueryResponded applies the side effects of the first server response
+// to a query: a response confirms the connection is healthy, so it marks the
+// server connected and starts the health/reconnect loop, publish enrichment
+// and the filter-values fetch, and stamps staleness. Both loops are
+// idempotent (guarded against duplicate goroutines), so firing them on every
+// query is safe. Must be called on the GUI goroutine.
+func (app *Gui) markQueryResponded(g *gocui.Gui, resetCursor bool) {
+	app.state.dirStatus = connOK
+	app.state.dirLastConnected = time.Now()
+	app.state.dirError = ""
+	// A successful listing means the server supports ListRecordSummaries,
+	// e.g. after an in-place upgrade, so health pings may report it again.
+	app.state.dirUnsupported = false
+	if app.state.infoPopupPanel == viewDirectory {
+		_ = app.closeInfoPopup(g, nil)
+	}
+	app.state.loadedOnce = true
+	app.state.dataFetchedAt = time.Now()
+	app.startReconnectLoop()
+	app.startPublishEnrichment()
+	app.startFilterValuesFetch(false)
+	app.renderFiltersView(g)
+	app.renderDirectory(g)
+	// Only the cursor-resetting (explicit) path moves the preview; the
+	// resetCursor=false path (background reconciliation) stays silent.
+	if resetCursor {
+		app.autoPreviewRecord(g)
+	}
+}
+
+// loadNextPage fetches and appends the next page unless already loading or
+// exhausted. Wired to the records-panel scroll trigger.
+func (app *Gui) loadNextPage() {
 	client := app.state.client
-
-	go client.Stream(ctx, nil, dirclient.StreamCallbacks{
-		OnFirstPage: func(summaries []*dirclient.RecordSummary) {
-			app.g.Update(func(g *gocui.Gui) error {
-				if ctx.Err() != nil {
-					return nil
-				}
-				if len(summaries) > 0 {
-					app.state.dirStatus = connOK
-					app.state.dirLastConnected = time.Now()
-					app.state.dirError = ""
-					if app.state.infoPopupPanel == viewDirectory {
-						_ = app.closeInfoPopup(g, nil)
-					}
-				}
-				app.state.fullCache = append(app.state.fullCache, summaries...)
-				for _, r := range summaries {
-					app.state.filterValues.add(r)
-				}
-				app.maybeStartClassEntriesFetch(summaries)
-				app.markStreaming()
-				app.applyFilters()
-				app.renderRecordsView(g)
-				app.renderFiltersView(g)
-				app.renderDirectory(g)
-				app.autoPreviewRecord(g)
-				return nil
-			})
-		},
-		OnBatch: func(batch []*dirclient.RecordSummary) {
-			app.g.Update(func(g *gocui.Gui) error {
-				if ctx.Err() != nil {
-					return nil
-				}
-				app.state.fullCache = append(app.state.fullCache, batch...)
-				for _, r := range batch {
-					app.state.filterValues.add(r)
-				}
-				app.maybeStartClassEntriesFetch(batch)
-				app.applyFilters()
-				app.renderRecordsView(g)
-				app.renderFiltersView(g)
-				return nil
-			})
-		},
-		OnDone: func(err error) {
-			app.g.Update(func(g *gocui.Gui) error {
-				if ctx.Err() != nil {
-					return nil
-				}
-				if err != nil {
-					app.state.stream = streamErrored
-					app.state.streamErr = err.Error()
-					app.state.dirStatus = connFailed
-					app.state.dirError = err.Error()
-					app.state.recordInfoCID = ""
-					app.state.recordInfoText = err.Error()
-					app.state.recordInfoError = true
-					app.state.recordInfoLoading = false
-					app.openInfoPopup(g, viewRecords)
-					app.renderDirectory(g)
-					app.startReconnectLoop()
-				} else {
-					app.state.stream = streamDone
-					app.state.dataFetchedAt = time.Now()
-					if app.state.dirStatus == connTrying {
-						app.state.dirStatus = connOK
-						app.state.dirLastConnected = time.Now()
-						app.state.dirError = ""
-					}
-					app.startReconnectLoop()
-					app.startPublishEnrichment()
-				}
-				app.renderRecordsView(g)
-				app.renderDirectory(g)
-				return nil
-			})
-		},
-	})
-}
-
-// applyFilters narrows state.records from fullCache according to the active
-// selections (skills, domains, modules, version, schema version, author,
-// trusted/verified), then chains into applyNameFilter for the local name
-// query. Trusted/Verified are evaluated against enriched flags; if those are
-// not yet resolved, background enrichment is kicked off and re-applies filters
-// on completion.
-//
-// When resetCursor is true the selection resets to the first row and the
-// preview updates (used after explicit user actions). When false the cursor
-// is clamped to remain valid without jumping (used during background sync).
-//
-// Must be called from the GUI goroutine (g.Update callback or key handler).
-func (app *Gui) applyFilters() {
-	app.applyFiltersOpts(true)
-}
-
-// applyFiltersSilent is like applyFilters but preserves the cursor position.
-// Used during background sync reconciliation to avoid resetting the user's selection.
-func (app *Gui) applyFiltersSilent() {
-	app.applyFiltersOpts(false)
-}
-
-func (app *Gui) applyFiltersOpts(resetCursor bool) {
-	applied := app.state.filters.applied
-
-	// Trusted/Verified is evaluated client-side against enriched flags. If the
-	// flags are not resolved yet, kick off enrichment; it re-applies filters on
-	// completion. Filtering proceeds now over whatever flags are set (the
-	// records title shows a resolving indicator until enrichment finishes).
-	if len(applied[filterTrustedVerified]) > 0 && !app.state.tvEnriched {
-		app.startTVEnrichment()
+	if client == nil || app.state.page.loading || app.state.page.exhausted {
+		return
 	}
+	queries := buildServerQueries(app.state.filters, app.state.filterQuery)
+	pageSize := app.pageSize()
+	offset := app.state.page.offset
+	app.state.page.loading = true
 
-	if len(applied) == 0 {
-		app.state.records = app.state.fullCache
-		app.state.activeFilterValues = nil
+	// Next-page fetches are not cancelled by cursor moves — only superseded by
+	// a new startQuery (or a server switch). Chaining this fetch's cancel onto
+	// cancelLoad stops a superseded fetch early; the queryGen guard below
+	// drops any results already queued for the GUI goroutine.
+	ctx, cancel := context.WithCancel(context.Background())
+	if prev := app.state.cancelLoad; prev != nil {
+		app.state.cancelLoad = func() { prev(); cancel() }
 	} else {
-		out := make([]*dirclient.RecordSummary, 0, len(app.state.fullCache))
-		for _, r := range app.state.fullCache {
-			if matchesFilters(r, applied) {
-				out = append(out, r)
+		app.state.cancelLoad = cancel
+	}
+	gen := app.state.queryGen
+
+	go func() {
+		page, err := client.ListSummaries(ctx, queries, uint32(pageSize), offset)
+		app.g.Update(func(g *gocui.Gui) error {
+			if gen != app.state.queryGen {
+				return nil // superseded by a newer query; drop these results
 			}
-		}
-		app.state.records = out
-		app.rebuildActiveFilterValues()
-	}
-
-	if resetCursor {
-		app.state.recordCursor = 0
-	}
-	app.applyNameFilter()
-	if !resetCursor {
-		if max := len(app.state.recordDisplayRows) - 1; app.state.recordCursor > max && max >= 0 {
-			app.state.recordCursor = max
-		}
-	}
-
-	app.renderRecordsView(app.g)
-	app.renderFiltersView(app.g)
-	if resetCursor {
-		app.autoPreviewRecord(app.g)
-	}
+			if ctx.Err() != nil {
+				return nil // query cancelled (e.g. server switch)
+			}
+			app.state.page.loading = false
+			if err != nil {
+				// Leave the offset where it is so the next scroll retries.
+				app.renderRecordsView(g)
+				return nil
+			}
+			app.state.page.addSummaryPage(page)
+			app.maybeStartClassEntriesFetch(page.Records)
+			app.rebuildRecordRows()
+			app.renderRecordsView(g)
+			app.renderFiltersView(g)
+			return nil
+		})
+	}()
 }
 
-// matchesFilters checks whether a record satisfies all applied categories.
-// Across categories the semantics are AND. Within a category, include values
-// use the existing include predicate and exclude values drop the record if it
-// matches any of them. Trusted/Verified is evaluated client-side against the
-// enriched RecordSummary.Trusted/.Verified flags.
-func matchesFilters(r *dirclient.RecordSummary, applied map[filterCategory]map[string]filterMode) bool {
-	for cat, selected := range applied {
-		if len(selected) == 0 {
-			continue
-		}
-		if !matchesCategory(r, cat, selected) {
-			return false
-		}
+// queryErrorText describes a failed record listing. A server older than dir
+// v1.8.0 lacks ListRecordSummaries; say so instead of showing the raw gRPC
+// error.
+func queryErrorText(err error) string {
+	if rpcUnimplemented(err) {
+		return "server does not support ListRecordSummaries; lazydir requires dir v1.8.0 or newer"
 	}
-	return true
+	return err.Error()
 }
 
-// matchesCategory returns true if the record passes one category's include and
-// exclude selections. include and exclude are evaluated independently: the
-// record must satisfy the include predicate (if any include values exist) and
-// must not match any exclude value.
-// matchesCategory reports whether r satisfies the include/exclude selection for
-// a single filter category. For any given value, exclude takes precedence over
-// include: if a value were somehow both included and excluded, the record is
-// rejected. (Not reachable via toggleApplied, which keeps each value in exactly
-// one mode.)
-func matchesCategory(r *dirclient.RecordSummary, cat filterCategory, selected map[string]filterMode) bool {
-	include, exclude := splitModes(selected)
-
-	switch cat {
-	case filterSkills:
-		return sliceMatches(r.Skills, include, exclude)
-	case filterDomains:
-		return sliceMatches(r.Domains, include, exclude)
-	case filterModules:
-		return sliceMatches(r.Modules, include, exclude)
-	case filterAuthor:
-		return sliceMatches(r.Authors, include, exclude)
-	case filterOASFVersion:
-		return scalarMatches(r.SchemaVersion, include, exclude)
-	case filterVersion:
-		return scalarMatches(r.Version, include, exclude)
-	case filterTrustedVerified:
-		if include["trusted"] && !r.Trusted {
-			return false
-		}
-		if include["verified"] && !r.Verified {
-			return false
-		}
-		if exclude["trusted"] && r.Trusted {
-			return false
-		}
-		if exclude["verified"] && r.Verified {
-			return false
-		}
-		return true
+// pageSize returns the configured page size, defaulting defensively.
+func (app *Gui) pageSize() int {
+	if app.cfg.PageSize > 0 {
+		return app.cfg.PageSize
 	}
-	return true
+	return 50
 }
 
-// splitModes partitions a selection map into include and exclude value sets.
-func splitModes(selected map[string]filterMode) (include, exclude map[string]bool) {
-	include = make(map[string]bool, len(selected))
-	exclude = make(map[string]bool, len(selected))
-	for v, mode := range selected {
-		switch mode {
-		case modeInclude:
-			include[v] = true
-		case modeExclude:
-			exclude[v] = true
-		}
-	}
-	return include, exclude
-}
+// applyFilters re-runs the server-side query for the current selection,
+// resetting the cursor to the first row.
+func (app *Gui) applyFilters() { app.startQuery(true) }
 
-// sliceMatches applies include/exclude sets to a multi-value field. Include
-// requires the field to contain every included value (preserving the prior
-// AND-within-slice behavior); exclude rejects the record if the field contains
-// any excluded value.
-func sliceMatches(values []string, include, exclude map[string]bool) bool {
-	have := make(map[string]bool, len(values))
-	for _, v := range values {
-		have[v] = true
-	}
-	for k := range include {
-		if !have[k] {
-			return false
-		}
-	}
-	for k := range exclude {
-		if have[k] {
-			return false
-		}
-	}
-	return true
-}
-
-// scalarMatches applies include/exclude sets to a single-value field. Include
-// requires the value to be one of the included values; exclude rejects it if
-// it is one of the excluded values.
-func scalarMatches(value string, include, exclude map[string]bool) bool {
-	if len(include) > 0 && !include[value] {
-		return false
-	}
-	if exclude[value] {
-		return false
-	}
-	return true
-}
-
-// applyNameFilter recomputes filteredRecords from records by applying only
-// the local name query. The records slice has already been narrowed by
-// applyFilters; the name query is intentionally local so the user can narrow
-// incrementally without restarting the stream.
+// startFilterValuesFetch fetches the complete, present-only filter option
+// values from the server's ListFilterValues RPC in the background and replaces
+// app.state.filterValues with the result. Must be called on the GUI goroutine.
 //
-// Must be called from the GUI goroutine (g.Update callback or key handler).
-func (app *Gui) applyNameFilter() {
-	if app.state.filterQuery == "" {
-		app.state.filteredRecords = app.state.records
-	} else {
-		q := strings.ToLower(app.state.filterQuery)
-		out := make([]*dirclient.RecordSummary, 0, len(app.state.records))
-		for _, r := range app.state.records {
-			if strings.Contains(strings.ToLower(r.Name), q) {
-				out = append(out, r)
-			}
-		}
-		app.state.filteredRecords = out
+// Non-forced calls (the per-query trigger) are no-ops once values are loaded,
+// while a fetch is in flight, or after the server reported the RPC as
+// Unimplemented on the current connection, so an older server is asked once per
+// connection, not per query. Other errors are treated as transient and the next
+// non-forced trigger retries.
+// Forced calls (refresh, delete, post-sync reconcile) always fetch: an
+// in-flight fetch is cancelled and restarted so the result reflects the latest
+// server state.
+//
+// On failure the connection status is left untouched and the Filters panel
+// title shows a short notice (see applyFilterValuesResult for what happens to
+// the options).
+func (app *Gui) startFilterValuesFetch(force bool) {
+	client := app.state.client
+	if client == nil {
+		return
 	}
-	app.buildRecordDisplayRows()
+	if !force && (app.state.filterValuesLoaded || app.state.filterValuesLoading || app.state.filterValuesUnsupported) {
+		return
+	}
+	if app.state.filterValuesCancel != nil {
+		app.state.filterValuesCancel()
+	}
+	app.state.filterValuesLoading = true
+	ctx, cancel := context.WithCancel(context.Background())
+	app.state.filterValuesCancel = cancel
+
+	go func() {
+		values, err := client.ListFilterValues(ctx)
+
+		app.g.Update(func(g *gocui.Gui) error {
+			if ctx.Err() != nil {
+				return nil // superseded by a newer fetch or a server switch
+			}
+			app.state.filterValuesLoading = false
+			app.state.filterValuesCancel = nil
+			cancel()
+			next, loaded, failed := applyFilterValuesResult(app.state.filterValues, app.state.filterValuesLoaded, values, err)
+			app.state.filterValues = next
+			app.state.filterValuesLoaded = loaded
+			app.state.filterValuesFailed = failed
+			app.state.filterValuesUnsupported = rpcUnimplemented(err)
+			if err != nil {
+				app.renderFiltersView(g)
+				return nil
+			}
+			// Resolve captions for every schema version on the server, not just
+			// the ones carried by loaded pages.
+			app.startClassEntriesFetchFor(values[dirclient.FilterSchemaVersion])
+			app.renderFiltersView(g)
+			return nil
+		})
+	}()
 }
 
-// syncCounts returns the number of records in fullCache that are syncing vs reconciling.
+// applyFilterValuesResult computes the next filter-option state from a
+// ListFilterValues result. On success the options are replaced and the state
+// is loaded and not failed. On failure, options already loaded on this
+// connection are kept (shown as stale) so a transient error after a refetch
+// does not wipe the pick-lists; if nothing was ever loaded (e.g. an older
+// server returning Unimplemented) the options are empty.
+func applyFilterValuesResult(
+	prev *filterValueAggregator, loaded bool, values map[dirclient.FilterCategory][]string, err error,
+) (next *filterValueAggregator, nextLoaded, failed bool) {
+	if err == nil {
+		return newFilterValuesFrom(values), true, false
+	}
+	if loaded && prev != nil {
+		return prev, true, true
+	}
+	return newFilterValueAggregator(), false, true
+}
+
+// rpcUnimplemented reports whether err means the server does not implement
+// the called RPC (an older dir release). For ListFilterValues it is the only
+// failure not retried by non-forced triggers.
+func rpcUnimplemented(err error) bool {
+	return err != nil && status.Code(err) == codes.Unimplemented
+}
+
+// filterValuesNotice returns the Filters panel title suffix describing a
+// failed ListFilterValues fetch, or "" when the last fetch succeeded.
+func filterValuesNotice(loaded, failed bool) string {
+	switch {
+	case !failed:
+		return ""
+	case loaded:
+		return "  [options stale]"
+	default:
+		return "  [options unavailable]"
+	}
+}
+
+// syncCounts returns the number of overlay entries that are syncing vs reconciling.
 func (app *Gui) syncCounts() (syncing, reconciling int) {
-	for _, r := range app.state.fullCache {
-		switch r.Status {
+	for _, e := range app.state.syncStatus {
+		switch e.status {
 		case dirclient.StatusSyncing:
 			syncing++
 		case dirclient.StatusReconciling:
@@ -1090,69 +1004,10 @@ func (app *Gui) syncCounts() (syncing, reconciling int) {
 	return
 }
 
-// hasSyncingRecords returns true if any record in fullCache is still syncing or reconciling.
+// hasSyncingRecords returns true if any overlay entry is still syncing or reconciling.
 func (app *Gui) hasSyncingRecords() bool {
 	s, r := app.syncCounts()
 	return s+r > 0
-}
-
-// serverCacheKey derives the per-server cache key. It is a composite of the
-// address and the auth identity, so cached records fetched under one identity
-// are never displayed for a different entry that happens to point at the same
-// address (e.g. two dirctl contexts with different credentials). The auth
-// token is hashed rather than stored verbatim.
-func serverCacheKey(e config.DirectoryEntry) string {
-	tokenHash := ""
-	if e.AuthToken != "" {
-		sum := sha256.Sum256([]byte(e.AuthToken))
-		tokenHash = hex.EncodeToString(sum[:8])
-	}
-	return strings.Join([]string{
-		e.Address,
-		e.AuthMode,
-		e.OIDCIssuer,
-		e.OIDCClientID,
-		e.TLSCAFile,
-		e.TLSCertFile,
-		e.TLSKeyFile,
-		strconv.FormatBool(e.TLSSkipVerify),
-		tokenHash,
-	}, "\x00")
-}
-
-// saveServerCache snapshots the current server's fullCache and filterValues
-// into the per-server cache map. It only caches after a stream has completed
-// (streamDone), so a server that legitimately returns zero records is still
-// cached and switching back to it stays instant.
-func (app *Gui) saveServerCache() {
-	if app.state.activeDir.Address == "" || app.state.stream != streamDone {
-		return
-	}
-	if app.state.serverCache == nil {
-		app.state.serverCache = map[string]*serverCacheEntry{}
-	}
-	// cachedAt reflects when the data was actually fetched (not when it was
-	// cached) so the staleness indicator survives cache round-trips.
-	cachedAt := app.state.dataFetchedAt
-	if cachedAt.IsZero() {
-		cachedAt = time.Now()
-	}
-	app.state.serverCache[serverCacheKey(app.state.activeDir)] = &serverCacheEntry{
-		fullCache:       app.state.fullCache,
-		filterValues:    app.state.filterValues,
-		cachedAt:        cachedAt,
-		tvEnriched:      app.state.tvEnriched,
-		publishEnriched: app.state.publishEnriched,
-	}
-}
-
-// invalidateServerCache removes the cache entry for the current server.
-// Called after mutating actions (delete, sync) that make cached data stale.
-func (app *Gui) invalidateServerCache() {
-	if app.state.serverCache == nil {
-		return
-	}
-	delete(app.state.serverCache, serverCacheKey(app.state.activeDir))
 }
 
 // clearSyncState resets all sync-related tracking fields.
@@ -1169,100 +1024,27 @@ func (app *Gui) clearClipboard() {
 	app.state.clipboardSourceURL = ""
 }
 
-// buildRecordDisplayRows computes the grouped display rows from
-// filteredRecords. Records sharing the same Name are grouped together with a
-// collapsible header (similar to filter categories). Groups with a single
-// record are shown flat without a header.
-func (app *Gui) buildRecordDisplayRows() {
-	records := app.state.filteredRecords
-	if len(records) == 0 {
-		app.state.recordDisplayRows = nil
-		return
+// rebuildRecordRows rebuilds the flat display rows from the current page. One
+// row per record, in server (recency) order; no cross-version grouping. The
+// cursor is clamped to remain within the new row set.
+func (app *Gui) rebuildRecordRows() {
+	// Color pages appended after enrichment (and rebuilt pages) from the
+	// last-known published set; overrides re-apply any pending optimistic toggle.
+	if app.state.publishedCIDs != nil {
+		markPublished(app.state.page.records, app.state.publishedCIDs)
+		app.applyPublishOverrides(app.state.publishedCIDs)
 	}
-
-	if app.state.recordGroupExpanded == nil {
-		app.state.recordGroupExpanded = map[string]bool{}
+	rows := make([]recordDisplayRow, 0, len(app.state.page.records))
+	for _, r := range app.state.page.records {
+		rows = append(rows, recordDisplayRow{record: r})
 	}
-
-	// Build groups keyed by name, then sort alphabetically.
-	type group struct {
-		name    string
-		records []*dirclient.RecordSummary
-	}
-	seen := map[string]int{} // name -> index into groups
-	var groups []group
-	for _, r := range records {
-		name := r.Name
-		if name == "" {
-			name = r.CID
-		}
-		if idx, ok := seen[name]; ok {
-			groups[idx].records = append(groups[idx].records, r)
-		} else {
-			seen[name] = len(groups)
-			groups = append(groups, group{name: name, records: []*dirclient.RecordSummary{r}})
-		}
-	}
-	sort.Slice(groups, func(i, j int) bool {
-		return strings.ToLower(groups[i].name) < strings.ToLower(groups[j].name)
-	})
-
-	var rows []recordDisplayRow
-	for _, g := range groups {
-		if len(g.records) == 1 {
-			rows = append(rows, recordDisplayRow{record: g.records[0]})
-			continue
-		}
-		sort.Slice(g.records, func(i, j int) bool {
-			return compareVersions(g.records[i].Version, g.records[j].Version) > 0
-		})
-		rows = append(rows, recordDisplayRow{groupName: g.name})
-		if app.state.recordGroupExpanded[g.name] {
-			for _, r := range g.records {
-				rows = append(rows, recordDisplayRow{record: r, grouped: true})
-			}
-		}
-	}
-
 	app.state.recordDisplayRows = rows
-}
-
-// compareVersions compares two version strings. It attempts semver-style
-// numeric comparison (splitting on ".") and falls back to lexicographic order.
-// Returns >0 if a > b, <0 if a < b, 0 if equal.
-func compareVersions(a, b string) int {
-	a = strings.TrimPrefix(a, "v")
-	b = strings.TrimPrefix(b, "v")
-	aParts := strings.Split(a, ".")
-	bParts := strings.Split(b, ".")
-	maxLen := len(aParts)
-	if len(bParts) > maxLen {
-		maxLen = len(bParts)
+	if max := len(rows) - 1; app.state.recordCursor > max {
+		app.state.recordCursor = max
 	}
-	for i := 0; i < maxLen; i++ {
-		var ap, bp string
-		if i < len(aParts) {
-			ap = aParts[i]
-		}
-		if i < len(bParts) {
-			bp = bParts[i]
-		}
-		an, aErr := strconv.Atoi(ap)
-		bn, bErr := strconv.Atoi(bp)
-		if aErr == nil && bErr == nil {
-			if an != bn {
-				return an - bn
-			}
-			continue
-		}
-		if ap != bp {
-			if ap < bp {
-				return -1
-			}
-			return 1
-		}
+	if app.state.recordCursor < 0 {
+		app.state.recordCursor = 0
 	}
-	return 0
 }
 
 // openInput shows the shared input prompt, pre-fills it with initialValue,
@@ -1350,7 +1132,17 @@ const defaultInputDebounceDelay = 150
 //
 // It must be called on the GUI goroutine so access to classEntriesVers is safe.
 func (app *Gui) maybeStartClassEntriesFetch(summaries []*dirclient.RecordSummary) {
-	for _, v := range distinctNewSchemaVersions(summaries, app.state.classEntriesVers) {
+	app.startClassEntriesFetchFor(distinctNewSchemaVersions(summaries, app.state.classEntriesVers))
+}
+
+// startClassEntriesFetchFor kicks off a background taxonomy fetch for each
+// given OASF schema version that is non-empty and not already fetched (or in
+// flight). Must be called on the GUI goroutine.
+func (app *Gui) startClassEntriesFetchFor(versions []string) {
+	for _, v := range versions {
+		if v == "" || app.state.classEntriesVers[v] {
+			continue
+		}
 		if app.state.classEntriesVers == nil {
 			app.state.classEntriesVers = map[string]bool{}
 		}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -121,14 +122,15 @@ func TestDir_Ping(t *testing.T) {
 	}
 }
 
-func TestDir_Stream_NoFilters(t *testing.T) {
+func TestDir_ListSummaries(t *testing.T) {
 	addr := requireDaemon(t)
 	dirctl := dirctlBin(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	cid, _ := seedRecord(t, ctx, addr, dirctl)
+	seedRecord(t, ctx, addr, dirctl)
 
 	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
 	if err != nil {
@@ -136,60 +138,41 @@ func TestDir_Stream_NoFilters(t *testing.T) {
 	}
 	defer c.Close()
 
-	var (
-		firstPage []*dirclient.RecordSummary
-		batches   [][]*dirclient.RecordSummary
-		streamErr error
-		done      = make(chan struct{})
-	)
-
-	go func() {
-		c.Stream(ctx, nil, dirclient.StreamCallbacks{
-			OnFirstPage: func(s []*dirclient.RecordSummary) { firstPage = s },
-			OnBatch:     func(s []*dirclient.RecordSummary) { batches = append(batches, s) },
-			OnDone:      func(err error) { streamErr = err; close(done) },
-		})
-	}()
-
-	select {
-	case <-done:
-	case <-ctx.Done():
-		t.Fatal("stream timed out")
+	first, err := c.ListSummaries(ctx, nil, 1, 0)
+	if err != nil {
+		t.Fatalf("ListSummaries: %v", err)
+	}
+	if len(first.Records) != 1 || !first.HasMore {
+		t.Errorf("expected 1 record and HasMore with limit 1, got %d HasMore=%v", len(first.Records), first.HasMore)
+	}
+	if first.Total < 2 {
+		t.Errorf("expected Total >= 2 after seeding two records, got %d", first.Total)
 	}
 
-	if streamErr != nil {
-		t.Fatalf("Stream error: %v", streamErr)
+	all, err := c.ListSummaries(ctx, nil, 100, 0)
+	if err != nil {
+		t.Fatalf("ListSummaries(all): %v", err)
 	}
-
-	total := len(firstPage)
-	containsSeedCID := false
-	for _, r := range firstPage {
-		if r.CID == cid {
-			containsSeedCID = true
-			break
+	var seeded *dirclient.RecordSummary
+	for _, s := range all.Records {
+		if s.CID == cid {
+			seeded = s
 		}
 	}
-	for _, b := range batches {
-		total += len(b)
-		if containsSeedCID {
-			continue
-		}
-		for _, r := range b {
-			if r.CID == cid {
-				containsSeedCID = true
-				break
-			}
-		}
+	if seeded == nil {
+		t.Fatalf("seeded record %s not listed", cid)
+	}
+	if seeded.Name == "" || seeded.SchemaVersion == "" || len(seeded.Skills) == 0 || len(seeded.Authors) == 0 {
+		t.Errorf("seeded summary missing fields: %+v", seeded)
 	}
 
-	if total == 0 {
-		t.Fatal("expected at least one streamed record")
+	none, err := c.ListSummaries(ctx, nil, 1, 1_000_000)
+	if err != nil {
+		t.Fatalf("ListSummaries(large offset): %v", err)
 	}
-	if !containsSeedCID {
-		t.Fatalf("seeded record CID %s not found in stream", cid)
+	if len(none.Records) != 0 || none.HasMore {
+		t.Errorf("expected empty, no more past the end, got %d HasMore=%v", len(none.Records), none.HasMore)
 	}
-
-	t.Logf("streamed %d records (first page: %d, batches: %d)", total, len(firstPage), len(batches))
 }
 
 func TestDir_PushAndPull(t *testing.T) {
@@ -226,4 +209,36 @@ func TestDir_PushAndPull(t *testing.T) {
 	}
 
 	t.Logf("pulled record JSON (first 200 chars): %.200s", jsonStr)
+}
+
+func TestDir_ListFilterValues(t *testing.T) {
+	addr := requireDaemon(t)
+	dirctl := dirctlBin(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	seedRecord(t, ctx, addr, dirctl)
+
+	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
+	if err != nil {
+		t.Fatalf("Connect(%s): %v", addr, err)
+	}
+	defer c.Close()
+
+	got, err := c.ListFilterValues(ctx)
+	if err != nil {
+		t.Fatalf("ListFilterValues: %v", err)
+	}
+
+	want := map[dirclient.FilterCategory]string{
+		dirclient.FilterSkill:         "natural_language_processing/analytical_reasoning",
+		dirclient.FilterAuthor:        "lazydir-e2e",
+		dirclient.FilterSchemaVersion: "1.0.0",
+	}
+	for cat, v := range want {
+		if !slices.Contains(got[cat], v) {
+			t.Errorf("category %v: %q not in %v", cat, v, got[cat])
+		}
+	}
 }

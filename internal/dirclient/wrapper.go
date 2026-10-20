@@ -43,8 +43,7 @@ const (
 )
 
 // RecordSummary is a lightweight representation of a directory record. It
-// exposes only the fields the TUI renders or filters on; everything else from
-// the wire record is discarded by extractSummary.
+// exposes only the fields the TUI renders or filters on.
 type RecordSummary struct {
 	CID           string
 	Name          string
@@ -56,17 +55,13 @@ type RecordSummary struct {
 	Modules       []string
 	Status        RecordStatus // lifecycle state; zero = StatusLocal
 	StatusError   string       // error message when Status == StatusFailed
-	Trusted       bool         // lazydir-only; background-enriched via MatchingCIDs
-	Verified      bool         // lazydir-only; background-enriched via MatchingCIDs
 	Published     bool         // lazydir-only; background-enriched via ListPublished
 }
 
 // Client wraps the agntcy/dir gRPC client.
 type Client struct {
-	c             *client.Client
-	Config        Config
-	FirstPageSize int
-	BatchSize     int
+	c      *client.Client
+	Config Config
 }
 
 // Connect creates a new connected client.
@@ -138,6 +133,91 @@ func (c *Client) Ping(ctx context.Context) error {
 	}
 }
 
+// filterValueCategories are the categories the server's ListFilterValues RPC
+// supports. Requesting any other type (e.g. VERSION) fails the whole RPC.
+var filterValueCategories = []FilterCategory{
+	FilterSkill, FilterDomain, FilterModule, FilterAuthor, FilterSchemaVersion,
+}
+
+// ListFilterValues returns the distinct values present on the server for each
+// supported filter category, as sorted by the server.
+func (c *Client) ListFilterValues(ctx context.Context) (map[FilterCategory][]string, error) {
+	fields := make([]searchv1.RecordQueryType, 0, len(filterValueCategories))
+	for _, cat := range filterValueCategories {
+		fields = append(fields, Query{Category: cat}.toRPC().GetType())
+	}
+	resp, err := c.c.ListFilterValues(ctx, &searchv1.ListFilterValuesRequest{Fields: fields})
+	if err != nil {
+		return nil, fmt.Errorf("listing filter values: %w", err)
+	}
+	return filterValuesFromRPC(resp), nil
+}
+
+// filterValuesFromRPC converts a ListFilterValues response into a map keyed by
+// FilterCategory, skipping fields outside filterValueCategories.
+func filterValuesFromRPC(resp *searchv1.ListFilterValuesResponse) map[FilterCategory][]string {
+	byType := make(map[searchv1.RecordQueryType]FilterCategory, len(filterValueCategories))
+	for _, cat := range filterValueCategories {
+		byType[Query{Category: cat}.toRPC().GetType()] = cat
+	}
+	out := make(map[FilterCategory][]string)
+	for _, f := range resp.GetFields() {
+		if f == nil {
+			continue
+		}
+		if cat, ok := byType[f.GetField()]; ok {
+			out[cat] = f.GetValues()
+		}
+	}
+	return out
+}
+
+// SummaryPage is one page of record summaries from ListSummaries.
+type SummaryPage struct {
+	Records []*RecordSummary
+	HasMore bool   // the server has records beyond this page
+	Total   uint32 // matches ignoring limit/offset
+}
+
+// ListSummaries fetches one page of record summaries matching queries via the
+// SearchService.ListRecordSummaries RPC (dir >= v1.8.0), which answers from
+// the server's database without pulling each record from its store. Older
+// servers return codes.Unimplemented.
+func (c *Client) ListSummaries(ctx context.Context, queries []Query, limit, offset uint32) (*SummaryPage, error) {
+	l, o := limit, offset
+	resp, err := c.c.ListRecordSummaries(ctx, &searchv1.ListRecordSummariesRequest{
+		Queries: buildRPCQueries(queries),
+		Limit:   &l,
+		Offset:  &o,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing record summaries: %w", err)
+	}
+	page := &SummaryPage{
+		Records: make([]*RecordSummary, 0, len(resp.GetRecords())),
+		HasMore: resp.GetHasMore(),
+		Total:   resp.GetTotalCount(),
+	}
+	for _, r := range resp.GetRecords() {
+		page.Records = append(page.Records, summaryFromRPC(r))
+	}
+	return page, nil
+}
+
+// summaryFromRPC converts a server-side record summary to a RecordSummary.
+func summaryFromRPC(r *searchv1.RecordSummary) *RecordSummary {
+	return normalizeSummary(&RecordSummary{
+		CID:           r.GetCid(),
+		Name:          r.GetName(),
+		Version:       r.GetVersion(),
+		SchemaVersion: r.GetSchemaVersion(),
+		Authors:       r.GetAuthors(),
+		Skills:        r.GetSkills(),
+		Domains:       r.GetDomains(),
+		Modules:       r.GetModules(),
+	})
+}
+
 // FilterCategory identifies a server-side filter predicate. Each value maps
 // 1:1 to a RecordQueryType in the agntcy.dir.search.v1 protobuf API.
 type FilterCategory int
@@ -151,6 +231,7 @@ const (
 	FilterAuthor
 	FilterTrusted
 	FilterVerified
+	FilterName
 )
 
 // Query is one server-side predicate. Multiple Query values combine on the
@@ -158,6 +239,7 @@ const (
 type Query struct {
 	Category FilterCategory
 	Value    string
+	Negate   bool
 }
 
 func (q Query) toRPC() *searchv1.RecordQuery {
@@ -179,151 +261,19 @@ func (q Query) toRPC() *searchv1.RecordQuery {
 		t = searchv1.RecordQueryType_RECORD_QUERY_TYPE_TRUSTED
 	case FilterVerified:
 		t = searchv1.RecordQueryType_RECORD_QUERY_TYPE_VERIFIED
+	case FilterName:
+		t = searchv1.RecordQueryType_RECORD_QUERY_TYPE_NAME
 	}
-	return &searchv1.RecordQuery{Type: t, Value: q.Value}
+	return &searchv1.RecordQuery{Type: t, Value: q.Value, Negate: q.Negate}
 }
 
-const (
-	defaultFirstPageSize = 100
-	defaultBatchSize     = 50
-)
-
-func (c *Client) firstPageSize() int {
-	if c.FirstPageSize > 0 {
-		return c.FirstPageSize
-	}
-	return defaultFirstPageSize
-}
-
-func (c *Client) batchSize() int {
-	if c.BatchSize > 0 {
-		return c.BatchSize
-	}
-	return defaultBatchSize
-}
-
-// StreamCallbacks bundle the optional notification hooks for Stream. Any of
-// the callbacks may be nil. They are invoked from the goroutine driving the
-// stream — callers must not block inside them.
-type StreamCallbacks struct {
-	// OnFirstPage fires once after the first batch of records has been
-	// received (controlled by Client.FirstPageSize, default 100) or after
-	// the stream ends, whichever comes first.
-	OnFirstPage func(summaries []*RecordSummary)
-	// OnBatch fires for every subsequent batch of records (controlled by
-	// Client.BatchSize, default 50). Batching exists so callers can
-	// amortize per-update work like UI redraws.
-	OnBatch func(summaries []*RecordSummary)
-	// OnDone fires exactly once when the stream finishes — either cleanly,
-	// because of an error, or because ctx was cancelled. err is nil on a
-	// clean finish.
-	OnDone func(err error)
-}
-
-// Stream issues a single SearchRecords RPC with the supplied queries and
-// drains the returned server stream until the server closes it (EOF) or ctx
-// is cancelled. The first batch of records (sized by Client.FirstPageSize)
-// is delivered via OnFirstPage; remaining records arrive in OnBatch chunks
-// (sized by Client.BatchSize).
-//
-// No limit/offset is set on the RPC — the server decides how many records
-// to return. Once the gRPC stream is exhausted, OnDone(nil) fires.
-//
-// Callbacks fire on this goroutine; cancel ctx to stop reading at any time.
-func (c *Client) Stream(ctx context.Context, queries []Query, cb StreamCallbacks) {
-	rpcQueries := make([]*searchv1.RecordQuery, 0, len(queries))
+// buildRPCQueries converts dirclient Queries to their protobuf form.
+func buildRPCQueries(queries []Query) []*searchv1.RecordQuery {
+	rpc := make([]*searchv1.RecordQuery, 0, len(queries))
 	for _, q := range queries {
-		rpcQueries = append(rpcQueries, q.toRPC())
+		rpc = append(rpc, q.toRPC())
 	}
-
-	fps := c.firstPageSize()
-	bs := c.batchSize()
-	buf := make([]*RecordSummary, 0, fps)
-	firstPageSent := false
-
-	handOff := func(capHint int) []*RecordSummary {
-		out := buf
-		buf = make([]*RecordSummary, 0, capHint)
-		return out
-	}
-
-	flushFirstPage := func() {
-		if firstPageSent {
-			return
-		}
-		firstPageSent = true
-		batch := handOff(bs)
-		if cb.OnFirstPage != nil {
-			cb.OnFirstPage(batch)
-		}
-	}
-	flushBatch := func() {
-		if !firstPageSent {
-			flushFirstPage()
-			return
-		}
-		if len(buf) == 0 {
-			return
-		}
-		batch := handOff(bs)
-		if cb.OnBatch != nil {
-			cb.OnBatch(batch)
-		}
-	}
-	finish := func(err error) {
-		flushBatch()
-		if cb.OnDone != nil {
-			cb.OnDone(err)
-		}
-	}
-
-	req := &searchv1.SearchRecordsRequest{
-		Queries: rpcQueries,
-	}
-	result, err := c.c.SearchRecords(ctx, req)
-	if err != nil {
-		finish(fmt.Errorf("searching records: %w", err))
-		return
-	}
-
-	for {
-		select {
-		case resp, ok := <-result.ResCh():
-			if !ok {
-				finish(nil)
-				return
-			}
-			record := resp.GetRecord()
-			if record == nil {
-				continue
-			}
-			s := extractSummary(record)
-			if s == nil {
-				continue
-			}
-			buf = append(buf, s)
-			if !firstPageSent {
-				if len(buf) >= fps {
-					flushFirstPage()
-				}
-				continue
-			}
-			if len(buf) >= bs {
-				flushBatch()
-			}
-		case streamErr := <-result.ErrCh():
-			if streamErr != nil {
-				finish(fmt.Errorf("receiving record: %w", streamErr))
-				return
-			}
-		case <-result.DoneCh():
-			finish(nil)
-			return
-		case <-ctx.Done():
-			finish(ctx.Err())
-			return
-		}
-	}
+	return rpc
 }
 
 // MatchingCIDs issues a SearchCIDs RPC with the supplied queries and returns
@@ -331,10 +281,7 @@ func (c *Client) Stream(ctx context.Context, queries []Query, cb StreamCallbacks
 // until EOF or ctx cancellation. Used to resolve server-only predicates
 // (trusted/verified) into a CID set applied to cached records.
 func (c *Client) MatchingCIDs(ctx context.Context, queries []Query) ([]string, error) {
-	rpcQueries := make([]*searchv1.RecordQuery, 0, len(queries))
-	for _, q := range queries {
-		rpcQueries = append(rpcQueries, q.toRPC())
-	}
+	rpcQueries := buildRPCQueries(queries)
 
 	req := &searchv1.SearchCIDsRequest{Queries: rpcQueries}
 	result, err := c.c.SearchCIDs(ctx, req)
@@ -591,86 +538,14 @@ func (c *Client) DeleteSync(ctx context.Context, syncID string) error {
 	return nil
 }
 
-// namesOf collects the non-empty names from a slice of OASF sub-objects
-// (skills, domains, modules), each of which exposes GetName().
-func namesOf[T interface{ GetName() string }](items []T) []string {
-	if len(items) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(items))
-	for _, it := range items {
-		if n := it.GetName(); n != "" {
-			names = append(names, n)
-		}
-	}
-	return names
-}
-
-// extractSummary pulls name/version/skills/domains/modules from a raw record.
-func extractSummary(record *corev1.Record) *RecordSummary {
-	cid := record.GetCid()
-	data := record.GetData()
-	if data == nil {
-		return nil
-	}
-
-	decoded, err := decoder.DecodeRecord(data)
-	if err != nil || decoded == nil {
-		return nil
-	}
-
-	s := &RecordSummary{CID: cid}
-
-	// Every supported OASF schema version (v1alpha1/0.7.x, v1alpha2/0.8.x,
-	// v1/1.x) exposes the same skill/domain/module accessors, so extract them
-	// uniformly. Skipping the older versions here left their records out of the
-	// filter option lists.
-	switch {
-	case decoded.HasV1():
-		r := decoded.GetV1()
-		if r == nil {
-			return nil
-		}
-		s.Name = r.GetName()
-		s.Version = r.GetVersion()
-		s.SchemaVersion = r.GetSchemaVersion()
-		s.Authors = append(s.Authors, r.GetAuthors()...)
-		s.Skills = namesOf(r.GetSkills())
-		s.Domains = namesOf(r.GetDomains())
-		s.Modules = namesOf(r.GetModules())
-	case decoded.HasV1Alpha2():
-		r := decoded.GetV1Alpha2()
-		if r == nil {
-			return nil
-		}
-		s.Name = r.GetName()
-		s.Version = r.GetVersion()
-		s.SchemaVersion = r.GetSchemaVersion()
-		s.Authors = append(s.Authors, r.GetAuthors()...)
-		s.Skills = namesOf(r.GetSkills())
-		s.Domains = namesOf(r.GetDomains())
-		s.Modules = namesOf(r.GetModules())
-	case decoded.HasV1Alpha1():
-		r := decoded.GetV1Alpha1()
-		if r == nil {
-			return nil
-		}
-		s.Name = r.GetName()
-		s.Version = r.GetVersion()
-		s.SchemaVersion = r.GetSchemaVersion()
-		s.Authors = append(s.Authors, r.GetAuthors()...)
-		s.Skills = namesOf(r.GetSkills())
-		s.Domains = namesOf(r.GetDomains())
-		s.Modules = namesOf(r.GetModules())
-	default:
-		return nil
-	}
-
+// normalizeSummary sanitizes the displayed fields and falls back to a CID
+// prefix for nameless records.
+func normalizeSummary(s *RecordSummary) *RecordSummary {
 	s.Name = sanitizeField(s.Name)
 	s.Version = sanitizeField(s.Version)
 
-	if s.Name == "" && cid != "" {
-		s.Name = cid[:min(20, len(cid))]
+	if s.Name == "" && s.CID != "" {
+		s.Name = s.CID[:min(20, len(s.CID))]
 	}
 
 	return s

@@ -185,12 +185,12 @@ func (app *Gui) closeInfoPopup(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-// clearFailedSyncRecords removes records with StatusFailed from fullCache
+// clearFailedSyncRecords drops StatusFailed entries from the sync-status overlay
 // when the error popup is dismissed.
 func (app *Gui) clearFailedSyncRecords(g *gocui.Gui) {
 	hasFailed := false
-	for _, r := range app.state.fullCache {
-		if r.Status == dirclient.StatusFailed {
+	for _, e := range app.state.syncStatus {
+		if e.status == dirclient.StatusFailed {
 			hasFailed = true
 			break
 		}
@@ -199,7 +199,7 @@ func (app *Gui) clearFailedSyncRecords(g *gocui.Gui) {
 		return
 	}
 	app.removeRecordsByStatus(dirclient.StatusFailed)
-	app.applyFiltersSilent()
+	app.renderRecordsView(g)
 	app.renderStatus(g)
 }
 

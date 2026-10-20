@@ -12,14 +12,14 @@ import (
 	"github.com/agntcy/lazydir/internal/oasf"
 )
 
-// filterValueAggregator collects the unique values seen in the streamed
-// records for each filter category. Values become available in the [2]
-// Filters options view as soon as a record carrying them arrives.
+// filterValueAggregator holds the unique values available as options for each
+// filter category in the [2] Filters panel. It is populated from the server's
+// ListFilterValues RPC (see newFilterValuesFrom), which returns complete,
+// present-only values for the whole registry.
 type filterValueAggregator struct {
 	skills        map[string]bool
 	domains       map[string]bool
 	modules       map[string]bool
-	versions      map[string]bool
 	schemaVersion map[string]bool
 	authors       map[string]bool
 }
@@ -29,44 +29,39 @@ func newFilterValueAggregator() *filterValueAggregator {
 		skills:        map[string]bool{},
 		domains:       map[string]bool{},
 		modules:       map[string]bool{},
-		versions:      map[string]bool{},
 		schemaVersion: map[string]bool{},
 		authors:       map[string]bool{},
 	}
 }
 
-// add folds one record's filterable fields into the aggregator.
-func (a *filterValueAggregator) add(r *dirclient.RecordSummary) {
-	for _, v := range r.Skills {
-		a.skills[v] = true
-	}
-	for _, v := range r.Domains {
-		a.domains[v] = true
-	}
-	for _, v := range r.Modules {
-		a.modules[v] = true
-	}
-	for _, v := range r.Authors {
-		if v != "" {
-			a.authors[v] = true
+// newFilterValuesFrom builds an aggregator from a ListFilterValues result.
+// Categories without a filter-panel counterpart are ignored, as are empty
+// values.
+func newFilterValuesFrom(m map[dirclient.FilterCategory][]string) *filterValueAggregator {
+	a := newFilterValueAggregator()
+	for cat, values := range m {
+		var set map[string]bool
+		switch cat {
+		case dirclient.FilterSkill:
+			set = a.skills
+		case dirclient.FilterDomain:
+			set = a.domains
+		case dirclient.FilterModule:
+			set = a.modules
+		case dirclient.FilterSchemaVersion:
+			set = a.schemaVersion
+		case dirclient.FilterAuthor:
+			set = a.authors
+		default:
+			continue
+		}
+		for _, v := range values {
+			if v != "" {
+				set[v] = true
+			}
 		}
 	}
-	if r.SchemaVersion != "" {
-		a.schemaVersion[r.SchemaVersion] = true
-	}
-	if r.Version != "" {
-		a.versions[r.Version] = true
-	}
-}
-
-// rebuildActiveFilterValues recomputes activeFilterValues from the current
-// filtered record set so the Filters panel only shows relevant options.
-func (app *Gui) rebuildActiveFilterValues() {
-	a := newFilterValueAggregator()
-	for _, r := range app.state.records {
-		a.add(r)
-	}
-	app.state.activeFilterValues = a
+	return a
 }
 
 // filterCategory identifies a filterable record field shown in the [2] Filters
@@ -78,7 +73,6 @@ const (
 	filterDomains
 	filterModules
 	filterOASFVersion
-	filterVersion
 	filterAuthor
 	filterTrustedVerified
 )
@@ -89,7 +83,6 @@ var allFilterCategories = []filterCategory{
 	filterDomains,
 	filterModules,
 	filterOASFVersion,
-	filterVersion,
 	filterAuthor,
 	filterTrustedVerified,
 }
@@ -106,8 +99,6 @@ func (c filterCategory) title() string {
 		return "Modules"
 	case filterOASFVersion:
 		return "OASF version"
-	case filterVersion:
-		return "Version"
 	case filterAuthor:
 		return "Author"
 	case filterTrustedVerified:
@@ -155,21 +146,16 @@ func newFilterState() filterState {
 	}
 }
 
-// optionsFor returns the option labels available for a given category. When
-// filters are active it reads from activeFilterValues (the narrowed set) so
-// only relevant options are shown; otherwise it falls back to the full
-// filterValues aggregator. Categories that already have active selections
-// always use the full set so the user can add more values to broaden the
-// search (standard faceted-search behaviour). Currently-applied selections
-// are always included so the user can deselect them.
+// optionsFor returns the option labels available for a given category. Options
+// come from the filterValues aggregator, which is replaced wholesale by each
+// successful ListFilterValues fetch (and is empty when the server does not
+// support it). Currently-applied selections are always included so the user
+// can deselect them.
 //
 // Class categories (skills, domains, modules) are sorted by OASF ID when
 // enrichment data is available; other categories are sorted alphabetically.
 func (app *Gui) optionsFor(c filterCategory) []string {
-	a := app.state.activeFilterValues
-	if a == nil {
-		a = app.state.filterValues
-	}
+	a := app.state.filterValues
 	if a == nil {
 		return nil
 	}
@@ -217,8 +203,6 @@ func aggregatorFieldFor(a *filterValueAggregator, c filterCategory) map[string]b
 		return a.modules
 	case filterOASFVersion:
 		return a.schemaVersion
-	case filterVersion:
-		return a.versions
 	case filterAuthor:
 		return a.authors
 	}
@@ -305,6 +289,12 @@ func (app *Gui) listRows() []listRow {
 	return rows
 }
 
+const (
+	optTrusted  = "trusted"
+	optVerified = "verified"
+	valueTrue   = "true"
+)
+
 func categoryToFilter(c filterCategory) dirclient.FilterCategory {
 	switch c {
 	case filterSkills:
@@ -315,12 +305,45 @@ func categoryToFilter(c filterCategory) dirclient.FilterCategory {
 		return dirclient.FilterModule
 	case filterOASFVersion:
 		return dirclient.FilterSchemaVersion
-	case filterVersion:
-		return dirclient.FilterVersion
 	case filterAuthor:
 		return dirclient.FilterAuthor
 	}
 	return dirclient.FilterSkill
+}
+
+// buildServerQueries translates the applied tri-state selection and the name
+// query into server-side dirclient predicates. Include -> positive query;
+// Exclude -> Negate. Trusted/Verified map to their own categories with value
+// "true". The name query becomes a wildcarded NAME predicate.
+//
+// The server ORs repeated positive predicates of one category (two skills
+// match records with either) and ANDs categories; negated predicates exclude
+// records carrying any of the excluded values.
+func buildServerQueries(fs filterState, nameQuery string) []dirclient.Query {
+	var qs []dirclient.Query
+	for _, cat := range allFilterCategories {
+		if cat == filterTrustedVerified {
+			continue
+		}
+		for value, mode := range fs.applied[cat] {
+			qs = append(qs, dirclient.Query{
+				Category: categoryToFilter(cat),
+				Value:    value,
+				Negate:   mode == modeExclude,
+			})
+		}
+	}
+	for value, mode := range fs.applied[filterTrustedVerified] {
+		cat := dirclient.FilterTrusted
+		if value == optVerified {
+			cat = dirclient.FilterVerified
+		}
+		qs = append(qs, dirclient.Query{Category: cat, Value: valueTrue, Negate: mode == modeExclude})
+	}
+	if nameQuery != "" {
+		qs = append(qs, dirclient.Query{Category: dirclient.FilterName, Value: "*" + nameQuery + "*"})
+	}
+	return qs
 }
 
 // filteredListRows returns the rows to display. When no query is active it

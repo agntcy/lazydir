@@ -5,11 +5,27 @@ package gui
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/agntcy/lazydir/internal/oasf"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// Option values, versions and captions reused across the GUI tests.
+const (
+	optNLP            = "nlp"
+	optSecurity       = "security"
+	optTranslation    = "translation"
+	ver100            = "1.0.0"
+	ver070            = "0.7.0"
+	classSkillSchema  = "schema.oasf/skill"
+	classRuntimeModel = "runtime/model"
+	captionModel      = "Model"
+	captionNLP        = "Natural Language Processing"
 )
 
 func TestFilterCategoryTitle(t *testing.T) {
@@ -23,7 +39,6 @@ func TestFilterCategoryTitle(t *testing.T) {
 		{filterDomains, "Domains"},
 		{filterModules, "Modules"},
 		{filterOASFVersion, "OASF version"},
-		{filterVersion, "Version"},
 		{filterAuthor, "Author"},
 		{filterTrustedVerified, "Trusted / Verified"},
 	}
@@ -48,7 +63,6 @@ func TestCategoryToFilter(t *testing.T) {
 		{filterDomains, dirclient.FilterDomain},
 		{filterModules, dirclient.FilterModule},
 		{filterOASFVersion, dirclient.FilterSchemaVersion},
-		{filterVersion, dirclient.FilterVersion},
 		{filterAuthor, dirclient.FilterAuthor},
 	}
 	for _, tt := range tests {
@@ -65,22 +79,20 @@ func TestAggregatorFieldFor(t *testing.T) {
 	t.Parallel()
 
 	a := newFilterValueAggregator()
-	a.skills["nlp"] = true
-	a.domains["security"] = true
+	a.skills[optNLP] = true
+	a.domains[optSecurity] = true
 	a.modules["auth"] = true
 	a.schemaVersion["1.0"] = true
-	a.versions["v2.1"] = true
 	a.authors["alice"] = true
 
 	tests := []struct {
 		cat  filterCategory
 		want string
 	}{
-		{filterSkills, "nlp"},
-		{filterDomains, "security"},
+		{filterSkills, optNLP},
+		{filterDomains, optSecurity},
 		{filterModules, "auth"},
 		{filterOASFVersion, "1.0"},
-		{filterVersion, "v2.1"},
 		{filterAuthor, "alice"},
 	}
 	for _, tt := range tests {
@@ -98,35 +110,49 @@ func TestAggregatorFieldFor(t *testing.T) {
 	}
 }
 
-func TestAggregator_Add(t *testing.T) {
+func TestNewFilterValuesFrom(t *testing.T) {
 	t.Parallel()
 
-	a := newFilterValueAggregator()
-	a.add(&dirclient.RecordSummary{
-		Skills:        []string{"nlp", "translation"},
-		Domains:       []string{"security"},
-		Modules:       []string{"auth"},
-		Authors:       []string{"alice", ""},
-		Version:       "1.0.0",
-		SchemaVersion: "1.0",
-	})
-	a.add(&dirclient.RecordSummary{
-		Skills:  []string{"nlp"},
-		Authors: []string{"bob"},
-		Version: "2.0.0",
+	a := newFilterValuesFrom(map[dirclient.FilterCategory][]string{
+		dirclient.FilterSkill:         {optNLP, optTranslation},
+		dirclient.FilterDomain:        {optSecurity},
+		dirclient.FilterModule:        {classRuntimeModel},
+		dirclient.FilterAuthor:        {"carol", ""},
+		dirclient.FilterSchemaVersion: {ver100, ver070},
+		dirclient.FilterName:          {"ignored"},
 	})
 
-	if len(a.skills) != 2 {
-		t.Errorf("skills = %v, want 2 entries", a.skills)
+	tests := []struct {
+		name string
+		got  map[string]bool
+		want []string
+	}{
+		{"skillSet", a.skills, []string{optNLP, optTranslation}},
+		{"domainSet", a.domains, []string{optSecurity}},
+		{"moduleSet", a.modules, []string{classRuntimeModel}},
+		{"authorSet", a.authors, []string{"carol"}},
+		{"schemaVersionSet", a.schemaVersion, []string{ver100, ver070}},
 	}
-	if len(a.authors) != 2 {
-		t.Errorf("authors = %v, want 2 (empty string excluded)", a.authors)
+	for _, tt := range tests {
+		if len(tt.got) != len(tt.want) {
+			t.Errorf("%s = %v, want %v", tt.name, tt.got, tt.want)
+			continue
+		}
+		for _, w := range tt.want {
+			if !tt.got[w] {
+				t.Errorf("%s missing %q", tt.name, w)
+			}
+		}
 	}
-	if len(a.versions) != 2 {
-		t.Errorf("versions = %v, want 2 entries", a.versions)
+
+	for _, set := range []map[string]bool{a.skills, a.domains, a.modules, a.authors, a.schemaVersion} {
+		if set["ignored"] {
+			t.Error("unknown category value leaked into a filter set")
+		}
 	}
-	if !a.skills["nlp"] || !a.skills["translation"] {
-		t.Error("expected nlp and translation in skills")
+
+	if e := newFilterValuesFrom(nil); len(e.skills)+len(e.domains)+len(e.modules)+len(e.authors)+len(e.schemaVersion) != 0 {
+		t.Error("nil input should yield an empty aggregator")
 	}
 }
 
@@ -161,24 +187,24 @@ func TestDistinctNewSchemaVersions(t *testing.T) {
 	}{
 		{
 			name:      "all new, deduped and order preserved",
-			summaries: summariesWithVersions("1.0.0", "0.7.0", "1.0.0", "0.8.0"),
-			want:      []string{"1.0.0", "0.7.0", "0.8.0"},
+			summaries: summariesWithVersions(ver100, ver070, ver100, "0.8.0"),
+			want:      []string{ver100, ver070, "0.8.0"},
 		},
 		{
 			name:      "already fetched versions skipped",
-			summaries: summariesWithVersions("1.0.0", "0.7.0"),
-			fetched:   map[string]bool{"1.0.0": true},
-			want:      []string{"0.7.0"},
+			summaries: summariesWithVersions(ver100, ver070),
+			fetched:   map[string]bool{ver100: true},
+			want:      []string{ver070},
 		},
 		{
 			name:      "empty versions ignored",
-			summaries: summariesWithVersions("", "0.7.0", ""),
-			want:      []string{"0.7.0"},
+			summaries: summariesWithVersions("", ver070, ""),
+			want:      []string{ver070},
 		},
 		{
 			name:      "nothing new",
-			summaries: summariesWithVersions("1.0.0"),
-			fetched:   map[string]bool{"1.0.0": true},
+			summaries: summariesWithVersions(ver100),
+			fetched:   map[string]bool{ver100: true},
 			want:      nil,
 		},
 	}
@@ -204,19 +230,19 @@ func TestMergeClassEntries(t *testing.T) {
 	// A value that only exists in an older version fills a gap, while an
 	// already-present name keeps its first (existing) entry.
 	dst := map[string]oasf.ClassEntry{
-		"schema.oasf/skill": {Name: "schema.oasf/skill", Caption: "Skill", Version: "1.0.0"},
+		classSkillSchema: {Name: classSkillSchema, Caption: "Skill", Version: ver100},
 	}
 	src := map[string]oasf.ClassEntry{
-		"schema.oasf/skill": {Name: "schema.oasf/skill", Caption: "Skill (old)", Version: "0.7.0"},
-		"runtime/model":     {Name: "runtime/model", Caption: "Model", Version: "0.7.0"},
+		classSkillSchema:  {Name: classSkillSchema, Caption: "Skill (old)", Version: ver070},
+		classRuntimeModel: {Name: classRuntimeModel, Caption: captionModel, Version: ver070},
 	}
 
 	got := mergeClassEntries(dst, src)
 
-	if e := got["runtime/model"]; e.Caption != "Model" || e.Version != "0.7.0" {
+	if e := got[classRuntimeModel]; e.Caption != captionModel || e.Version != ver070 {
 		t.Errorf("runtime/model = %+v, want caption=Model version=0.7.0", e)
 	}
-	if e := got["schema.oasf/skill"]; e.Caption != "Skill" || e.Version != "1.0.0" {
+	if e := got[classSkillSchema]; e.Caption != "Skill" || e.Version != ver100 {
 		t.Errorf("existing entry was overwritten: %+v", e)
 	}
 }
@@ -224,9 +250,9 @@ func TestMergeClassEntries(t *testing.T) {
 func TestMergeClassEntriesNilDst(t *testing.T) {
 	t.Parallel()
 
-	src := map[string]oasf.ClassEntry{"runtime/model": {Name: "runtime/model", Caption: "Model"}}
+	src := map[string]oasf.ClassEntry{classRuntimeModel: {Name: classRuntimeModel, Caption: captionModel}}
 	got := mergeClassEntries(nil, src)
-	if got["runtime/model"].Caption != "Model" {
+	if got[classRuntimeModel].Caption != captionModel {
 		t.Errorf("merge into nil dst dropped entry: %+v", got)
 	}
 }
@@ -234,45 +260,17 @@ func TestMergeClassEntriesNilDst(t *testing.T) {
 func TestToggleAppliedCycles(t *testing.T) {
 	app := &Gui{state: appState{filters: newFilterState()}}
 
-	app.toggleApplied(filterSkills, "nlp")
-	if got := app.state.filters.applied[filterSkills]["nlp"]; got != modeInclude {
+	app.toggleApplied(filterSkills, optNLP)
+	if got := app.state.filters.applied[filterSkills][optNLP]; got != modeInclude {
 		t.Fatalf("after 1st toggle = %d, want modeInclude", got)
 	}
-	app.toggleApplied(filterSkills, "nlp")
-	if got := app.state.filters.applied[filterSkills]["nlp"]; got != modeExclude {
+	app.toggleApplied(filterSkills, optNLP)
+	if got := app.state.filters.applied[filterSkills][optNLP]; got != modeExclude {
 		t.Fatalf("after 2nd toggle = %d, want modeExclude", got)
 	}
-	app.toggleApplied(filterSkills, "nlp")
+	app.toggleApplied(filterSkills, optNLP)
 	if _, ok := app.state.filters.applied[filterSkills]; ok {
 		t.Fatalf("after 3rd toggle category should be removed, got %v", app.state.filters.applied)
-	}
-}
-
-func TestMatchesFiltersIncludeExclude(t *testing.T) {
-	rec := &dirclient.RecordSummary{
-		Skills:        []string{"nlp", "vision"},
-		Version:       "1.0.0",
-		SchemaVersion: "0.7.0",
-	}
-	tests := []struct {
-		name    string
-		applied map[filterCategory]map[string]filterMode
-		want    bool
-	}{
-		{"include match", map[filterCategory]map[string]filterMode{filterSkills: {"nlp": modeInclude}}, true},
-		{"include miss", map[filterCategory]map[string]filterMode{filterSkills: {"audio": modeInclude}}, false},
-		{"exclude drops match", map[filterCategory]map[string]filterMode{filterSkills: {"nlp": modeExclude}}, false},
-		{"exclude keeps non-match", map[filterCategory]map[string]filterMode{filterSkills: {"audio": modeExclude}}, true},
-		{"scalar include", map[filterCategory]map[string]filterMode{filterVersion: {"1.0.0": modeInclude}}, true},
-		{"scalar exclude", map[filterCategory]map[string]filterMode{filterVersion: {"1.0.0": modeExclude}}, false},
-		{"mixed include+exclude", map[filterCategory]map[string]filterMode{filterSkills: {"nlp": modeInclude, "vision": modeExclude}}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := matchesFilters(rec, tt.applied); got != tt.want {
-				t.Errorf("matchesFilters = %v, want %v", got, tt.want)
-			}
-		})
 	}
 }
 
@@ -281,8 +279,8 @@ func TestRenderFilterOptionStrike(t *testing.T) {
 	app.theme.Strike = "\033[9m"
 
 	var incl, excl bytes.Buffer
-	app.writeFilterOption(&incl, listRow{category: filterSkills, option: "nlp"}, modeInclude)
-	app.writeFilterOption(&excl, listRow{category: filterSkills, option: "nlp"}, modeExclude)
+	app.writeFilterOption(&incl, listRow{category: filterSkills, option: optNLP}, modeInclude)
+	app.writeFilterOption(&excl, listRow{category: filterSkills, option: optNLP}, modeExclude)
 
 	if strings.Contains(incl.String(), "\033[9m") {
 		t.Errorf("include row should not contain strike code: %q", incl.String())
@@ -293,7 +291,7 @@ func TestRenderFilterOptionStrike(t *testing.T) {
 
 	// Not-applied (zero-value filterMode) must not emit any escape codes.
 	var none bytes.Buffer
-	app.writeFilterOption(&none, listRow{category: filterSkills, option: "nlp"}, filterMode(0))
+	app.writeFilterOption(&none, listRow{category: filterSkills, option: optNLP}, filterMode(0))
 	if strings.ContainsRune(none.String(), '\033') {
 		t.Errorf("not-applied row should not contain escape codes: %q", none.String())
 	}
@@ -302,12 +300,12 @@ func TestRenderFilterOptionStrike(t *testing.T) {
 	// wrapped in the strike code.
 	app.state.classEntries = map[oasf.ClassType]map[string]oasf.ClassEntry{
 		oasf.ClassTypeSkill: {
-			"nlp": {ID: 1, Name: "nlp", Caption: "Natural Language Processing"},
+			optNLP: {ID: 1, Name: optNLP, Caption: captionNLP},
 		},
 	}
 	var caption bytes.Buffer
-	app.writeFilterOption(&caption, listRow{category: filterSkills, option: "nlp"}, modeExclude)
-	if !strings.Contains(caption.String(), "Natural Language Processing") {
+	app.writeFilterOption(&caption, listRow{category: filterSkills, option: optNLP}, modeExclude)
+	if !strings.Contains(caption.String(), captionNLP) {
 		t.Errorf("caption row should contain the class caption: %q", caption.String())
 	}
 	if !strings.Contains(caption.String(), "\033[9m") {
@@ -315,52 +313,113 @@ func TestRenderFilterOptionStrike(t *testing.T) {
 	}
 }
 
-func TestMarkTrustedVerified(t *testing.T) {
-	records := []*dirclient.RecordSummary{
-		{CID: "a"}, {CID: "b"}, {CID: "c"},
-	}
-	markTrustedVerified(records, []string{"a", "c"}, []string{"b"})
+func TestBuildServerQueries_IncludeExclude(t *testing.T) {
+	fs := filterState{applied: map[filterCategory]map[string]filterMode{
+		filterSkills:  {optNLP: modeInclude},
+		filterDomains: {"finance": modeExclude},
+	}}
+	got := buildServerQueries(fs, "")
 
-	want := map[string][2]bool{
-		"a": {true, false},
-		"b": {false, true},
-		"c": {true, false},
+	want := map[dirclient.FilterCategory]dirclient.Query{
+		dirclient.FilterSkill:  {Category: dirclient.FilterSkill, Value: optNLP, Negate: false},
+		dirclient.FilterDomain: {Category: dirclient.FilterDomain, Value: "finance", Negate: true},
 	}
-	for _, r := range records {
-		if got := [2]bool{r.Trusted, r.Verified}; got != want[r.CID] {
-			t.Errorf("cid %s = {trusted:%v verified:%v}, want %v", r.CID, r.Trusted, r.Verified, want[r.CID])
+	if len(got) != len(want) {
+		t.Fatalf("expected %d queries, got %d", len(want), len(got))
+	}
+	for _, q := range got {
+		if want[q.Category] != q {
+			t.Errorf("unexpected query: %+v", q)
 		}
 	}
 }
 
-func TestMatchesTrustedVerified(t *testing.T) {
-	trusted := &dirclient.RecordSummary{CID: "a", Trusted: true}
-	verified := &dirclient.RecordSummary{CID: "b", Verified: true}
-	plain := &dirclient.RecordSummary{CID: "c"}
+func TestBuildServerQueries_TrustedVerified(t *testing.T) {
+	fs := filterState{applied: map[filterCategory]map[string]filterMode{
+		filterTrustedVerified: {"trusted": modeInclude, "verified": modeExclude},
+	}}
+	got := buildServerQueries(fs, "")
+	seen := map[dirclient.FilterCategory]dirclient.Query{}
+	for _, q := range got {
+		seen[q.Category] = q
+	}
+	if q := seen[dirclient.FilterTrusted]; q.Value != valueTrue || q.Negate {
+		t.Errorf("trusted mapping wrong: %+v", q)
+	}
+	if q := seen[dirclient.FilterVerified]; q.Value != valueTrue || !q.Negate {
+		t.Errorf("verified mapping wrong: %+v", q)
+	}
+}
 
-	inclTrusted := map[filterCategory]map[string]filterMode{
-		filterTrustedVerified: {"trusted": modeInclude},
+func TestBuildServerQueries_NameWildcard(t *testing.T) {
+	got := buildServerQueries(filterState{applied: map[filterCategory]map[string]filterMode{}}, "assistant")
+	if len(got) != 1 || got[0].Category != dirclient.FilterName || got[0].Value != "*assistant*" {
+		t.Fatalf("unexpected name query: %+v", got)
 	}
-	exclTrusted := map[filterCategory]map[string]filterMode{
-		filterTrustedVerified: {"trusted": modeExclude},
-	}
-	inclVerified := map[filterCategory]map[string]filterMode{
-		filterTrustedVerified: {"verified": modeInclude},
-	}
+}
 
-	if !matchesFilters(trusted, inclTrusted) {
-		t.Error("include trusted should keep a trusted record")
+func TestApplyFilterValuesResult(t *testing.T) {
+	t.Parallel()
+
+	fresh := map[dirclient.FilterCategory][]string{dirclient.FilterSkill: {optNLP}}
+	prev := newFilterValuesFrom(map[dirclient.FilterCategory][]string{dirclient.FilterSkill: {optTranslation}})
+	errFetch := errors.New("fetch failed")
+
+	t.Run("success replaces options", func(t *testing.T) {
+		t.Parallel()
+		next, loaded, failed := applyFilterValuesResult(prev, true, fresh, nil)
+		if !loaded || failed || !next.skills[optNLP] || next.skills[optTranslation] {
+			t.Errorf("got loaded=%v failed=%v skills=%v", loaded, failed, next.skills)
+		}
+		if n := filterValuesNotice(loaded, failed); n != "" {
+			t.Errorf("notice = %q, want empty", n)
+		}
+	})
+
+	t.Run("failure after success keeps stale options", func(t *testing.T) {
+		t.Parallel()
+		next, loaded, failed := applyFilterValuesResult(prev, true, nil, errFetch)
+		if next != prev || !loaded || !failed {
+			t.Errorf("got same=%v loaded=%v failed=%v", next == prev, loaded, failed)
+		}
+		if n := filterValuesNotice(loaded, failed); !strings.Contains(n, "stale") {
+			t.Errorf("notice = %q, want stale", n)
+		}
+	})
+
+	t.Run("failure before any success leaves options empty", func(t *testing.T) {
+		t.Parallel()
+		next, loaded, failed := applyFilterValuesResult(prev, false, nil, errFetch)
+		if loaded || !failed || len(next.skills) != 0 {
+			t.Errorf("got loaded=%v failed=%v skills=%v", loaded, failed, next.skills)
+		}
+		if n := filterValuesNotice(loaded, failed); !strings.Contains(n, "unavailable") {
+			t.Errorf("notice = %q, want unavailable", n)
+		}
+	})
+}
+
+func TestFilterValuesUnsupported(t *testing.T) {
+	t.Parallel()
+	if !rpcUnimplemented(status.Error(codes.Unimplemented, "nope")) {
+		t.Error("Unimplemented should be unsupported (sticky)")
 	}
-	if matchesFilters(plain, inclTrusted) {
-		t.Error("include trusted should drop a non-trusted record")
+	if rpcUnimplemented(status.Error(codes.Unavailable, "down")) {
+		t.Error("Unavailable should be retryable")
 	}
-	if matchesFilters(trusted, exclTrusted) {
-		t.Error("exclude trusted should drop a trusted record")
+	if rpcUnimplemented(errors.New("plain")) {
+		t.Error("plain error should be retryable")
 	}
-	if !matchesFilters(plain, exclTrusted) {
-		t.Error("exclude trusted should keep a non-trusted record")
+	if rpcUnimplemented(nil) {
+		t.Error("nil error should not be unsupported")
 	}
-	if !matchesFilters(verified, inclVerified) {
-		t.Error("include verified should keep a verified record")
+}
+
+func TestQueryErrorText(t *testing.T) {
+	if got := queryErrorText(status.Error(codes.Unimplemented, "unknown method")); !strings.Contains(got, "v1.8.0") {
+		t.Fatalf("Unimplemented: want a v1.8.0 hint, got %q", got)
+	}
+	if got := queryErrorText(errors.New("boom")); got != "boom" {
+		t.Fatalf("other errors pass through: got %q", got)
 	}
 }

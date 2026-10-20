@@ -4,6 +4,7 @@
 package gui
 
 import (
+	"context"
 	"testing"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
@@ -30,48 +31,25 @@ func TestMarkPublished(t *testing.T) {
 	}
 }
 
-func TestGroupPublishStatus(t *testing.T) {
-	t.Parallel()
-
-	records := []*dirclient.RecordSummary{
-		{CID: "a1", Name: "all-pub", Published: true},
-		{CID: "a2", Name: "all-pub", Published: true},
-		{CID: "b1", Name: "mixed", Published: true},
-		{CID: "b2", Name: "mixed", Published: false},
-		{CID: "c1", Name: "none-pub", Published: false},
-	}
-
-	got := groupPublishStatus(records)
-	if !got["all-pub"] {
-		t.Errorf("all-pub: got %v, want true", got["all-pub"])
-	}
-	if got["mixed"] {
-		t.Errorf("mixed: got %v, want false", got["mixed"])
-	}
-	if got["none-pub"] {
-		t.Errorf("none-pub: got %v, want false", got["none-pub"])
-	}
-}
-
 func TestSetRecordPublished(t *testing.T) {
 	t.Parallel()
 
 	app := &Gui{}
-	app.state.fullCache = []*dirclient.RecordSummary{
+	app.state.page.records = []*dirclient.RecordSummary{
 		{CID: "a"},
 		{CID: "b"},
 	}
 
 	app.setRecordPublished("b", true)
-	if app.state.fullCache[0].Published {
+	if app.state.page.records[0].Published {
 		t.Errorf("record a: Published = true, want false")
 	}
-	if !app.state.fullCache[1].Published {
+	if !app.state.page.records[1].Published {
 		t.Errorf("record b: Published = false, want true")
 	}
 
 	app.setRecordPublished("b", false)
-	if app.state.fullCache[1].Published {
+	if app.state.page.records[1].Published {
 		t.Errorf("record b after unpublish: Published = true, want false")
 	}
 }
@@ -84,16 +62,16 @@ func TestPublishOverrideSurvivesStaleEnrichment(t *testing.T) {
 	t.Parallel()
 
 	app := &Gui{}
-	app.state.fullCache = []*dirclient.RecordSummary{{CID: "x"}}
+	app.state.page.records = []*dirclient.RecordSummary{{CID: "x"}}
 	app.setRecordPublished("x", true) // optimistic publish
 
 	// Stale enrichment: the server's routing index has not caught up, so the
 	// returned set does not yet include "x".
 	staleSet := map[string]bool{}
-	markPublished(app.state.fullCache, staleSet)
+	markPublished(app.state.page.records, staleSet)
 	app.applyPublishOverrides(staleSet)
 
-	if !app.state.fullCache[0].Published {
+	if !app.state.page.records[0].Published {
 		t.Error("stale enrichment clobbered optimistic publish; want Published=true")
 	}
 }
@@ -105,14 +83,14 @@ func TestUnpublishOverrideSurvivesStaleEnrichment(t *testing.T) {
 	t.Parallel()
 
 	app := &Gui{}
-	app.state.fullCache = []*dirclient.RecordSummary{{CID: "x", Published: true}}
+	app.state.page.records = []*dirclient.RecordSummary{{CID: "x", Published: true}}
 	app.setRecordPublished("x", false) // optimistic unpublish
 
 	staleSet := map[string]bool{"x": true} // index still shows it published
-	markPublished(app.state.fullCache, staleSet)
+	markPublished(app.state.page.records, staleSet)
 	app.applyPublishOverrides(staleSet)
 
-	if app.state.fullCache[0].Published {
+	if app.state.page.records[0].Published {
 		t.Error("stale enrichment clobbered optimistic unpublish; want Published=false")
 	}
 }
@@ -124,17 +102,38 @@ func TestPublishOverrideClearsWhenServerAgrees(t *testing.T) {
 	t.Parallel()
 
 	app := &Gui{}
-	app.state.fullCache = []*dirclient.RecordSummary{{CID: "x"}}
+	app.state.page.records = []*dirclient.RecordSummary{{CID: "x"}}
 	app.setRecordPublished("x", true)
 
 	set := map[string]bool{"x": true} // server has caught up
-	markPublished(app.state.fullCache, set)
+	markPublished(app.state.page.records, set)
 	app.applyPublishOverrides(set)
 
-	if !app.state.fullCache[0].Published {
+	if !app.state.page.records[0].Published {
 		t.Error("record x: Published = false, want true")
 	}
 	if _, ok := app.state.publishOverrides["x"]; ok {
 		t.Error("override for x should be cleared once the server set agrees")
+	}
+}
+
+func TestInvalidatePublishEnrichment(t *testing.T) {
+	app := &Gui{}
+	ctx, cancel := context.WithCancel(context.Background())
+	app.state.publishCancel = cancel
+	app.state.publishEnriched = true
+	app.state.publishEnriching = true
+	app.state.publishedCIDs = map[string]bool{"a": true}
+
+	app.invalidatePublishEnrichment()
+
+	if ctx.Err() == nil {
+		t.Fatal("in-flight resolution not cancelled")
+	}
+	if app.state.publishEnriched || app.state.publishEnriching || app.state.publishCancel != nil {
+		t.Fatalf("enrichment state not reset: enriched=%v enriching=%v", app.state.publishEnriched, app.state.publishEnriching)
+	}
+	if !app.state.publishedCIDs["a"] {
+		t.Fatal("cached published set should be kept until the fresh one lands")
 	}
 }

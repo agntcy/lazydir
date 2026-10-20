@@ -10,7 +10,12 @@ import (
 	corev1 "github.com/agntcy/dir/api/core/v1"
 	routingv1 "github.com/agntcy/dir/api/routing/v1"
 	searchv1 "github.com/agntcy/dir/api/search/v1"
-	"google.golang.org/protobuf/types/known/structpb"
+)
+
+// Record field keys and sample versions reused across the fixtures below.
+const (
+	testSchemaVer  = "1.0.0"
+	testVersionTag = "v1.0.0"
 )
 
 func TestQueryToRPC(t *testing.T) {
@@ -46,46 +51,6 @@ func TestQueryToRPC(t *testing.T) {
 	}
 }
 
-func TestFirstPageSize(t *testing.T) {
-	t.Parallel()
-
-	t.Run("default", func(t *testing.T) {
-		t.Parallel()
-		c := &Client{}
-		if got := c.firstPageSize(); got != defaultFirstPageSize {
-			t.Errorf("firstPageSize() = %d, want %d", got, defaultFirstPageSize)
-		}
-	})
-
-	t.Run("custom", func(t *testing.T) {
-		t.Parallel()
-		c := &Client{FirstPageSize: 50}
-		if got := c.firstPageSize(); got != 50 {
-			t.Errorf("firstPageSize() = %d, want 50", got)
-		}
-	})
-}
-
-func TestBatchSize(t *testing.T) {
-	t.Parallel()
-
-	t.Run("default", func(t *testing.T) {
-		t.Parallel()
-		c := &Client{}
-		if got := c.batchSize(); got != defaultBatchSize {
-			t.Errorf("batchSize() = %d, want %d", got, defaultBatchSize)
-		}
-	})
-
-	t.Run("custom", func(t *testing.T) {
-		t.Parallel()
-		c := &Client{BatchSize: 25}
-		if got := c.batchSize(); got != 25 {
-			t.Errorf("batchSize() = %d, want 25", got)
-		}
-	})
-}
-
 func TestConnect_BadAddress(t *testing.T) {
 	t.Parallel()
 
@@ -111,88 +76,6 @@ func TestClose_NilClient(t *testing.T) {
 	c.Close()
 }
 
-// makeRecord builds a minimal record carrying one skill, domain and module for
-// the given OASF schema version.
-func makeRecord(t *testing.T, schemaVersion string) *corev1.Record {
-	t.Helper()
-
-	data, err := structpb.NewStruct(map[string]any{
-		"schema_version": schemaVersion,
-		"name":           "test-agent",
-		"version":        "1.0.0",
-		"authors":        []any{"alice"},
-		"skills":         []any{map[string]any{"name": "natural_language_processing"}},
-		"domains":        []any{map[string]any{"name": "biotechnology"}},
-		"modules":        []any{map[string]any{"name": "runtime/model"}},
-	})
-	if err != nil {
-		t.Fatalf("building struct: %v", err)
-	}
-
-	return &corev1.Record{Data: data}
-}
-
-// TestExtractSummaryAcrossSchemaVersions guards against the regression where
-// skills/domains/modules were only collected from v1 (1.x) records, leaving
-// older 0.7.x (v1alpha1) and 0.8.x (v1alpha2) records absent from the filters.
-func TestExtractSummaryAcrossSchemaVersions(t *testing.T) {
-	t.Parallel()
-
-	versions := []string{"0.7.0", "0.8.0", "1.0.0"}
-
-	for _, v := range versions {
-		t.Run(v, func(t *testing.T) {
-			t.Parallel()
-
-			s := extractSummary(makeRecord(t, v))
-			if s == nil {
-				t.Fatalf("extractSummary returned nil for schema version %s", v)
-			}
-
-			if want, got := "test-agent", s.Name; got != want {
-				t.Errorf("Name = %q, want %q", got, want)
-			}
-			if len(s.Skills) != 1 || s.Skills[0] != "natural_language_processing" {
-				t.Errorf("Skills = %v, want [natural_language_processing]", s.Skills)
-			}
-			if len(s.Domains) != 1 || s.Domains[0] != "biotechnology" {
-				t.Errorf("Domains = %v, want [biotechnology]", s.Domains)
-			}
-			if len(s.Modules) != 1 || s.Modules[0] != "runtime/model" {
-				t.Errorf("Modules = %v, want [runtime/model]", s.Modules)
-			}
-		})
-	}
-}
-
-// TestExtractSummarySanitizesNewlines guards against malformed server data
-// (e.g. a directory daemon that self-registers with version "v1.6.1\n1.6.1")
-// leaking embedded newlines into name/version. Rendered verbatim, such a value
-// spills onto an extra row and breaks the Records/Filters panel layout.
-func TestExtractSummarySanitizesNewlines(t *testing.T) {
-	t.Parallel()
-
-	data, err := structpb.NewStruct(map[string]any{
-		"schema_version": "1.0.0",
-		"name":           "org.agntcy/directory",
-		"version":        "v1.6.1\n1.6.1",
-	})
-	if err != nil {
-		t.Fatalf("building struct: %v", err)
-	}
-
-	s := extractSummary(&corev1.Record{Data: data})
-	if s == nil {
-		t.Fatal("extractSummary returned nil")
-	}
-	if strings.ContainsAny(s.Version, "\r\n") {
-		t.Errorf("Version %q still contains a line break", s.Version)
-	}
-	if want := "v1.6.1 1.6.1"; s.Version != want {
-		t.Errorf("Version = %q, want %q", s.Version, want)
-	}
-}
-
 func TestSanitizeField(t *testing.T) {
 	t.Parallel()
 
@@ -201,11 +84,11 @@ func TestSanitizeField(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"plain", "v1.0.0", "v1.0.0"},
-		{"trailing newline", "v1.0.0\n", "v1.0.0"},
+		{"plain", testVersionTag, testVersionTag},
+		{"trailing newline", "v1.0.0\n", testVersionTag},
 		{"embedded newline", "v1.6.1\n1.6.1", "v1.6.1 1.6.1"},
 		{"crlf", "a\r\nb", "a b"},
-		{"surrounding whitespace", "  v1.0.0  ", "v1.0.0"},
+		{"surrounding whitespace", "  v1.0.0  ", testVersionTag},
 		{"tabs and newlines", "a\t\nb", "a b"},
 		{"empty", "", ""},
 	}
@@ -235,13 +118,6 @@ func TestMinFunc(t *testing.T) {
 		if got := min(tt.a, tt.b); got != tt.want {
 			t.Errorf("min(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.want)
 		}
-	}
-}
-
-func TestRecordSummaryTrustedVerifiedDefaultFalse(t *testing.T) {
-	var s RecordSummary
-	if s.Trusted || s.Verified {
-		t.Fatalf("zero-value RecordSummary should have Trusted=false Verified=false, got %+v", s)
 	}
 }
 
@@ -279,5 +155,112 @@ func TestCollectPublishedCIDs(t *testing.T) {
 	got := collectPublishedCIDs(ch)
 	if len(got) != 2 || !got["cid1"] || !got["cid2"] {
 		t.Errorf("collectPublishedCIDs = %v, want {cid1, cid2}", got)
+	}
+}
+
+func TestQueryToRPC_Negate(t *testing.T) {
+	q := Query{Category: FilterSkill, Value: "nlp", Negate: true}
+	rpc := q.toRPC()
+	if rpc.GetType() != searchv1.RecordQueryType_RECORD_QUERY_TYPE_SKILL_NAME {
+		t.Fatalf("unexpected type: %v", rpc.GetType())
+	}
+	if !rpc.GetNegate() {
+		t.Error("expected Negate=true on rpc query")
+	}
+}
+
+func TestQueryToRPC_Name(t *testing.T) {
+	rpc := Query{Category: FilterName, Value: "web*"}.toRPC()
+	if rpc.GetType() != searchv1.RecordQueryType_RECORD_QUERY_TYPE_NAME {
+		t.Fatalf("expected NAME type, got %v", rpc.GetType())
+	}
+	if rpc.GetNegate() {
+		t.Error("expected Negate=false by default")
+	}
+}
+
+func TestFilterValuesFromRPC(t *testing.T) {
+	t.Parallel()
+
+	fv := func(f searchv1.RecordQueryType, vals ...string) *searchv1.ListFilterValuesResponse_FieldValues {
+		return &searchv1.ListFilterValuesResponse_FieldValues{Field: f, Values: vals}
+	}
+
+	t.Run("maps all five fields", func(t *testing.T) {
+		t.Parallel()
+		resp := &searchv1.ListFilterValuesResponse{Fields: []*searchv1.ListFilterValuesResponse_FieldValues{
+			fv(searchv1.RecordQueryType_RECORD_QUERY_TYPE_SKILL_NAME, "s1", "s2"),
+			fv(searchv1.RecordQueryType_RECORD_QUERY_TYPE_DOMAIN_NAME, "d1"),
+			fv(searchv1.RecordQueryType_RECORD_QUERY_TYPE_MODULE_NAME, "m1"),
+			fv(searchv1.RecordQueryType_RECORD_QUERY_TYPE_AUTHOR, "a1"),
+			fv(searchv1.RecordQueryType_RECORD_QUERY_TYPE_SCHEMA_VERSION, testSchemaVer),
+		}}
+		got := filterValuesFromRPC(resp)
+		want := map[FilterCategory][]string{
+			FilterSkill:         {"s1", "s2"},
+			FilterDomain:        {"d1"},
+			FilterModule:        {"m1"},
+			FilterAuthor:        {"a1"},
+			FilterSchemaVersion: {testSchemaVer},
+		}
+		if len(got) != len(want) {
+			t.Fatalf("got %d categories, want %d: %v", len(got), len(want), got)
+		}
+		for cat, vals := range want {
+			if strings.Join(got[cat], ",") != strings.Join(vals, ",") {
+				t.Errorf("category %v = %v, want %v", cat, got[cat], vals)
+			}
+		}
+	})
+
+	t.Run("ignores unsupported and nil fields", func(t *testing.T) {
+		t.Parallel()
+		resp := &searchv1.ListFilterValuesResponse{Fields: []*searchv1.ListFilterValuesResponse_FieldValues{
+			fv(searchv1.RecordQueryType_RECORD_QUERY_TYPE_VERSION, "v1"),
+			nil,
+		}}
+		if got := filterValuesFromRPC(resp); len(got) != 0 {
+			t.Errorf("expected empty map, got %v", got)
+		}
+	})
+
+	t.Run("empty response", func(t *testing.T) {
+		t.Parallel()
+		if got := filterValuesFromRPC(&searchv1.ListFilterValuesResponse{}); got == nil || len(got) != 0 {
+			t.Errorf("expected empty non-nil map, got %v", got)
+		}
+	})
+}
+
+func TestSummaryFromRPC(t *testing.T) {
+	t.Parallel()
+
+	s := summaryFromRPC(&searchv1.RecordSummary{
+		Cid:           "bafytestcid",
+		Name:          " agent\nname ",
+		Version:       "v2.0.0\nrc1",
+		SchemaVersion: testSchemaVer,
+		Authors:       []string{"carol"},
+		Skills:        []string{"nlp/summarization"},
+		Domains:       []string{"technology/software"},
+		Modules:       []string{"core/llm"},
+	})
+	if s.CID != "bafytestcid" || s.SchemaVersion != testSchemaVer {
+		t.Fatalf("identity fields not mapped: %+v", s)
+	}
+	if s.Name != "agent name" || s.Version != "v2.0.0 rc1" {
+		t.Fatalf("name/version not sanitized: %q, %q", s.Name, s.Version)
+	}
+	if len(s.Authors) != 1 || len(s.Skills) != 1 || len(s.Domains) != 1 || len(s.Modules) != 1 {
+		t.Fatalf("lists not mapped: %+v", s)
+	}
+}
+
+func TestSummaryFromRPC_EmptyNameFallsBackToCID(t *testing.T) {
+	t.Parallel()
+
+	s := summaryFromRPC(&searchv1.RecordSummary{Cid: "bafy0123456789abcdefghijklmnop"})
+	if s.Name != "bafy0123456789abcdef" {
+		t.Fatalf("expected CID-prefix name, got %q", s.Name)
 	}
 }

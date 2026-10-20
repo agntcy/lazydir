@@ -159,7 +159,7 @@ func (t *jsonTree) renderNodeInCtx(sb *strings.Builder, node *jsonNode, depth in
 		suffix = ""
 	}
 	bc := bracketColor(depth)
-	rst := "\033[0m"
+	rst := ansiReset
 
 	switch node.nodeType {
 	case jsonPrimitive:

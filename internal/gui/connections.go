@@ -181,11 +181,6 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 		app.state.cancelLoad()
 		app.state.cancelLoad = nil
 	}
-	if app.state.tvCancel != nil {
-		app.state.tvCancel()
-		app.state.tvCancel = nil
-	}
-	app.state.tvEnriching = false
 
 	if app.state.publishCancel != nil {
 		app.state.publishCancel()
@@ -194,8 +189,24 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.publishEnriching = false
 	app.state.publishOverrides = nil
 
-	// Save current server's records to the per-server cache before switching.
-	app.saveServerCache()
+	if app.state.filterValuesCancel != nil {
+		app.state.filterValuesCancel()
+		app.state.filterValuesCancel = nil
+	}
+	app.state.filterValuesLoading = false
+	app.state.filterValuesLoaded = false
+	app.state.filterValuesFailed = false
+	app.state.filterValuesUnsupported = false
+
+	// Cancel any in-flight sync pollers (runSync/pollSync/pollReconcile) so they
+	// do not bleed into the new server, and reset the sync tracking fields. The
+	// pollers' g.Update closures are ctx-guarded, so a late update after this
+	// cancel becomes a no-op instead of writing stale CIDs or popping a stale
+	// "Sync failed" / "Reconciliation timed out" popup on the new server.
+	if app.state.syncCancelFunc != nil {
+		app.state.syncCancelFunc()
+	}
+	app.clearSyncState()
 
 	if app.state.client != nil {
 		app.state.client.Close()
@@ -204,33 +215,21 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.activeDir = entry
 	app.state.serverAddr = entry.Address
 	app.state.dirStatus = connTrying
-	app.state.recordGroupExpanded = map[string]bool{}
 	app.state.recordCursor = 0
+	app.state.page.reset()
+	app.state.dirUnsupported = false
 	app.state.filters = newFilterState()
 	app.state.filterQuery = ""
 	app.state.classEntries = nil
 	app.state.classEntriesVers = nil
 
-	// Restore cached records if available for the target server.
-	if cached := app.state.serverCache[serverCacheKey(entry)]; cached != nil {
-		app.state.fullCache = cached.fullCache
-		app.state.filterValues = cached.filterValues
-		app.state.dataFetchedAt = cached.cachedAt
-		app.state.stream = streamDone
-		app.state.tvEnriched = cached.tvEnriched
-		app.state.publishEnriched = cached.publishEnriched
-		app.applyFilters()
-	} else {
-		app.state.fullCache = nil
-		app.state.records = nil
-		app.state.filteredRecords = nil
-		app.state.recordDisplayRows = nil
-		app.state.filterValues = newFilterValueAggregator()
-		app.state.dataFetchedAt = time.Time{}
-		app.state.stream = streamLoading
-		app.state.tvEnriched = false
-		app.state.publishEnriched = false
-	}
+	app.state.syncStatus = nil
+	app.state.publishedCIDs = nil
+	app.state.recordDisplayRows = nil
+	app.state.filterValues = newFilterValueAggregator()
+	app.state.dataFetchedAt = time.Time{}
+	app.state.loadedOnce = false
+	app.state.publishEnriched = false
 
 	app.renderDirectory(g)
 	app.renderRecordsView(g)
@@ -272,7 +271,7 @@ func (app *Gui) connectWithOIDC(entry config.DirectoryEntry) {
 		app.g.Update(func(g *gocui.Gui) error {
 			app.state.dirStatus = connFailed
 			app.state.dirError = err.Error()
-			app.state.stream = streamIdle
+			app.state.loadedOnce = false
 			app.renderDirectory(g)
 			app.openInfoPopup(g, viewDirectory)
 			return nil

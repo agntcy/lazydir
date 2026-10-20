@@ -3,7 +3,10 @@
 
 package gui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestConfirmSelectedLine guards the core invariant behind the highlight fix:
 // the selected option lives on buffer line (bodyLines + cursor), computed from
@@ -51,5 +54,21 @@ func TestConfirmContentWidth(t *testing.T) {
 	// Options wider than the body -> option label + leading space wins.
 	if got := confirmContentWidth("x?", opts); got != len("confirm")+1 {
 		t.Errorf("width = %d, want %d (option width)", got, len("confirm")+1)
+	}
+}
+
+func TestOptionsBarText_CancelSyncHint(t *testing.T) {
+	if got := optionsBarText(viewRecords, 0, 0, 2, 0); !strings.Contains(got, "cancel sync: X") {
+		t.Fatalf("expected cancel hint while syncing, got %q", got)
+	}
+	if got := optionsBarText(viewRecords, 0, 0, 0, 0); strings.Contains(got, "cancel sync") {
+		t.Fatalf("unexpected cancel hint without a sync, got %q", got)
+	}
+}
+
+func TestRecordCancelSync_NoSyncIsNoop(t *testing.T) {
+	app := &Gui{}
+	if err := app.recordCancelSync(nil, nil); err != nil {
+		t.Fatalf("recordCancelSync: %v", err)
 	}
 }
