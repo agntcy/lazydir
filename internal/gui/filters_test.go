@@ -40,7 +40,7 @@ func TestFilterCategoryTitle(t *testing.T) {
 		{filterModules, "Modules"},
 		{filterOASFVersion, "OASF version"},
 		{filterAuthor, "Author"},
-		{filterTrustedVerified, "Trusted / Verified"},
+		{filterTrustSafety, "Trusted / Verified / Safe"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
@@ -105,8 +105,8 @@ func TestAggregatorFieldFor(t *testing.T) {
 		})
 	}
 
-	if m := aggregatorFieldFor(a, filterTrustedVerified); m != nil {
-		t.Error("expected nil for filterTrustedVerified")
+	if m := aggregatorFieldFor(a, filterTrustSafety); m != nil {
+		t.Error("expected nil for filterTrustSafety")
 	}
 }
 
@@ -336,7 +336,7 @@ func TestBuildServerQueries_IncludeExclude(t *testing.T) {
 
 func TestBuildServerQueries_TrustedVerified(t *testing.T) {
 	fs := filterState{applied: map[filterCategory]map[string]filterMode{
-		filterTrustedVerified: {"trusted": modeInclude, "verified": modeExclude},
+		filterTrustSafety: {"trusted": modeInclude, "verified": modeExclude},
 	}}
 	got := buildServerQueries(fs, "")
 	seen := map[dirclient.FilterCategory]dirclient.Query{}
@@ -348,6 +348,30 @@ func TestBuildServerQueries_TrustedVerified(t *testing.T) {
 	}
 	if q := seen[dirclient.FilterVerified]; q.Value != valueTrue || !q.Negate {
 		t.Errorf("verified mapping wrong: %+v", q)
+	}
+}
+
+func TestBuildServerQueries_Safe(t *testing.T) {
+	for _, tt := range []struct {
+		mode       filterMode
+		wantNegate bool
+	}{{modeInclude, false}, {modeExclude, true}} {
+		fs := filterState{applied: map[filterCategory]map[string]filterMode{
+			filterTrustSafety: {optSafe: tt.mode},
+		}}
+		got := buildServerQueries(fs, "")
+		if len(got) != 1 || got[0].Category != dirclient.FilterSafe || got[0].Value != valueTrue || got[0].Negate != tt.wantNegate {
+			t.Errorf("mode %v: unexpected safe query: %+v", tt.mode, got)
+		}
+	}
+}
+
+func TestOptionsFor_TrustSafety(t *testing.T) {
+	app := &Gui{}
+	app.state.filterValues = newFilterValueAggregator()
+	got := app.optionsFor(filterTrustSafety)
+	if strings.Join(got, ",") != "trusted,verified,safe" {
+		t.Fatalf("optionsFor(filterTrustSafety) = %v", got)
 	}
 }
 

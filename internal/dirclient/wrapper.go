@@ -231,6 +231,7 @@ const (
 	FilterAuthor
 	FilterTrusted
 	FilterVerified
+	FilterSafe
 	FilterName
 )
 
@@ -261,6 +262,8 @@ func (q Query) toRPC() *searchv1.RecordQuery {
 		t = searchv1.RecordQueryType_RECORD_QUERY_TYPE_TRUSTED
 	case FilterVerified:
 		t = searchv1.RecordQueryType_RECORD_QUERY_TYPE_VERIFIED
+	case FilterSafe:
+		t = searchv1.RecordQueryType_RECORD_QUERY_TYPE_SCAN_SAFE
 	case FilterName:
 		t = searchv1.RecordQueryType_RECORD_QUERY_TYPE_NAME
 	}

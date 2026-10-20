@@ -16,6 +16,7 @@ import (
 const (
 	testSchemaVer  = "1.0.0"
 	testVersionTag = "v1.0.0"
+	testTrue       = "true"
 )
 
 func TestQueryToRPC(t *testing.T) {
@@ -33,8 +34,9 @@ func TestQueryToRPC(t *testing.T) {
 		{"schema version", FilterSchemaVersion, "1.0", searchv1.RecordQueryType_RECORD_QUERY_TYPE_SCHEMA_VERSION},
 		{"version", FilterVersion, "2.0", searchv1.RecordQueryType_RECORD_QUERY_TYPE_VERSION},
 		{"author", FilterAuthor, "alice", searchv1.RecordQueryType_RECORD_QUERY_TYPE_AUTHOR},
-		{"trusted", FilterTrusted, "true", searchv1.RecordQueryType_RECORD_QUERY_TYPE_TRUSTED},
-		{"verified", FilterVerified, "true", searchv1.RecordQueryType_RECORD_QUERY_TYPE_VERIFIED},
+		{"trusted", FilterTrusted, testTrue, searchv1.RecordQueryType_RECORD_QUERY_TYPE_TRUSTED},
+		{"verified", FilterVerified, testTrue, searchv1.RecordQueryType_RECORD_QUERY_TYPE_VERIFIED},
+		{"safe", FilterSafe, testTrue, searchv1.RecordQueryType_RECORD_QUERY_TYPE_SCAN_SAFE},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

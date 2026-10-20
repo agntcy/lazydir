@@ -23,7 +23,7 @@ type Theme struct {
 	Color5  string // default: blue         — options bar, popup labels
 	Color6  string // default: red          — disconnected indicator
 	Color7  string // default: bright red   — author filter
-	Color8  string // default: bright yellow— trusted filter
+	Color8  string // default: bright yellow— trusted / verified / safe filter
 	Color9  string // default: bright green — verified filter
 	Color10 string // default: bright black — dim/muted (IDs, gray)
 	Reset   string // ANSI reset sequence
@@ -137,7 +137,7 @@ func (t Theme) filterColor(c filterCategory) string {
 		return t.Color4
 	case filterAuthor:
 		return t.Color7
-	case filterTrustedVerified:
+	case filterTrustSafety:
 		return t.Color8
 	}
 	return ""

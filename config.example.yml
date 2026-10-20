@@ -10,7 +10,7 @@ gui:
     color5: "blue" # options bar, popup labels
     color6: "red" # disconnected indicator
     color7: "brightRed" # author filter
-    color8: "brightYellow" # trusted filter
+    color8: "brightYellow" # trusted / verified / safe filter
     color9: "brightGreen" # verified filter
     color10: "brightBlack" # dim/muted text (IDs)
     activeBorderColor: "green" # focused panel border + cursor
