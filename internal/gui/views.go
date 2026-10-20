@@ -183,7 +183,7 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	v.Title = app.recordsTitle()
 
 	viewW, _ := v.Size()
-	nameW := viewW - 14
+	nameW := viewW - 14 - (rowGutterWidth - 1)
 	if nameW < 8 {
 		nameW = 8
 	}
@@ -194,10 +194,9 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	}
 
 	clipBg := "\033[41m"
-	reset := ansiReset
 	yellow := "\033[33m"
 	red := "\033[31m"
-	green := "\033[32m"
+	green := ansiGreen
 
 	lineNum := 0
 	targetLine := 0
@@ -234,25 +233,16 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		if len(name) > nameW {
 			name = name[:nameW-1] + "…"
 		}
-		// Selected rows replace the leading space with a marker. It is
-		// multi-byte, so the padding width grows by the extra bytes to keep
-		// colored rows spanning the panel.
-		mark, padW := " ", viewW
-		if app.isSelected(rec.CID) {
-			mark = selectedMark
-			padW += len(selectedMark) - 1
-		}
-		line := fmt.Sprintf("%s%-*s  %s", mark, nameW, name, version)
+		lineColor := ""
 		switch {
 		case statusColor != "":
-			fmt.Fprintf(v, "%s%-*s%s\n", statusColor, padW, line, reset)
+			lineColor = statusColor
 		case inClip:
-			fmt.Fprintf(v, "%s%-*s%s\n", clipBg, padW, line, reset)
+			lineColor = clipBg
 		case rec.Published:
-			fmt.Fprintf(v, "%s%-*s%s\n", green, padW, line, reset)
-		default:
-			fmt.Fprintln(v, line)
+			lineColor = green
 		}
+		fmt.Fprintln(v, recordRowLine(lineColor, app.isSelected(rec.CID), nameW, viewW, name, version))
 		lineNum++
 	}
 
@@ -264,6 +254,29 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		_ = v.SetOrigin(0, 0)
 		_ = v.SetCursor(0, targetLine)
 	}
+}
+
+// rowGutterWidth is the width of the column ahead of each record row that
+// holds the selection marker, so text lines up whether a row is selected or not.
+const rowGutterWidth = 2
+
+// recordRowLine formats one Records row. lineColor (may be empty) colors the
+// whole row. A selected row shows a green marker in the gutter and bold text;
+// after the marker only the foreground is reset, so a background color such
+// as the clipboard's carries on. Colored and selected rows are padded to the
+// panel width so their color spans the row.
+func recordRowLine(lineColor string, selected bool, nameW, viewW int, name, version string) string {
+	text := fmt.Sprintf("%-*s  %s", nameW, name, version)
+	if lineColor == "" && !selected {
+		return strings.Repeat(" ", rowGutterWidth) + text
+	}
+	gutter := strings.Repeat(" ", rowGutterWidth)
+	style := lineColor
+	if selected {
+		style += ansiBold
+		gutter = ansiGreen + selectedMark + ansiDefaultFg + lineColor + strings.Repeat(" ", rowGutterWidth-1)
+	}
+	return fmt.Sprintf("%s%s%-*s%s", style, gutter, viewW-rowGutterWidth, text, ansiReset)
 }
 
 // wrapText splits text into lines that fit within maxWidth, breaking on word

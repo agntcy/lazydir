@@ -6,6 +6,7 @@ package gui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -218,5 +219,29 @@ func TestOptionsBarText_SelectionAndProgress(t *testing.T) {
 	got := optionsBarText(viewRecords, 0, barStatus{selected: 2, progress: "deleting 1/2"})
 	if !strings.Contains(got, "2 selected") || !strings.Contains(got, "deleting 1/2") {
 		t.Fatalf("options bar = %q", got)
+	}
+}
+
+func TestRecordRowLine(t *testing.T) {
+	plain := recordRowLine("", false, 6, 20, "agent", "v1")
+	if plain != "  agent   v1" {
+		t.Errorf("plain row = %q", plain)
+	}
+
+	sel := recordRowLine("", true, 6, 20, "agent", "v1")
+	want := ansiBold + ansiGreen + selectedMark + ansiDefaultFg + " " + fmt.Sprintf("%-18s", "agent   v1") + ansiReset
+	if sel != want {
+		t.Errorf("selected row = %q, want %q", sel, want)
+	}
+
+	// On a colored row the line color is re-applied after the green marker.
+	pub := recordRowLine("\033[32m", true, 6, 20, "agent", "v1")
+	if !strings.HasPrefix(pub, "\033[32m"+ansiBold+ansiGreen+selectedMark+ansiDefaultFg+"\033[32m ") {
+		t.Errorf("colored selected row = %q", pub)
+	}
+
+	// Plain text is aligned the same whether or not the row is selected.
+	if strings.Index(plain, "agent") != rowGutterWidth {
+		t.Errorf("text should start after the %d-column gutter: %q", rowGutterWidth, plain)
 	}
 }
