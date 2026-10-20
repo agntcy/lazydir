@@ -24,7 +24,7 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 │  ▶ Modules             │                                              │
 │  ▶ OASF version        │                                              │
 │  ▶ Author              │                                              │
-│  ▶ Trusted / Verified  │                                              │
+│  ▶ Trusted / Verified… │                                              │
 ├────────────────────────│                                              │
 │ [3] Records  /filter   │                                              │
 │  > cisco.com/agent  v1 │                                              │
@@ -38,7 +38,7 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 
 **[1] Connections** — live status for Directory and OASF endpoints; switch servers with `c`/`o`; view connection details with `i`.
 
-**[2] Filters** — collapsible categories (Skills, Domains, Modules, OASF version, Author, Trusted / Verified); toggle options with `enter`/`space` (include, then exclude); selected values within one category are combined with OR (two skills match records with either), categories with AND, and an excluded value drops every record that carries it; `/` to search across all categories by name, caption, or ID; `i` to open a popup with the OASF class hierarchy and description.
+**[2] Filters** — collapsible categories (Skills, Domains, Modules, OASF version, Author, Trusted / Verified / Safe); toggle options with `enter`/`space` (include, then exclude); selected values within one category are combined with OR (two skills match records with either), categories with AND, and an excluded value drops every record that carries it; the trusted, verified, and safe options are separate checks and combine with AND, where "safe" matches records that every security scanner reported safe and excluding it shows the records a scanner flagged as unsafe (records that were never scanned match neither); `/` to search across all categories by name, caption, or ID; `i` to open a popup with the OASF class hierarchy and description.
 
 **[3] Records** — filtered list showing name and version; filtering is server-side and paginated, and the filter option lists come from the server's `ListFilterValues` RPC (only values actually present are offered); records load page by page as you scroll, and the panel title shows the total count; records are a flat list ordered by recency, one row per record version; `/` for live name filtering; `i` for record info popup (CID, annotations, schema version, created-at); `y` to yank/copy CID or full JSON; `r` to refetch records and filter options from the server.
 
@@ -138,7 +138,7 @@ gui:
     color5: "blue"          # options bar, popup labels
     color6: "red"           # disconnected indicator
     color7: "brightRed"     # author filter
-    color8: "brightYellow"  # trusted / verified filter
+    color8: "brightYellow"  # trusted / verified / safe filter
     color9: "brightGreen"   # (available)
     color10: "brightBlack"  # dim/muted text (IDs)
     activeBorderColor: "green"    # focused panel border + cursor

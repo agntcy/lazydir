@@ -175,6 +175,38 @@ func TestDir_ListSummaries(t *testing.T) {
 	}
 }
 
+// TestDir_ListSummaries_Safe checks that the server accepts the safe filter in
+// both directions. The test daemon runs no scanners, so a freshly seeded record
+// has no scan verdict and matches neither "safe" nor "excluded safe".
+func TestDir_ListSummaries_Safe(t *testing.T) {
+	addr := requireDaemon(t)
+	dirctl := dirctlBin(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cid, _ := seedRecord(t, ctx, addr, dirctl)
+
+	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
+	if err != nil {
+		t.Fatalf("Connect(%s): %v", addr, err)
+	}
+	defer c.Close()
+
+	for _, negate := range []bool{false, true} {
+		q := []dirclient.Query{{Category: dirclient.FilterSafe, Value: "true", Negate: negate}}
+		page, err := c.ListSummaries(ctx, q, 100, 0)
+		if err != nil {
+			t.Fatalf("ListSummaries(safe, negate=%v): %v", negate, err)
+		}
+		for _, s := range page.Records {
+			if s.CID == cid {
+				t.Errorf("unscanned record %s matched safe filter (negate=%v)", cid, negate)
+			}
+		}
+	}
+}
+
 func TestDir_PushAndPull(t *testing.T) {
 	addr := requireDaemon(t)
 	dirctl := dirctlBin(t)
