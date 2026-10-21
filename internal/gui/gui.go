@@ -740,7 +740,9 @@ func (app *Gui) startQuery(resetCursor bool) {
 	}
 	queries := buildServerQueries(app.state.filters, app.state.filterQuery)
 	pageSize := app.pageSize()
-	app.syncSelectionKey(queryKey(app.state.serverAddr, queries))
+	if app.syncSelectionKey(queryKey(app.state.serverAddr, queries)) {
+		app.renderStatus(app.g)
+	}
 
 	app.state.page.reset()
 	app.state.queryGen++

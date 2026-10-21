@@ -86,13 +86,35 @@ func queryKey(serverAddr string, queries []dirclient.Query) string {
 
 // syncSelectionKey clears the selection when the query changes (filters, name
 // filter, or server), so a batch never acts on records the user can no longer
-// see. A refresh of the same query keeps it. Must be called on the GUI
-// goroutine.
-func (app *Gui) syncSelectionKey(key string) {
-	if key != app.state.selectionKey {
-		app.state.selection = nil
-		app.state.selectionKey = key
+// see. A refresh of the same query keeps it. It reports whether a non-empty
+// selection was cleared, so the caller can redraw the options bar. Must be
+// called on the GUI goroutine.
+func (app *Gui) syncSelectionKey(key string) bool {
+	if key == app.state.selectionKey {
+		return false
 	}
+	cleared := len(app.state.selection) > 0
+	app.state.selection = nil
+	app.state.selectionKey = key
+	return cleared
+}
+
+// resetSelectionForServerSwitch drops the selection and releases a running
+// batch when the user switches directory servers, whether or not the new
+// connection succeeds. The old batch keeps running against its own client,
+// but its late callbacks are ignored (see batchClientCurrent). Must be called
+// on the GUI goroutine.
+func (app *Gui) resetSelectionForServerSwitch() {
+	app.state.selection = nil
+	app.state.selectionKey = ""
+	app.endBatch(app.state.batchRunning)
+}
+
+// batchClientCurrent reports whether a batch's results still belong on
+// screen: a batch that finishes after a server switch must not touch the new
+// server's rows, selection, or popups. Must be called on the GUI goroutine.
+func (app *Gui) batchClientCurrent(client *dirclient.Client) bool {
+	return client == app.state.client
 }
 
 func (app *Gui) isSelected(cid string) bool {
@@ -356,11 +378,20 @@ func (app *Gui) runBatchDelete(client *dirclient.Client, id uint64, records []*d
 	})
 	app.g.Update(func(g *gocui.Gui) error {
 		app.endBatch(id)
+		if !app.batchClientCurrent(client) {
+			app.renderStatus(g)
+			return nil
+		}
 		for _, cid := range deleted {
 			app.removeRecordFromState(cid)
 		}
 		app.state.selection = nil
 		if len(deleted) > 0 {
+			// Reload the records: pages fetched while the deletes ran, and
+			// deleted records that were selected but not loaded, leave the
+			// paging offset and total out of step with the server. The
+			// silent reload keeps the rows on screen until it lands.
+			app.startQuery(false)
 			// Deleted records may have carried the last instance of some
 			// filter values; refetch so they drop out of the pick-lists.
 			app.startFilterValuesFetch(true)
@@ -390,6 +421,10 @@ func (app *Gui) runBatchPublish(client *dirclient.Client, id uint64, kind batchK
 	err := call(context.Background(), cids)
 	app.g.Update(func(g *gocui.Gui) error {
 		app.endBatch(id)
+		if !app.batchClientCurrent(client) {
+			app.renderStatus(g)
+			return nil
+		}
 		if err != nil {
 			app.renderStatus(g)
 			app.showRecordsError(g, err.Error())

@@ -96,13 +96,42 @@ func TestSyncSelectionKey(t *testing.T) {
 	app.syncSelectionKey("k1")
 	app.toggleSelected(app.state.page.records[0])
 
-	app.syncSelectionKey("k1")
-	if len(app.state.selection) != 1 {
+	if app.syncSelectionKey("k1") || len(app.state.selection) != 1 {
 		t.Fatal("same query (refresh) must keep the selection")
 	}
-	app.syncSelectionKey("k2")
-	if len(app.state.selection) != 0 {
-		t.Fatal("a different query must clear the selection")
+	if !app.syncSelectionKey("k2") || len(app.state.selection) != 0 {
+		t.Fatal("a different query must clear the selection and report it")
+	}
+	if app.syncSelectionKey("k3") {
+		t.Fatal("clearing an empty selection must not report a change")
+	}
+}
+
+func TestResetSelectionForServerSwitch(t *testing.T) {
+	app := selectionApp()
+	app.syncSelectionKey("server-a")
+	app.toggleSelected(app.state.page.records[0])
+	id := app.beginBatch("deleting 0/1")
+
+	app.resetSelectionForServerSwitch()
+	if len(app.state.selection) != 0 || app.state.selectionKey != "" {
+		t.Fatalf("selection kept across a server switch: %v key=%q", app.state.selection, app.state.selectionKey)
+	}
+	if app.state.batchRunning != 0 || app.state.batchProgress != "" {
+		t.Fatalf("batch still blocks the new server: running=%d progress=%q", app.state.batchRunning, app.state.batchProgress)
+	}
+	app.updateBatchProgress(id, "deleting 1/1") // old batch's late update
+	if app.state.batchProgress != "" {
+		t.Fatalf("old batch progress shown on the new server: %q", app.state.batchProgress)
+	}
+}
+
+func TestBatchClientCurrent(t *testing.T) {
+	old, current := &dirclient.Client{}, &dirclient.Client{}
+	app := &Gui{}
+	app.state.client = current
+	if !app.batchClientCurrent(current) || app.batchClientCurrent(old) {
+		t.Fatal("batchClientCurrent must match only the connected client")
 	}
 }
 
