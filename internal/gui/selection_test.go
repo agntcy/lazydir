@@ -245,3 +245,27 @@ func TestRecordRowLine(t *testing.T) {
 		t.Errorf("text should start after the %d-column gutter: %q", rowGutterWidth, plain)
 	}
 }
+
+// TestBatchProgress_LateUpdateAfterEnd guards against gocui delivering a
+// progress update after the batch's completion callback: it must not leave
+// the batch looking busy.
+func TestBatchProgress_LateUpdateAfterEnd(t *testing.T) {
+	app := &Gui{}
+	id := app.beginBatch("deleting 0/2")
+	app.updateBatchProgress(id, "deleting 1/2")
+	if app.state.batchRunning != id || app.state.batchProgress != "deleting 1/2" {
+		t.Fatalf("running batch: running=%d progress=%q", app.state.batchRunning, app.state.batchProgress)
+	}
+
+	app.endBatch(id)
+	app.updateBatchProgress(id, "deleting 2/2") // arrives late
+	if app.state.batchRunning != 0 || app.state.batchProgress != "" {
+		t.Fatalf("late update revived a finished batch: running=%d progress=%q", app.state.batchRunning, app.state.batchProgress)
+	}
+
+	next := app.beginBatch("publishing 0/1")
+	app.endBatch(id) // stale end from the previous batch
+	if app.state.batchRunning != next || app.state.batchProgress != "publishing 0/1" {
+		t.Fatalf("stale end stopped the next batch: running=%d progress=%q", app.state.batchRunning, app.state.batchProgress)
+	}
+}

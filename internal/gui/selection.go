@@ -279,7 +279,11 @@ func (app *Gui) startBatch(g *gocui.Gui, kind batchKind) bool {
 	if len(app.state.selection) == 0 {
 		return false
 	}
-	if app.state.client == nil || app.state.batchProgress != "" {
+	if app.state.client == nil {
+		return true
+	}
+	if app.state.batchRunning != 0 {
+		app.openConfirmPopup(g, kind.verb()+" records", "A batch is still running ("+app.state.batchProgress+"). Try again when it finishes.", nil)
 		return true
 	}
 	act, skipped := planBatch(kind, app.selectedRecords(), func(cid string) dirclient.RecordStatus {
@@ -304,29 +308,54 @@ func (app *Gui) runBatch(kind batchKind, records []*dirclient.RecordSummary) {
 	if client == nil {
 		return
 	}
-	app.setBatchProgress(fmt.Sprintf("%s 0/%d", kind.progressing(), len(records)))
+	id := app.beginBatch(fmt.Sprintf("%s 0/%d", kind.progressing(), len(records)))
+	app.renderStatus(app.g)
 
 	if kind == batchDelete {
-		go app.runBatchDelete(client, records)
+		go app.runBatchDelete(client, id, records)
 		return
 	}
-	go app.runBatchPublish(client, kind, records)
+	go app.runBatchPublish(client, id, kind, records)
 }
 
-func (app *Gui) setBatchProgress(text string) {
-	app.state.batchProgress = text
-	app.renderStatus(app.g)
+// beginBatch marks a new batch as running and returns its ID. Must be called
+// on the GUI goroutine.
+func (app *Gui) beginBatch(progress string) uint64 {
+	app.state.batchSeq++
+	app.state.batchRunning = app.state.batchSeq
+	app.state.batchProgress = progress
+	return app.state.batchSeq
 }
 
-func (app *Gui) runBatchDelete(client *dirclient.Client, records []*dirclient.RecordSummary) {
+// updateBatchProgress sets the progress text of batch id. gocui runs each
+// Update callback on its own goroutine, so they can arrive out of order: a
+// progress update arriving after its batch finished is dropped, or it would
+// leave the progress text set and block the next batch. Must be called on the
+// GUI goroutine.
+func (app *Gui) updateBatchProgress(id uint64, progress string) {
+	if id == app.state.batchRunning {
+		app.state.batchProgress = progress
+	}
+}
+
+// endBatch marks batch id as finished. Must be called on the GUI goroutine.
+func (app *Gui) endBatch(id uint64) {
+	if id == app.state.batchRunning {
+		app.state.batchRunning = 0
+		app.state.batchProgress = ""
+	}
+}
+
+func (app *Gui) runBatchDelete(client *dirclient.Client, id uint64, records []*dirclient.RecordSummary) {
 	deleted, failures := deleteEach(context.Background(), records, client.Delete, func(done, total int) {
-		app.g.Update(func(*gocui.Gui) error {
-			app.setBatchProgress(fmt.Sprintf("%s %d/%d", batchDelete.progressing(), done, total))
+		app.g.Update(func(g *gocui.Gui) error {
+			app.updateBatchProgress(id, fmt.Sprintf("%s %d/%d", batchDelete.progressing(), done, total))
+			app.renderStatus(g)
 			return nil
 		})
 	})
 	app.g.Update(func(g *gocui.Gui) error {
-		app.state.batchProgress = ""
+		app.endBatch(id)
 		for _, cid := range deleted {
 			app.removeRecordFromState(cid)
 		}
@@ -349,7 +378,7 @@ func (app *Gui) runBatchDelete(client *dirclient.Client, records []*dirclient.Re
 
 // runBatchPublish publishes or unpublishes records in one RPC. On failure it
 // shows the error and keeps the selection so the batch can be retried.
-func (app *Gui) runBatchPublish(client *dirclient.Client, kind batchKind, records []*dirclient.RecordSummary) {
+func (app *Gui) runBatchPublish(client *dirclient.Client, id uint64, kind batchKind, records []*dirclient.RecordSummary) {
 	cids := make([]string, 0, len(records))
 	for _, r := range records {
 		cids = append(cids, r.CID)
@@ -360,7 +389,7 @@ func (app *Gui) runBatchPublish(client *dirclient.Client, kind batchKind, record
 	}
 	err := call(context.Background(), cids)
 	app.g.Update(func(g *gocui.Gui) error {
-		app.state.batchProgress = ""
+		app.endBatch(id)
 		if err != nil {
 			app.renderStatus(g)
 			app.showRecordsError(g, err.Error())

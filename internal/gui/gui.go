@@ -204,6 +204,8 @@ type appState struct {
 	selection     map[string]*dirclient.RecordSummary // CID → summary snapshot
 	selectionKey  string                              // queryKey the selection was made under
 	batchProgress string                              // e.g. "deleting 3/5" while a batch runs
+	batchSeq      uint64                              // ID of the last batch started
+	batchRunning  uint64                              // ID of the running batch, 0 when idle
 
 	// active sync operation state (for cancellation)
 	syncID         string             // active sync operation ID
