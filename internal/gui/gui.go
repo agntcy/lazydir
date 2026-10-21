@@ -200,6 +200,13 @@ type appState struct {
 	clipboardSource    string                              // display address of source server
 	clipboardSourceURL string                              // full URL of source (used in CreateSync)
 
+	// records multi-select for batch actions (issue #34)
+	selection     map[string]*dirclient.RecordSummary // CID → summary snapshot
+	selectionKey  string                              // queryKey the selection was made under
+	batchProgress string                              // e.g. "deleting 3/5" while a batch runs
+	batchSeq      uint64                              // ID of the last batch started
+	batchRunning  uint64                              // ID of the running batch, 0 when idle
+
 	// active sync operation state (for cancellation)
 	syncID         string             // active sync operation ID
 	syncCancelFunc context.CancelFunc // cancels pollSync/pollReconcile goroutines
@@ -733,6 +740,9 @@ func (app *Gui) startQuery(resetCursor bool) {
 	}
 	queries := buildServerQueries(app.state.filters, app.state.filterQuery)
 	pageSize := app.pageSize()
+	if app.syncSelectionKey(queryKey(app.state.serverAddr, queries)) {
+		app.renderStatus(app.g)
+	}
 
 	app.state.page.reset()
 	app.state.queryGen++

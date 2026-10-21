@@ -131,6 +131,10 @@ func (app *Gui) clearFilter(g *gocui.Gui, v *gocui.View) error {
 		app.startQuery(true)
 		return nil
 	}
+	if len(app.state.selection) > 0 {
+		app.clearSelection(g)
+		return nil
+	}
 	if len(app.state.clipboard) > 0 {
 		return app.clipboardClear(g, v)
 	}
@@ -226,6 +230,9 @@ func formatRecordInfo(info *dirclient.RecordInfo, t Theme) string {
 // On confirmation, it issues a Delete RPC and removes the record from local
 // caches so the UI updates immediately without a full refresh.
 func (app *Gui) recordDelete(g *gocui.Gui, v *gocui.View) error {
+	if app.startBatch(g, batchDelete) {
+		return nil
+	}
 	r := app.cursorRecord()
 	if r == nil || r.CID == "" {
 		return nil
@@ -369,6 +376,9 @@ func (app *Gui) applyPublishOverrides(set map[string]bool) {
 // It only acts on a local, not-yet-published record; on group headers and
 // already-published records it is a no-op.
 func (app *Gui) recordPublish(g *gocui.Gui, v *gocui.View) error {
+	if app.startBatch(g, batchPublish) {
+		return nil
+	}
 	r := app.cursorRecord()
 	if r == nil || r.CID == "" || app.state.client == nil {
 		return nil
@@ -397,6 +407,9 @@ func (app *Gui) recordPublish(g *gocui.Gui, v *gocui.View) error {
 // recordUnpublish opens a confirmation popup for unpublishing the selected
 // record. It only acts on a published record; otherwise it is a no-op.
 func (app *Gui) recordUnpublish(g *gocui.Gui, v *gocui.View) error {
+	if app.startBatch(g, batchUnpublish) {
+		return nil
+	}
 	r := app.cursorRecord()
 	if r == nil || r.CID == "" || app.state.client == nil {
 		return nil
