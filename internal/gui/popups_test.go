@@ -58,10 +58,10 @@ func TestConfirmContentWidth(t *testing.T) {
 }
 
 func TestOptionsBarText_CancelSyncHint(t *testing.T) {
-	if got := optionsBarText(viewRecords, 0, 0, 2, 0); !strings.Contains(got, "cancel sync: X") {
+	if got := optionsBarText(viewRecords, 0, barStatus{syncing: 2}); !strings.Contains(got, "cancel sync: X") {
 		t.Fatalf("expected cancel hint while syncing, got %q", got)
 	}
-	if got := optionsBarText(viewRecords, 0, 0, 0, 0); strings.Contains(got, "cancel sync") {
+	if got := optionsBarText(viewRecords, 0, barStatus{}); strings.Contains(got, "cancel sync") {
 		t.Fatalf("unexpected cancel hint without a sync, got %q", got)
 	}
 }

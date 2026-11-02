@@ -405,7 +405,14 @@ func (g *Gui) renderStatus(gui *gocui.Gui) {
 	if v, err := gui.View(viewOptions); err == nil {
 		v.Clear()
 		syncingCount, reconcilingCount := g.syncCounts()
-		fmt.Fprintf(v, "%s%s%s", g.theme.Color5, optionsBarText(focused, v.InnerWidth(), len(g.state.clipboard), syncingCount, reconcilingCount), g.theme.Reset)
+		status := barStatus{
+			selected:    len(g.state.selection),
+			copied:      len(g.state.clipboard),
+			syncing:     syncingCount,
+			reconciling: reconcilingCount,
+			progress:    g.state.batchProgress,
+		}
+		fmt.Fprintf(v, "%s%s%s", g.theme.Color5, optionsBarText(focused, v.InnerWidth(), status), g.theme.Reset)
 	}
 }
 

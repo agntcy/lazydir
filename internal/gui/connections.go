@@ -188,6 +188,7 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	}
 	app.state.publishEnriching = false
 	app.state.publishOverrides = nil
+	app.resetSelectionForServerSwitch()
 
 	if app.state.filterValuesCancel != nil {
 		app.state.filterValuesCancel()
@@ -234,6 +235,7 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.renderDirectory(g)
 	app.renderRecordsView(g)
 	app.renderFiltersView(g)
+	app.renderStatus(g)
 
 	if entry.OIDCIssuer != "" {
 		go app.connectWithOIDC(entry)
