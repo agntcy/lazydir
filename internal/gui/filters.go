@@ -74,7 +74,7 @@ const (
 	filterModules
 	filterOASFVersion
 	filterAuthor
-	filterTrustedVerified
+	filterTrustSafety
 )
 
 // allFilterCategories is the canonical ordered list of filter categories.
@@ -84,7 +84,7 @@ var allFilterCategories = []filterCategory{
 	filterModules,
 	filterOASFVersion,
 	filterAuthor,
-	filterTrustedVerified,
+	filterTrustSafety,
 }
 
 // title returns the human-readable label used as the row text in the filter
@@ -101,8 +101,8 @@ func (c filterCategory) title() string {
 		return "OASF version"
 	case filterAuthor:
 		return "Author"
-	case filterTrustedVerified:
-		return "Trusted / Verified"
+	case filterTrustSafety:
+		return "Trusted / Verified / Safe"
 	}
 	return ""
 }
@@ -160,8 +160,8 @@ func (app *Gui) optionsFor(c filterCategory) []string {
 		return nil
 	}
 
-	if c == filterTrustedVerified {
-		return []string{"trusted", "verified"}
+	if c == filterTrustSafety {
+		return []string{optTrusted, optVerified, optSafe}
 	}
 
 	raw := aggregatorFieldFor(a, c)
@@ -292,6 +292,7 @@ func (app *Gui) listRows() []listRow {
 const (
 	optTrusted  = "trusted"
 	optVerified = "verified"
+	optSafe     = "safe"
 	valueTrue   = "true"
 )
 
@@ -313,8 +314,9 @@ func categoryToFilter(c filterCategory) dirclient.FilterCategory {
 
 // buildServerQueries translates the applied tri-state selection and the name
 // query into server-side dirclient predicates. Include -> positive query;
-// Exclude -> Negate. Trusted/Verified map to their own categories with value
-// "true". The name query becomes a wildcarded NAME predicate.
+// Exclude -> Negate. Trusted/Verified/Safe map to their own categories with
+// value "true"; the server reads an excluded "safe" as "flagged unsafe by a
+// scanner", so unscanned records match neither. The name query becomes a wildcarded NAME predicate.
 //
 // The server ORs repeated positive predicates of one category (two skills
 // match records with either) and ANDs categories; negated predicates exclude
@@ -322,7 +324,7 @@ func categoryToFilter(c filterCategory) dirclient.FilterCategory {
 func buildServerQueries(fs filterState, nameQuery string) []dirclient.Query {
 	var qs []dirclient.Query
 	for _, cat := range allFilterCategories {
-		if cat == filterTrustedVerified {
+		if cat == filterTrustSafety {
 			continue
 		}
 		for value, mode := range fs.applied[cat] {
@@ -333,10 +335,13 @@ func buildServerQueries(fs filterState, nameQuery string) []dirclient.Query {
 			})
 		}
 	}
-	for value, mode := range fs.applied[filterTrustedVerified] {
+	for value, mode := range fs.applied[filterTrustSafety] {
 		cat := dirclient.FilterTrusted
-		if value == optVerified {
+		switch value {
+		case optVerified:
 			cat = dirclient.FilterVerified
+		case optSafe:
+			cat = dirclient.FilterSafe
 		}
 		qs = append(qs, dirclient.Query{Category: cat, Value: valueTrue, Negate: mode == modeExclude})
 	}
@@ -350,7 +355,7 @@ func buildServerQueries(fs filterState, nameQuery string) []dirclient.Query {
 // delegates to listRows (respecting the expanded/collapsed state). When a
 // search query is active it ignores the expanded state and shows every option
 // whose label matches the query, grouped under its category header. The
-// Trusted / Verified category is excluded from search results. For class
+// Trusted / Verified / Safe category is excluded from search results. For class
 // categories the search also matches against the OASF caption and ID.
 func (app *Gui) filteredListRows() []listRow {
 	q := app.state.filters.filterQuery
@@ -360,7 +365,7 @@ func (app *Gui) filteredListRows() []listRow {
 	q = strings.ToLower(q)
 	var rows []listRow
 	for _, c := range allFilterCategories {
-		if c == filterTrustedVerified {
+		if c == filterTrustSafety {
 			continue
 		}
 		entries := app.classEntriesFor(c)
