@@ -67,6 +67,11 @@ type netState struct {
 	// kept are synced rows that stay listed after they drop out of results.
 	kept   map[string]dirclient.NetworkResult
 	status map[string]netSyncEntry
+	// syncCancel stops every running batch sync on a server switch.
+	// Independent of the search cancel.
+	syncCancel context.CancelFunc
+	// localStale is set when a sync lands, so This node reloads on return.
+	localStale bool
 
 	// previewGen identifies the current peer preview; peers caches peer
 	// connections by directory address.
@@ -85,6 +90,7 @@ const (
 
 type netSyncEntry struct {
 	status netSyncStatus
+	err    string // why a failed sync failed
 }
 
 // modeLine is the non-selectable third line of the Connections panel.
@@ -96,13 +102,20 @@ func modeLine(m browseMode) string {
 }
 
 // switchBrowseMode flips the browse mode and clears both multi-selects, since a
-// selection made in one mode is meaningless in the other. State only; no
-// rendering.
+// selection made in one mode is meaningless in the other. Leaving network mode
+// stops its search; running syncs carry on. State only; no rendering.
 func (app *Gui) switchBrowseMode() {
 	if app.state.browse == browseLocal {
 		app.state.browse = browseNetwork
 	} else {
 		app.state.browse = browseLocal
+		ns := &app.state.net
+		ns.gen++
+		if ns.cancel != nil {
+			ns.cancel()
+			ns.cancel = nil
+		}
+		ns.loading = false
 	}
 	app.state.selection = nil
 	app.state.net.selection = nil
@@ -114,6 +127,12 @@ func (app *Gui) toggleBrowseMode(g *gocui.Gui, v *gocui.View) error {
 	if app.state.browse == browseNetwork {
 		app.startNetworkTaxonomyFetch()
 		app.startNetworkSearch()
+	} else if app.state.net.localStale && app.state.client != nil {
+		// Records synced from the network belong in this node's list now.
+		app.state.net.localStale = false
+		app.invalidatePublishEnrichment()
+		app.startQuery(true)
+		app.startFilterValuesFetch(true)
 	}
 	app.renderFiltersView(g)
 	app.renderRecordsView(g)
@@ -211,7 +230,26 @@ func (app *Gui) applyNetworkResults(gen uint64, qs []dirclient.NetworkQuery, res
 			ns.notice = noticeNoPeers
 		}
 	}
+	app.pruneNetSelection()
 	app.renderNetRecords()
+}
+
+// pruneNetSelection drops selected rows that are no longer listed, so a sync
+// never acts on rows the user can't see. Must be called on the GUI goroutine.
+func (app *Gui) pruneNetSelection() {
+	ns := &app.state.net
+	if len(ns.selection) == 0 {
+		return
+	}
+	listed := map[string]bool{}
+	for _, r := range app.netRecordRows() {
+		listed[r.CID] = true
+	}
+	for cid := range ns.selection {
+		if !listed[cid] {
+			delete(ns.selection, cid)
+		}
+	}
 }
 
 // networkRows lists results (already sorted by score), then the kept rows
@@ -539,4 +577,324 @@ func (app *Gui) minScoreUp(*gocui.Gui, *gocui.View) error {
 func (app *Gui) minScoreDown(*gocui.Gui, *gocui.View) error {
 	app.adjustMinScore(-1)
 	return nil
+}
+
+// netSyncPollInterval is how often a network batch sync's status is checked.
+const netSyncPollInterval = time.Second
+
+// peerBatch is the network rows synced from one peer in a single CreateSync.
+type peerBatch struct {
+	addr, url string
+	cids      []string
+}
+
+// peerURL is the remote directory URL of a peer address, using the scheme of
+// the current connection's auth mode.
+func peerURL(addr, authMode string) string {
+	if strings.Contains(addr, "://") {
+		return addr
+	}
+	switch authMode {
+	case authModeInsecure, "none", "":
+		return "http://" + addr
+	}
+	return "https://" + addr
+}
+
+// planNetworkSync groups rows into one batch per peer address, sorted by
+// address with CIDs in row order. Rows already syncing or synced are skipped;
+// rows whose peer announced no address can't be synced.
+func planNetworkSync(rows []dirclient.NetworkResult, status map[string]netSyncEntry, authMode string) (batches []peerBatch, skipped, noAddr int) {
+	byAddr := map[string]*peerBatch{}
+	for _, r := range rows {
+		switch status[r.CID].status {
+		case netSyncing, netSynced:
+			skipped++
+			continue
+		}
+		if r.DirAddr == "" {
+			noAddr++
+			continue
+		}
+		b, ok := byAddr[r.DirAddr]
+		if !ok {
+			b = &peerBatch{addr: r.DirAddr, url: peerURL(r.DirAddr, authMode)}
+			byAddr[r.DirAddr] = b
+		}
+		b.cids = append(b.cids, r.CID)
+	}
+	for _, b := range byAddr {
+		batches = append(batches, *b)
+	}
+	sort.Slice(batches, func(i, j int) bool { return batches[i].addr < batches[j].addr })
+	return batches, skipped, noAddr
+}
+
+// networkSyncConfirmBody is the confirmation text for a network sync: the
+// count, the records per peer, and the rows left out.
+func networkSyncConfirmBody(batches []peerBatch, skipped, noAddr int) string {
+	n := 0
+	for _, b := range batches {
+		n += len(b.cids)
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Sync %d record(s) into this node?\n", n)
+	for _, b := range batches {
+		fmt.Fprintf(&sb, "\n  %s: %d", b.addr, len(b.cids))
+	}
+	if left := netSyncLeftOut(skipped, noAddr); left != "" {
+		sb.WriteString("\n\n" + left)
+	}
+	return sb.String()
+}
+
+// netSyncLeftOut lists the rows a network sync leaves out, one line per
+// reason, or "" when none are.
+func netSyncLeftOut(skipped, noAddr int) string {
+	var lines []string
+	if skipped > 0 {
+		lines = append(lines, fmt.Sprintf("Skipped: %d (already synced or syncing)", skipped))
+	}
+	if noAddr > 0 {
+		lines = append(lines, fmt.Sprintf("No address: %d", noAddr))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// netSyncErr describes a failed batch sync; id is empty when the sync was
+// never created.
+func netSyncErr(addr, id, reason string) string {
+	if id == "" {
+		return fmt.Sprintf("peer %s: %s", addr, reason)
+	}
+	return fmt.Sprintf("peer %s, sync %s: %s", addr, id, reason)
+}
+
+// netSyncTargets returns the selected rows in row order, or the cursor row
+// when nothing is selected.
+func (app *Gui) netSyncTargets() []dirclient.NetworkResult {
+	ns := &app.state.net
+	if len(ns.selection) == 0 {
+		if r, ok := app.netCursorRow(); ok {
+			return []dirclient.NetworkResult{r}
+		}
+		return nil
+	}
+	var out []dirclient.NetworkResult
+	for _, r := range app.netRecordRows() {
+		if _, ok := ns.selection[r.CID]; ok {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// networkSync is the `S` handler: it confirms and syncs the selected network
+// rows, or the cursor row, into this node.
+func (app *Gui) networkSync(g *gocui.Gui, _ *gocui.View) error {
+	if app.state.browse != browseNetwork || app.state.client == nil {
+		return nil
+	}
+	rows := app.netSyncTargets()
+	if len(rows) == 0 {
+		return nil
+	}
+	batches, skipped, noAddr := planNetworkSync(rows, app.state.net.status, app.state.authMode)
+	if len(batches) == 0 {
+		app.openConfirmPopup(g, "Sync records", "Nothing to sync.\n\n"+netSyncLeftOut(skipped, noAddr), nil)
+		return nil
+	}
+	app.openConfirmPopup(g, "Sync records", networkSyncConfirmBody(batches, skipped, noAddr), func() {
+		app.startNetworkSync(batches, rows)
+	})
+	return nil
+}
+
+// startNetworkSync marks the batches' rows syncing and runs one CreateSync
+// per peer in the background. Must be called on the GUI goroutine.
+func (app *Gui) startNetworkSync(batches []peerBatch, rows []dirclient.NetworkResult) {
+	client := app.state.client
+	if client == nil {
+		return
+	}
+	ns := &app.state.net
+	// Chained onto syncCancel so a server switch stops this sync along with
+	// the earlier ones still running.
+	ctx, cancel := context.WithCancel(context.Background())
+	if prev := ns.syncCancel; prev != nil {
+		ns.syncCancel = func() { prev(); cancel() }
+	} else {
+		ns.syncCancel = cancel
+	}
+	byCID := make(map[string]dirclient.NetworkResult, len(rows))
+	for _, r := range rows {
+		byCID[r.CID] = r
+	}
+	if ns.status == nil {
+		ns.status = map[string]netSyncEntry{}
+	}
+	for _, b := range batches {
+		batchRows := make([]dirclient.NetworkResult, 0, len(b.cids))
+		for _, cid := range b.cids {
+			ns.status[cid] = netSyncEntry{status: netSyncing}
+			batchRows = append(batchRows, byCID[cid])
+		}
+		go app.runNetworkSync(ctx, client, b, batchRows)
+	}
+	ns.selection = nil
+	app.renderNetRecords()
+}
+
+// runNetworkSync syncs one peer batch into this node through client, which
+// the caller captured on the GUI goroutine, and lands the outcome.
+func (app *Gui) runNetworkSync(ctx context.Context, client *dirclient.Client, b peerBatch, rows []dirclient.NetworkResult) {
+	errMsg := ""
+	syncID, err := client.CreateSync(ctx, b.url, b.cids)
+	if err == nil {
+		var info *dirclient.SyncInfo
+		info, err = waitForSync(ctx, client, syncID, netSyncPollInterval)
+		if err == nil && info.Status == dirclient.SyncFailed {
+			errMsg = netSyncErr(b.addr, syncID, "sync failed, last update "+info.LastUpdateTime)
+		}
+	}
+	if err != nil {
+		errMsg = netSyncErr(b.addr, syncID, err.Error())
+	}
+	app.g.Update(func(*gocui.Gui) error {
+		app.applyNetworkSync(ctx, rows, errMsg)
+		return nil
+	})
+}
+
+// applyNetworkSync lands a batch sync of rows: synced rows stay listed even
+// when they drop out of the results; failed ones keep errMsg for `i`. Results
+// of syncs cancelled by a server switch are dropped. Must be called on the GUI
+// goroutine.
+func (app *Gui) applyNetworkSync(ctx context.Context, rows []dirclient.NetworkResult, errMsg string) {
+	if ctx.Err() != nil {
+		return
+	}
+	ns := &app.state.net
+	if ns.status == nil {
+		ns.status = map[string]netSyncEntry{}
+	}
+	for _, r := range rows {
+		if errMsg != "" {
+			ns.status[r.CID] = netSyncEntry{status: netFailed, err: errMsg}
+			continue
+		}
+		ns.status[r.CID] = netSyncEntry{status: netSynced}
+		if ns.kept == nil {
+			ns.kept = map[string]dirclient.NetworkResult{}
+		}
+		ns.kept[r.CID] = r
+	}
+	if errMsg == "" {
+		ns.localStale = true
+	}
+	app.renderNetRecords()
+}
+
+// netRecordToggleInfo is `i` in network mode: on a failed row it toggles the
+// Records info popup with the sync error; other rows have no info.
+func (app *Gui) netRecordToggleInfo(g *gocui.Gui, v *gocui.View) error {
+	r, ok := app.netCursorRow()
+	if !ok {
+		return nil
+	}
+	st := app.state.net.status[r.CID]
+	if st.status != netFailed {
+		return nil
+	}
+	if app.state.recordInfoCID == r.CID {
+		_ = app.closeInfoPopup(g, v)
+		return app.focusTo(g, viewRecords)
+	}
+	app.state.recordInfoCID = r.CID
+	app.state.recordInfoText = st.err
+	app.state.recordInfoError = true
+	app.state.recordInfoLoading = false
+	app.openInfoPopup(g, viewRecords)
+	return nil
+}
+
+// toggleNetSelected selects or unselects the network row under the cursor.
+func (app *Gui) toggleNetSelected() {
+	r, ok := app.netCursorRow()
+	if !ok {
+		return
+	}
+	ns := &app.state.net
+	if _, sel := ns.selection[r.CID]; sel {
+		delete(ns.selection, r.CID)
+		return
+	}
+	if ns.selection == nil {
+		ns.selection = map[string]dirclient.NetworkResult{}
+	}
+	ns.selection[r.CID] = r
+}
+
+// selectAllNetRows selects every listed network row, or clears the selection
+// when all of them are selected already.
+func (app *Gui) selectAllNetRows() {
+	ns := &app.state.net
+	rows := app.netRecordRows()
+	all := len(rows) > 0
+	for _, r := range rows {
+		if _, ok := ns.selection[r.CID]; !ok {
+			all = false
+			break
+		}
+	}
+	if all {
+		ns.selection = nil
+		return
+	}
+	if ns.selection == nil {
+		ns.selection = map[string]dirclient.NetworkResult{}
+	}
+	for _, r := range rows {
+		ns.selection[r.CID] = r
+	}
+}
+
+// startNetworkSearchIfActive reruns the network search when network mode is
+// showing, e.g. once a (re)connection lands. Must be called on the GUI
+// goroutine.
+func (app *Gui) startNetworkSearchIfActive() {
+	if app.state.browse == browseNetwork {
+		app.startNetworkSearch()
+	}
+}
+
+// resetNetworkForServerSwitch drops all network state tied to the old server:
+// it stops the search and every batch sync, closes peer connections, and
+// supersedes pending searches and previews. Must be called on the GUI
+// goroutine.
+func (app *Gui) resetNetworkForServerSwitch() {
+	ns := &app.state.net
+	if ns.cancel != nil {
+		ns.cancel()
+		ns.cancel = nil
+	}
+	if ns.syncCancel != nil {
+		ns.syncCancel()
+		ns.syncCancel = nil
+	}
+	for _, p := range ns.peers {
+		p.Close()
+	}
+	ns.peers = nil
+	ns.results = nil
+	ns.selection = nil
+	ns.status = nil
+	ns.kept = nil
+	ns.local = nil
+	ns.notice = ""
+	ns.loading = false
+	ns.cursor = 0
+	ns.localStale = false
+	ns.gen++
+	ns.previewGen++
 }
