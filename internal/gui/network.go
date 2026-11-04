@@ -212,7 +212,10 @@ func (app *Gui) applyNetworkResults(gen uint64, qs []dirclient.NetworkQuery, res
 	default:
 		ns.results = res
 		for cid := range local {
-			if _, ok := ns.status[cid]; ok {
+			// A row on this node is synced, even if an earlier sync of it
+			// failed; only a running sync keeps its own state.
+			switch ns.status[cid].status {
+			case netSyncing, netSynced:
 				continue
 			}
 			if ns.status == nil {

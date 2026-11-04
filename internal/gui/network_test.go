@@ -604,3 +604,15 @@ func TestRecordsPanelTitle_ModeAware(t *testing.T) {
 		t.Errorf("local title = %q, want %q", got, want)
 	}
 }
+
+func TestApplyNetworkResults_PresenceUpgradesFailed(t *testing.T) {
+	app := newNetSearchApp()
+	app.state.net.gen = 1
+	app.state.net.status = map[string]netSyncEntry{"c1": {status: netFailed, err: "sync failed"}}
+
+	app.applyNetworkResults(1, nil, []dirclient.NetworkResult{{CID: "c1"}}, map[string]bool{"c1": true}, nil)
+
+	if got := app.state.net.status["c1"]; got.status != netSynced || got.err != "" {
+		t.Errorf("status[c1] = %+v, want netSynced without error", got)
+	}
+}
