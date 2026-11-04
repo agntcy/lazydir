@@ -249,3 +249,28 @@ func TestWriteNetRow_Dimmed(t *testing.T) {
 		t.Errorf("dimmed row = %q, want it to contain %q", buf.String(), "Author   not in network mode")
 	}
 }
+
+func TestNetActivate_ExpandsCategoryNode(t *testing.T) {
+	t.Parallel()
+
+	app := newNetFilterApp(skillTree())
+	app.state.net.filters.expanded[netExpandKey(filterSkills, "")] = true
+	rows := app.netFilterRows()
+	if rowLabel(rows[1]) != nodeCatA {
+		t.Fatalf("rows[1] = %q, want %q", rowLabel(rows[1]), nodeCatA)
+	}
+
+	app.netActivate(rows[1])
+	if len(app.state.net.filters.applied[filterSkills]) != 0 {
+		t.Errorf("activating a category node selected it: %v", app.state.net.filters.applied[filterSkills])
+	}
+	rows = app.netFilterRows()
+	if len(rows) < 3 || rowLabel(rows[2]) != nodeChild {
+		t.Fatalf("category node not expanded; rows = %v", rows)
+	}
+
+	app.netActivate(rows[2])
+	if !app.state.net.filters.applied[filterSkills][nodeChild] {
+		t.Errorf("activating a leaf did not select it")
+	}
+}
