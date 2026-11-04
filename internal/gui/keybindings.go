@@ -37,6 +37,9 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding("", 'r', gocui.ModNone, app.refresh); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding("", 'n', gocui.ModNone, app.toggleBrowseMode); err != nil {
+		return err
+	}
 
 	// ── Input prompt (shared) ────────────────────────────────────────────────
 	if err := g.SetKeybinding(viewInput, gocui.KeyEnter, gocui.ModNone, app.inputConfirm); err != nil {

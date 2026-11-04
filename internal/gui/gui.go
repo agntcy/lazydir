@@ -78,6 +78,11 @@ type appState struct {
 	// Connections panel cursor (0 = Directory, 1 = OASF)
 	connCursor int
 
+	// browse selects between This node and Network discovery mode. net holds
+	// the network-mode state, kept separate from the This-node state.
+	browse browseMode
+	net    netState
+
 	// Directory connection
 	activeDir        config.DirectoryEntry
 	serverAddr       string
