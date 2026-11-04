@@ -44,6 +44,14 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 
 **[0] Preview** — syntax-highlighted JSON of the selected record; scrollable when focused.
 
+### Network mode
+
+Press `n` to switch between browsing this node and discovering records across the network. In network mode the Filters and Records panels run a routing search, the same search as `dirctl routing search`: one query per selected value, results ranked by match score, and `+` / `-` to raise or lower the minimum score (default 1).
+
+- **Filters** offer values from the OASF taxonomy for Skills, Domains and Modules; the OASF version you pick decides which taxonomy is shown. Author and Trusted / Verified / Safe are not available, there is no exclude, and `x` clears the selected values and versions.
+- **Records** lists CIDs only, up to 100 results (the title notes when the list may be truncated). `enter` previews a record straight from the peer that announced it, when the peer is reachable. `S` syncs the highlighted record into this node, or every selected record (`space`, `ctrl+a`); `i` on a failed row shows why the sync failed; `esc` clears the selection; `r` reruns the search.
+- Keys that change local records (`d`, `P`, `U`, `C`, `V`, `X`, `y`, `/`) do nothing in network mode.
+
 ## Prerequisites
 
 - **Go 1.27.2+**

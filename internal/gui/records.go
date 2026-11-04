@@ -124,6 +124,27 @@ func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
 	return app.focusTo(g, viewPreview)
 }
 
+// clearNetSelection empties the network selection and reports whether there
+// was one to clear.
+func (app *Gui) clearNetSelection() bool {
+	if len(app.state.net.selection) == 0 {
+		return false
+	}
+	app.state.net.selection = nil
+	return true
+}
+
+// localOnly wraps a Records handler that only applies to This-node records, so
+// the key does nothing in network mode.
+func (app *Gui) localOnly(h func(*gocui.Gui, *gocui.View) error) func(*gocui.Gui, *gocui.View) error {
+	return func(g *gocui.Gui, v *gocui.View) error {
+		if app.state.browse == browseNetwork {
+			return nil
+		}
+		return h(g, v)
+	}
+}
+
 func (app *Gui) openFilterDialog(g *gocui.Gui, v *gocui.View) error {
 	prevQuery := app.state.filterQuery
 	app.openInput("Filter records (/)", app.state.filterQuery,
@@ -150,6 +171,13 @@ func (app *Gui) openFilterDialog(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) clearFilter(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		if app.clearNetSelection() {
+			app.renderRecordsView(g)
+			app.renderStatus(g)
+		}
+		return nil
+	}
 	if app.state.filterQuery != "" {
 		app.state.filterQuery = ""
 		app.startQuery(true)

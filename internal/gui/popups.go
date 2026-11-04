@@ -294,7 +294,7 @@ func (app *Gui) openHelp(g *gocui.Gui, v *gocui.View) error {
 	}
 	hv.Clear()
 	_ = hv.SetOrigin(0, 0)
-	for _, line := range helpPopupLines(app.state.popupPrevView) {
+	for _, line := range helpPopupLines(app.state.popupPrevView, app.state.browse == browseNetwork) {
 		fmt.Fprintln(hv, line)
 	}
 	hv.Visible = true
