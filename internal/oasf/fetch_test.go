@@ -19,6 +19,7 @@ const (
 	classTranslation     = "translation"
 	classParent          = "parent"
 	classChild           = "child"
+	testSchemaVersion    = "1.0.0"
 )
 
 func newTestServer(t *testing.T) *httptest.Server {
@@ -48,9 +49,9 @@ func newTestServer(t *testing.T) *httptest.Server {
 	}
 
 	versions := sdkschema.VersionsResponse{
-		Default: sdkschema.VersionInfo{SchemaVersion: "1.0.0"},
+		Default: sdkschema.VersionInfo{SchemaVersion: testSchemaVersion},
 		Versions: []sdkschema.VersionInfo{
-			{SchemaVersion: "1.0.0"},
+			{SchemaVersion: testSchemaVersion},
 		},
 	}
 
@@ -306,5 +307,60 @@ func TestCollectEntries(t *testing.T) {
 	}
 	if out["root"].ID != 1 || out["leaf"].ID != 2 {
 		t.Errorf("entries = %+v", out)
+	}
+}
+
+func TestBuildTree(t *testing.T) {
+	tax := sdkschema.Taxonomy{
+		"cat_b": {ID: 2, Name: "cat_b", Caption: "Cat B", Category: true},
+		"cat_a": {
+			ID: 1, Name: "cat_a", Caption: "Cat A", Category: true,
+			Classes: map[string]sdkschema.TaxonomyItem{
+				"y": {ID: 12, Name: "cat_a/y", Caption: "Y"},
+				"x": {ID: 11, Name: "cat_a/x", Caption: "X"},
+			},
+		},
+	}
+
+	tree := buildTree(tax)
+	if len(tree) != 2 || tree[0].ID != 1 || tree[1].ID != 2 {
+		t.Fatalf("top level order = %+v, want IDs 1,2", tree)
+	}
+	if !tree[0].Category || tree[0].Caption != "Cat A" {
+		t.Errorf("category/caption not copied: %+v", tree[0])
+	}
+	kids := tree[0].Children
+	if len(kids) != 2 || kids[0].ID != 11 || kids[1].ID != 12 {
+		t.Fatalf("children order = %+v, want IDs 11,12", kids)
+	}
+	if kids[0].Name != "cat_a/x" || kids[0].Category {
+		t.Errorf("child = %+v, want verbatim name and Category=false", kids[0])
+	}
+	if len(tree[1].Children) != 0 {
+		t.Errorf("leaf category has children: %+v", tree[1].Children)
+	}
+}
+
+func TestFetchTreeAndSchemaVersions(t *testing.T) {
+	srv := newTestServer(t)
+	c, err := NewClient(Config{ServerAddress: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tree, err := c.FetchTree(context.Background(), ClassTypeSkill, testSchemaVersion)
+	if err != nil {
+		t.Fatalf("FetchTree: %v", err)
+	}
+	if len(tree) != 2 || tree[0].Name != classNaturalLanguage || len(tree[0].Children) != 1 {
+		t.Errorf("tree = %+v", tree)
+	}
+
+	versions, def, err := c.SchemaVersions(context.Background())
+	if err != nil {
+		t.Fatalf("SchemaVersions: %v", err)
+	}
+	if len(versions) != 1 || versions[0] != testSchemaVersion || def != testSchemaVersion {
+		t.Errorf("versions=%v default=%q", versions, def)
 	}
 }
