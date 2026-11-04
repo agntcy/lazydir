@@ -62,8 +62,6 @@ type netState struct {
 	// notice replaces the rows when there is nothing to list.
 	notice string
 	cursor int
-	// local is the set of result CIDs this node already holds.
-	local map[string]bool
 	// kept are synced rows that stay listed after they drop out of results.
 	kept   map[string]dirclient.NetworkResult
 	status map[string]netSyncEntry
@@ -160,7 +158,6 @@ func (app *Gui) startNetworkSearch() {
 		ns.cancel = nil
 	}
 	ns.results = nil
-	ns.local = nil
 	ns.loading = false
 	ns.notice = ""
 	qs := app.networkQueries()
@@ -205,7 +202,6 @@ func (app *Gui) applyNetworkResults(gen uint64, qs []dirclient.NetworkQuery, res
 	ns.cancel = nil
 	ns.notice = ""
 	ns.results = nil
-	ns.local = nil
 	switch {
 	case dirclient.IsPermissionDenied(err):
 		ns.notice = noticeSearchNotAllowed
@@ -215,7 +211,6 @@ func (app *Gui) applyNetworkResults(gen uint64, qs []dirclient.NetworkQuery, res
 		}
 	default:
 		ns.results = res
-		ns.local = local
 		for cid := range local {
 			if _, ok := ns.status[cid]; ok {
 				continue
@@ -890,7 +885,6 @@ func (app *Gui) resetNetworkForServerSwitch() {
 	ns.selection = nil
 	ns.status = nil
 	ns.kept = nil
-	ns.local = nil
 	ns.notice = ""
 	ns.loading = false
 	ns.cursor = 0

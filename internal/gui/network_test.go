@@ -455,7 +455,6 @@ func TestResetNetworkForServerSwitch(t *testing.T) {
 	ns.selection = map[string]dirclient.NetworkResult{"c1": r}
 	ns.status = map[string]netSyncEntry{"c1": {status: netSyncing}}
 	ns.kept = map[string]dirclient.NetworkResult{"c1": r}
-	ns.local = map[string]bool{"c1": true}
 	ns.notice = noticeNoPeers
 	ns.gen, ns.previewGen = 3, 5
 
@@ -467,9 +466,9 @@ func TestResetNetworkForServerSwitch(t *testing.T) {
 	if ns.cancel != nil || ns.syncCancel != nil {
 		t.Error("cancel funcs kept")
 	}
-	if len(ns.peers)+len(ns.results)+len(ns.selection)+len(ns.status)+len(ns.kept)+len(ns.local) != 0 || ns.notice != "" {
-		t.Errorf("state kept: peers %v results %v selection %v status %v kept %v local %v notice %q",
-			ns.peers, ns.results, ns.selection, ns.status, ns.kept, ns.local, ns.notice)
+	if len(ns.peers)+len(ns.results)+len(ns.selection)+len(ns.status)+len(ns.kept) != 0 || ns.notice != "" {
+		t.Errorf("state kept: peers %v results %v selection %v status %v kept %v notice %q",
+			ns.peers, ns.results, ns.selection, ns.status, ns.kept, ns.notice)
 	}
 	if ns.gen != 4 || ns.previewGen != 6 {
 		t.Errorf("gen %d previewGen %d, want 4 6", ns.gen, ns.previewGen)
