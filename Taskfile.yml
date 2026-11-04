@@ -137,6 +137,69 @@ tasks:
         "{{ ._DIRCTL }}" daemon status >/dev/null 2>&1 || { echo "ERROR: daemon failed to start" >&2; exit 1; }
         cd tests/e2e && go test -v -count=1 -timeout 120s ./...
 
+  test:e2e:network:
+    desc: Run network e2e tests (starts the default daemon and a peered second daemon)
+    deps:
+      - deps:dirctl
+    vars:
+      _DIRCTL: "{{ .ROOT_DIR }}/{{ .DIRCTL_BIN }}"
+      PEER_API: localhost:8898
+    env:
+      DIRCTL_BIN: "{{ ._DIRCTL }}"
+      DIR_SERVER: localhost:8888
+      DIR_PEER_SERVER: "{{ .PEER_API }}"
+    cmds:
+      - |
+        set -eu
+        dirctl="{{ ._DIRCTL }}"
+        tmp="$(mktemp -d)"
+        peer_dir="$tmp/peer"
+        cleanup() {
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            for log in "$tmp"/*.log; do
+              [ -f "$log" ] && { echo "--- $log" >&2; tail -n 20 "$log" >&2; }
+            done
+          fi
+          "$dirctl" daemon stop --data-dir "$peer_dir" >/dev/null 2>&1 || true
+          "$dirctl" daemon stop >/dev/null 2>&1 || true
+          rm -rf "$tmp"
+        }
+        trap cleanup EXIT
+        # daemon status exits 0 either way; only its message tells.
+        wait_running() {
+          for i in $(seq 1 30); do
+            "$dirctl" daemon status "$@" 2>&1 | grep -q 'is running' && return 0
+            sleep 1
+          done
+          echo "ERROR: daemon $* failed to start" >&2
+          return 1
+        }
+        "$dirctl" daemon stop >/dev/null 2>&1 || true
+        sleep 1
+        # Short reconciler intervals so a sync completes and is indexed quickly.
+        env DIRECTORY_DAEMON_RECONCILER_REGSYNC_INTERVAL=2s \
+          DIRECTORY_DAEMON_RECONCILER_INDEXER_INTERVAL=2s \
+          "$dirctl" daemon start >"$tmp/main.log" 2>&1 &
+        wait_running
+        main_id="$(grep -o 'peerID=12D3[[:alnum:]]*' "$tmp/main.log" | head -n 1 | cut -d= -f2)"
+        [ -n "$main_id" ] || { echo "ERROR: main daemon peer ID not found in log" >&2; exit 1; }
+        # Without --config the daemon uses built-in defaults, so the peer is
+        # configured through env overrides on non-default ports.
+        mkdir -p "$peer_dir"
+        env DIRECTORY_DAEMON_SERVER_LISTEN_ADDRESS="{{ .PEER_API }}" \
+          DIRECTORY_DAEMON_SERVER_STORE_OCI_REGISTRY_ADDRESS=localhost:5565 \
+          DIRECTORY_DAEMON_RECONCILER_LOCAL_REGISTRY_REGISTRY_ADDRESS=localhost:5565 \
+          DIRECTORY_DAEMON_SERVER_ROUTING_LISTEN_ADDRESS=/ip4/127.0.0.1/tcp/9009 \
+          DIRECTORY_DAEMON_SERVER_ROUTING_BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/8999/p2p/$main_id" \
+          DIRECTORY_DAEMON_SERVER_ROUTING_DIRECTORY_API_ADDRESS="{{ .PEER_API }}" \
+          DIRECTORY_DAEMON_SERVER_HTTP_GATEWAY_LISTEN_ADDRESS=:8899 \
+          DIRECTORY_DAEMON_SERVER_HTTP_GATEWAY_PUBLIC_URL=http://localhost:8899 \
+          DIRECTORY_DAEMON_SERVER_PUBLICATION_SCHEDULER_INTERVAL=2s \
+          "$dirctl" daemon start --data-dir "$peer_dir" >"$tmp/peer.log" 2>&1 &
+        wait_running --data-dir "$peer_dir"
+        cd tests/e2e && go test -v -count=1 -timeout 300s -run TestNetwork ./...
+
   check:
     desc: Run all checks (fmt, vet, lint, unit+e2e tests) then build
     cmds:
