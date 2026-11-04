@@ -277,9 +277,15 @@ func TestAdjustMinScore_ClampsToQueries(t *testing.T) {
 	}
 }
 
+// Fixtures for the network preview tests.
+const (
+	testCID           = "baf-cid"
+	testPreviewBefore = "before"
+)
+
 func TestNetworkInfoText(t *testing.T) {
 	r := dirclient.NetworkResult{
-		CID:     "baf-cid",
+		CID:     testCID,
 		PeerID:  "12D3-peer",
 		DirAddr: "h:8888",
 		Matched: []dirclient.NetworkQuery{{Category: dirclient.FilterSkill, Value: "a/b"}},
@@ -300,13 +306,13 @@ func TestNetworkInfoText(t *testing.T) {
 func TestNetworkPreview_DropsStaleGen(t *testing.T) {
 	app := newNetSearchApp()
 	app.state.net.previewGen = 2
-	app.state.previewContent = "before"
-	r := dirclient.NetworkResult{CID: "baf-cid", DirAddr: "h:8888"}
+	app.state.previewContent = testPreviewBefore
+	r := dirclient.NetworkResult{CID: testCID, DirAddr: "h:8888"}
 
 	if app.applyPeerPreview(1, r, `{"a":1}`, nil) {
 		t.Error("stale gen rendered")
 	}
-	if app.state.previewContent != "before" {
+	if app.state.previewContent != testPreviewBefore {
 		t.Errorf("previewContent = %q, want unchanged", app.state.previewContent)
 	}
 
@@ -342,5 +348,31 @@ func TestAutoPreviewRecord_NetworkIgnoresLocalRows(t *testing.T) {
 
 	if strings.Contains(app.state.previewContent, "local") || !strings.Contains(app.state.previewContent, noticeNoDirAddr) {
 		t.Errorf("previewContent = %q, want the network row's no-address state", app.state.previewContent)
+	}
+}
+
+func TestNetworkPreview_SyncedDropsStale(t *testing.T) {
+	app := newNetSearchApp()
+	app.state.net.previewGen = 2
+	app.state.previewContent = testPreviewBefore
+	r := dirclient.NetworkResult{CID: testCID}
+
+	if app.applyNodePreview(1, r, `{"a":1}`, nil) {
+		t.Error("stale gen rendered")
+	}
+	app.state.browse = browseLocal
+	if app.applyNodePreview(2, r, `{"a":1}`, nil) {
+		t.Error("rendered after leaving network mode")
+	}
+	if app.state.previewContent != testPreviewBefore {
+		t.Errorf("previewContent = %q, want unchanged", app.state.previewContent)
+	}
+
+	app.state.browse = browseNetwork
+	if !app.applyNodePreview(2, r, `{"a":1}`, nil) {
+		t.Fatal("current gen not rendered")
+	}
+	if app.state.previewSubtitle != testCID || app.state.previewTree == nil {
+		t.Errorf("subtitle %q, tree %v; want node JSON", app.state.previewSubtitle, app.state.previewTree)
 	}
 }

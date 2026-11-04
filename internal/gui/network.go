@@ -420,7 +420,17 @@ func (app *Gui) previewNetworkResult(g *gocui.Gui, r dirclient.NetworkResult) {
 	ns.previewGen++
 	gen := ns.previewGen
 	if ns.status[r.CID].status == netSynced {
-		go app.pullRecord(shortID(r.CID), r.CID)
+		client := app.state.client
+		if client == nil {
+			return
+		}
+		go func() {
+			jsonStr, err := client.PullJSON(context.Background(), r.CID)
+			app.g.Update(func(*gocui.Gui) error {
+				app.applyNodePreview(gen, r, jsonStr, err)
+				return nil
+			})
+		}()
 		return
 	}
 	if r.DirAddr == "" {
@@ -457,6 +467,21 @@ func (app *Gui) applyPeerPreview(gen uint64, r dirclient.NetworkResult, jsonStr 
 		return true
 	}
 	app.renderPreviewJSON(app.g, shortID(r.CID)+" · from peer", jsonStr)
+	return true
+}
+
+// applyNodePreview lands a pull of synced row r from this node, reporting
+// whether it rendered. Results of a superseded preview, or landing after
+// leaving network mode, are dropped. Must be called on the GUI goroutine.
+func (app *Gui) applyNodePreview(gen uint64, r dirclient.NetworkResult, jsonStr string, err error) bool {
+	if gen != app.state.net.previewGen || app.state.browse != browseNetwork {
+		return false
+	}
+	if err != nil {
+		app.renderPreviewError(app.g, err.Error())
+		return true
+	}
+	app.renderPreviewJSON(app.g, shortID(r.CID), jsonStr)
 	return true
 }
 
