@@ -32,6 +32,10 @@ func (app *Gui) renderFiltersView(g *gocui.Gui) {
 		return
 	}
 	v.Clear()
+	if app.state.browse == browseNetwork {
+		app.renderNetFiltersList(v)
+		return
+	}
 	app.renderFiltersList(g, v)
 }
 
