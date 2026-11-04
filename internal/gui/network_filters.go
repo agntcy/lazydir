@@ -27,6 +27,9 @@ type netFilterState struct {
 	// selected means the server's default version.
 	versions map[string]bool
 	query    string
+	// minScore is the routing search's minimum match score, clamped to the
+	// number of queries when used.
+	minScore uint32
 }
 
 func newNetFilterState() netFilterState {
@@ -34,6 +37,7 @@ func newNetFilterState() netFilterState {
 		expanded: map[string]bool{},
 		applied:  map[filterCategory]map[string]bool{},
 		versions: map[string]bool{},
+		minScore: 1,
 	}
 }
 
@@ -331,15 +335,6 @@ func (app *Gui) networkQueries() []dirclient.NetworkQuery {
 		}
 	}
 	return qs
-}
-
-// startNetworkSearch re-renders the Records panel; the routing search is wired
-// in separately.
-func (app *Gui) startNetworkSearch() {
-	if app.g == nil {
-		return
-	}
-	app.renderRecordsView(app.g)
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────

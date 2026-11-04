@@ -45,6 +45,13 @@ func (app *Gui) recordMouseClick(g *gocui.Gui, v *gocui.View) error {
 	_, cy := v.Cursor()
 	_, oy := v.Origin()
 	idx := oy + cy
+	if app.state.browse == browseNetwork {
+		if idx >= 0 && idx < len(app.netRecordRows()) {
+			app.state.net.cursor = idx
+			app.renderRecordsView(g)
+		}
+		return nil
+	}
 	rows := app.state.recordDisplayRows
 	if idx >= 0 && idx < len(rows) {
 		app.state.recordCursor = idx
@@ -55,6 +62,10 @@ func (app *Gui) recordMouseClick(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) recordCursorUp(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netRecordCursorUp(g)
+		return nil
+	}
 	if app.state.recordCursor > 0 {
 		app.state.recordCursor--
 		app.renderRecordsView(g)
@@ -64,6 +75,10 @@ func (app *Gui) recordCursorUp(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) recordCursorDown(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netRecordCursorDown(g)
+		return nil
+	}
 	rows := app.state.recordDisplayRows
 	if app.state.recordCursor < len(rows)-1 {
 		app.state.recordCursor++

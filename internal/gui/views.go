@@ -183,6 +183,10 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		return
 	}
 	v.Clear()
+	if app.state.browse == browseNetwork {
+		app.renderNetRecordsView(v)
+		return
+	}
 
 	v.Title = app.recordsTitle()
 
@@ -198,8 +202,8 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	}
 
 	clipBg := "\033[41m"
-	yellow := "\033[33m"
-	red := "\033[31m"
+	yellow := ansiYellow
+	red := ansiRed
 	green := ansiGreen
 
 	lineNum := 0
@@ -270,7 +274,12 @@ const rowGutterWidth = 2
 // as the clipboard's carries on. Colored and selected rows are padded to the
 // panel width so their color spans the row.
 func recordRowLine(lineColor string, selected bool, nameW, viewW int, name, version string) string {
-	text := fmt.Sprintf("%-*s  %s", nameW, name, version)
+	return styledRow(lineColor, selected, viewW, fmt.Sprintf("%-*s  %s", nameW, name, version))
+}
+
+// styledRow lays text out behind the selection gutter, styled as described for
+// recordRowLine.
+func styledRow(lineColor string, selected bool, viewW int, text string) string {
 	if lineColor == "" && !selected {
 		return strings.Repeat(" ", rowGutterWidth) + text
 	}
