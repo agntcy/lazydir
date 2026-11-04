@@ -882,10 +882,7 @@ func (app *Gui) resetNetworkForServerSwitch() {
 		ns.syncCancel()
 		ns.syncCancel = nil
 	}
-	for _, p := range ns.peers {
-		p.Close()
-	}
-	ns.peers = nil
+	app.closePeers()
 	ns.results = nil
 	ns.selection = nil
 	ns.status = nil
@@ -896,4 +893,16 @@ func (app *Gui) resetNetworkForServerSwitch() {
 	ns.localStale = false
 	ns.gen++
 	ns.previewGen++
+}
+
+// closePeers closes every cached peer connection; the next peer preview
+// reconnects. Called wherever this node's client is closed: server switch,
+// reconnect and quit. Must be called on the GUI goroutine, or after the main
+// loop has stopped.
+func (app *Gui) closePeers() {
+	ns := &app.state.net
+	for _, p := range ns.peers {
+		p.Close()
+	}
+	ns.peers = nil
 }

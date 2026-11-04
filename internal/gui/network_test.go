@@ -616,3 +616,19 @@ func TestApplyNetworkResults_PresenceUpgradesFailed(t *testing.T) {
 		t.Errorf("status[c1] = %+v, want netSynced without error", got)
 	}
 }
+
+func TestClosePeers(t *testing.T) {
+	app := newNetSearchApp()
+	peer, err := dirclient.ConnectPeer(dirclient.Config{AuthMode: authModeInsecure}, "127.0.0.1:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.state.net.peers = map[string]*dirclient.PeerClient{"127.0.0.1:1": peer}
+
+	app.closePeers()
+	app.closePeers()
+
+	if len(app.state.net.peers) != 0 {
+		t.Errorf("peers = %v, want none", app.state.net.peers)
+	}
+}
