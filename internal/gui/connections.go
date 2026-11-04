@@ -406,6 +406,16 @@ func (app *Gui) connectToOASF(g *gocui.Gui, addr string) {
 	app.state.oasfError = ""
 	app.state.classEntries = nil
 	app.state.classEntriesVers = nil
+	app.state.netVersions = nil
+	app.state.netDefaultVersion = ""
+	app.state.netVersionsLoading = false
+	app.state.netTaxonomy = nil
+	app.state.netTaxonomyVers = nil
+	app.state.netTaxonomyFailed = false
+	if app.state.browse == browseNetwork {
+		app.startNetworkTaxonomyFetch()
+		app.renderFiltersView(g)
+	}
 	app.renderDirectory(g)
 	go app.pingOASF(client)
 }

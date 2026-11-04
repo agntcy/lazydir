@@ -20,6 +20,7 @@ const (
 // netState is the network-mode state, kept separate from the This-node state
 // so neither mode's code path writes the other's fields.
 type netState struct {
+	filters   netFilterState
 	selection map[string]dirclient.NetworkResult // CID → result, multi-select
 }
 
@@ -47,6 +48,9 @@ func (app *Gui) switchBrowseMode() {
 // toggleBrowseMode is the global `n` handler.
 func (app *Gui) toggleBrowseMode(g *gocui.Gui, v *gocui.View) error {
 	app.switchBrowseMode()
+	if app.state.browse == browseNetwork {
+		app.startNetworkTaxonomyFetch()
+	}
 	app.renderFiltersView(g)
 	app.renderRecordsView(g)
 	app.renderDirectory(g)

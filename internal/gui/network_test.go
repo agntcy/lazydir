@@ -28,6 +28,21 @@ func TestToggleBrowseMode_KeepsLocalFilters(t *testing.T) {
 	}
 }
 
+func TestToggleBrowseMode_KeepsNetworkFilters(t *testing.T) {
+	app := &Gui{}
+	app.state.net.filters = newNetFilterState()
+	app.state.net.filters.applied[filterSkills] = map[string]bool{"x": true}
+	app.state.net.filters.versions[ver070] = true
+
+	app.switchBrowseMode()
+	app.switchBrowseMode()
+
+	if !app.state.net.filters.applied[filterSkills]["x"] || !app.state.net.filters.versions[ver070] {
+		t.Errorf("network filters changed: applied %v, versions %v",
+			app.state.net.filters.applied, app.state.net.filters.versions)
+	}
+}
+
 func TestToggleBrowseMode_ClearsSelections(t *testing.T) {
 	app := &Gui{}
 	app.state.selection = map[string]*dirclient.RecordSummary{"local-1": {CID: "local-1"}}

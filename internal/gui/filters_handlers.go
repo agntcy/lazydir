@@ -23,6 +23,15 @@ func (app *Gui) filterMouseClick(g *gocui.Gui, v *gocui.View) error {
 	_, oy := v.Origin()
 	idx := oy + cy
 
+	if app.state.browse == browseNetwork {
+		if idx < 0 || idx >= len(app.netFilterRows()) {
+			return nil
+		}
+		app.state.net.filters.cursor = idx
+		app.netFilterActivate(g)
+		return nil
+	}
+
 	rows := app.filteredListRows()
 	if idx < 0 || idx >= len(rows) {
 		return nil
@@ -42,6 +51,10 @@ func (app *Gui) filterMouseClick(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) filterCursorUp(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netFilterCursorUp(g)
+		return nil
+	}
 	if app.state.filters.listCursor > 0 {
 		app.state.filters.listCursor--
 	}
@@ -50,6 +63,10 @@ func (app *Gui) filterCursorUp(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) filterCursorDown(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netFilterCursorDown(g)
+		return nil
+	}
 	rows := app.filteredListRows()
 	if app.state.filters.listCursor < len(rows)-1 {
 		app.state.filters.listCursor++
@@ -61,6 +78,10 @@ func (app *Gui) filterCursorDown(g *gocui.Gui, v *gocui.View) error {
 // filterEnter toggles expand/collapse on category headers and toggles
 // filter selection on option rows.
 func (app *Gui) filterEnter(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netFilterActivate(g)
+		return nil
+	}
 	rows := app.filteredListRows()
 	if app.state.filters.listCursor >= len(rows) {
 		return nil
@@ -81,6 +102,10 @@ func (app *Gui) filterEnter(g *gocui.Gui, v *gocui.View) error {
 // filterToggleOption toggles filter selection on the option under the cursor.
 // On category headers it does nothing (use enter to expand/collapse).
 func (app *Gui) filterToggleOption(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netFilterToggleOption(g)
+		return nil
+	}
 	rows := app.filteredListRows()
 	if app.state.filters.listCursor >= len(rows) {
 		return nil
@@ -97,6 +122,10 @@ func (app *Gui) filterToggleOption(g *gocui.Gui, v *gocui.View) error {
 
 // filterClearAll removes all applied filter selections at once.
 func (app *Gui) filterClearAll(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netFilterClearAll(g)
+		return nil
+	}
 	if len(app.state.filters.applied) == 0 {
 		return nil
 	}
@@ -109,6 +138,10 @@ func (app *Gui) filterClearAll(g *gocui.Gui, v *gocui.View) error {
 // filterExpand expands the category header under the cursor. On an option
 // row it is a no-op (the option is already "inside" an expanded category).
 func (app *Gui) filterExpand(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netFilterExpand(g)
+		return nil
+	}
 	rows := app.filteredListRows()
 	if app.state.filters.listCursor >= len(rows) {
 		return nil
@@ -128,6 +161,10 @@ func (app *Gui) filterExpand(g *gocui.Gui, v *gocui.View) error {
 // filterCollapse collapses the current category. When the cursor is on an
 // option row it collapses the parent category and moves the cursor to it.
 func (app *Gui) filterCollapse(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netFilterCollapse(g)
+		return nil
+	}
 	rows := app.filteredListRows()
 	if app.state.filters.listCursor >= len(rows) {
 		return nil
@@ -154,6 +191,10 @@ func (app *Gui) filterCollapse(g *gocui.Gui, v *gocui.View) error {
 // filterEsc clears the search query when active, or collapses the current
 // category if the cursor is on a child option row.
 func (app *Gui) filterEsc(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netFilterEsc(g)
+		return nil
+	}
 	if app.state.filters.filterQuery != "" {
 		app.state.filters.filterQuery = ""
 		app.state.filters.listCursor = 0
@@ -166,6 +207,10 @@ func (app *Gui) filterEsc(g *gocui.Gui, v *gocui.View) error {
 // filterOpenSearch opens the input prompt to search filter options across all
 // searchable categories simultaneously.
 func (app *Gui) filterOpenSearch(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netFilterOpenSearch()
+		return nil
+	}
 	prevQuery := app.state.filters.filterQuery
 	app.openInput("Search filters (/)", app.state.filters.filterQuery,
 		func(value string) {
@@ -196,6 +241,10 @@ func (app *Gui) filterOpenSearch(g *gocui.Gui, v *gocui.View) error {
 // filterToggleInfo opens/closes the info popup for the currently highlighted
 // skill/domain/module option in the filter tree.
 func (app *Gui) filterToggleInfo(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		// Class descriptions are only offered for This-node filters.
+		return nil
+	}
 	rows := app.filteredListRows()
 	fs := &app.state.filters
 	if fs.listCursor >= len(rows) {
