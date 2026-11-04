@@ -591,3 +591,17 @@ func TestNetSyncTargets_SelectionInRowOrder(t *testing.T) {
 		t.Errorf("selection: %v, want a c", got)
 	}
 }
+
+func TestRecordsPanelTitle_ModeAware(t *testing.T) {
+	app := newNetSearchApp()
+	app.state.page.records = []*dirclient.RecordSummary{{CID: "local"}}
+	app.state.net.results = []dirclient.NetworkResult{{CID: "a"}, {CID: "b"}}
+
+	if got, want := app.recordsPanelTitle(), app.networkTitle(); got != want {
+		t.Errorf("network title = %q, want %q", got, want)
+	}
+	app.state.browse = browseLocal
+	if got, want := app.recordsPanelTitle(), app.recordsTitle(); got != want {
+		t.Errorf("local title = %q, want %q", got, want)
+	}
+}

@@ -410,14 +410,15 @@ func (app *Gui) uiRefreshLoop(stop chan struct{}) {
 			return
 		case <-ticker.C:
 			app.g.Update(func(g *gocui.Gui) error {
-				if !app.state.loadedOnce || app.state.dataFetchedAt.IsZero() {
+				network := app.state.browse == browseNetwork
+				if !network && (!app.state.loadedOnce || app.state.dataFetchedAt.IsZero()) {
 					return nil
 				}
 				v, err := g.View(viewRecords)
 				if err != nil {
 					return nil
 				}
-				if title := app.recordsTitle(); title != v.Title {
+				if title := app.recordsPanelTitle(); title != v.Title {
 					v.Title = title
 				}
 				return nil

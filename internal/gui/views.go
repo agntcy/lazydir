@@ -175,6 +175,15 @@ func (app *Gui) recordsTitle() string {
 	return title
 }
 
+// recordsPanelTitle is the [3] Records panel title for the current browse
+// mode.
+func (app *Gui) recordsPanelTitle() string {
+	if app.state.browse == browseNetwork {
+		return app.networkTitle()
+	}
+	return app.recordsTitle()
+}
+
 // renderRecordsView redraws the [3] Records panel and updates its title to
 // reflect the current record count, stream state, and name filter.
 func (app *Gui) renderRecordsView(g *gocui.Gui) {
@@ -188,7 +197,7 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		return
 	}
 
-	v.Title = app.recordsTitle()
+	v.Title = app.recordsPanelTitle()
 
 	viewW, _ := v.Size()
 	nameW := viewW - 14 - (rowGutterWidth - 1)
