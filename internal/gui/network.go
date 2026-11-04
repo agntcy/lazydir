@@ -68,7 +68,9 @@ type netState struct {
 	// syncCancel stops every running batch sync on a server switch.
 	// Independent of the search cancel.
 	syncCancel context.CancelFunc
-	// localStale is set when a sync lands, so This node reloads on return.
+	// localStale is set when synced records may be missing from This node's
+	// list, so it reloads on return. Cleared by a reload that ran after they
+	// were indexed.
 	localStale bool
 
 	// previewGen identifies the current peer preview; peers caches peer
@@ -125,12 +127,8 @@ func (app *Gui) toggleBrowseMode(g *gocui.Gui, v *gocui.View) error {
 	if app.state.browse == browseNetwork {
 		app.startNetworkTaxonomyFetch()
 		app.startNetworkSearch()
-	} else if app.state.net.localStale && app.state.client != nil {
-		// Records synced from the network belong in this node's list now.
+	} else if app.state.net.localStale && app.reloadLocalRecords(true) {
 		app.state.net.localStale = false
-		app.invalidatePublishEnrichment()
-		app.startQuery(true)
-		app.startFilterValuesFetch(true)
 	}
 	app.renderFiltersView(g)
 	app.renderRecordsView(g)
@@ -138,6 +136,19 @@ func (app *Gui) toggleBrowseMode(g *gocui.Gui, v *gocui.View) error {
 	app.renderDirectory(g)
 	app.renderStatus(g)
 	return nil
+}
+
+// reloadLocalRecords refetches This node's records and filter values, so
+// records synced from the network show up, and reports whether it ran. Must be
+// called on the GUI goroutine.
+func (app *Gui) reloadLocalRecords(resetCursor bool) bool {
+	if app.state.client == nil {
+		return false
+	}
+	app.invalidatePublishEnrichment()
+	app.startQuery(resetCursor)
+	app.startFilterValuesFetch(true)
+	return true
 }
 
 // clampMinScore clamps a minimum match score to 1..max(n,1), n being the
@@ -583,6 +594,14 @@ func (app *Gui) minScoreDown(*gocui.Gui, *gocui.View) error {
 // netSyncPollInterval is how often a network batch sync's status is checked.
 const netSyncPollInterval = time.Second
 
+// A completed network batch sync waits for this node to index its records,
+// checking every netIndexPollInterval for up to netIndexTimeout, like the
+// paste flow's reconcile.
+const (
+	netIndexPollInterval = 3 * time.Second
+	netIndexTimeout      = 60 * time.Second
+)
+
 // peerBatch is the network rows synced from one peer in a single CreateSync.
 type peerBatch struct {
 	addr, url string
@@ -747,7 +766,8 @@ func (app *Gui) startNetworkSync(batches []peerBatch, rows []dirclient.NetworkRe
 }
 
 // runNetworkSync syncs one peer batch into this node through client, which
-// the caller captured on the GUI goroutine, and lands the outcome.
+// the caller captured on the GUI goroutine, waits for the synced records to be
+// indexed, and lands the outcome. The rows stay syncing until then.
 func (app *Gui) runNetworkSync(ctx context.Context, client *dirclient.Client, b peerBatch, rows []dirclient.NetworkResult) {
 	errMsg := ""
 	syncID, err := client.CreateSync(ctx, b.url, b.cids)
@@ -761,17 +781,62 @@ func (app *Gui) runNetworkSync(ctx context.Context, client *dirclient.Client, b 
 	if err != nil {
 		errMsg = netSyncErr(b.addr, syncID, err.Error())
 	}
+	indexed := false
+	if errMsg == "" {
+		indexed = waitForIndexed(ctx, client, b.cids, netIndexPollInterval, netIndexTimeout)
+	}
 	app.g.Update(func(*gocui.Gui) error {
-		app.applyNetworkSync(ctx, rows, errMsg)
+		app.applyNetworkSync(ctx, rows, errMsg, indexed)
 		return nil
 	})
 }
 
+// waitForIndexed polls this node every interval until all cids are indexed,
+// reporting whether they were before timeout or ctx ended. Lookup errors are
+// retried until then.
+func waitForIndexed(ctx context.Context, client *dirclient.Client, cids []string, every, timeout time.Duration) bool {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+
+	for {
+		// A CID-only search asks whether the indexer has the records without
+		// pulling them.
+		if present, err := client.MatchingCIDs(ctx, nil); err == nil && containsAll(present, cids) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-deadline.C:
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
+// containsAll reports whether have holds every one of want.
+func containsAll(have, want []string) bool {
+	set := make(map[string]bool, len(have))
+	for _, c := range have {
+		set[c] = true
+	}
+	for _, c := range want {
+		if !set[c] {
+			return false
+		}
+	}
+	return true
+}
+
 // applyNetworkSync lands a batch sync of rows: synced rows stay listed even
-// when they drop out of the results; failed ones keep errMsg for `i`. Results
-// of syncs cancelled by a server switch are dropped. Must be called on the GUI
-// goroutine.
-func (app *Gui) applyNetworkSync(ctx context.Context, rows []dirclient.NetworkResult, errMsg string) {
+// when they drop out of the results; failed ones keep errMsg for `i`. indexed
+// tells whether this node indexed the synced records before the wait timed
+// out. Once indexed they are reloaded into This node's list when it is
+// showing; otherwise it reloads on the next visit. Results of syncs cancelled
+// by a server switch are dropped. Must be called on the GUI goroutine.
+func (app *Gui) applyNetworkSync(ctx context.Context, rows []dirclient.NetworkResult, errMsg string, indexed bool) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -792,6 +857,9 @@ func (app *Gui) applyNetworkSync(ctx context.Context, rows []dirclient.NetworkRe
 	}
 	if errMsg == "" {
 		ns.localStale = true
+		if indexed && app.state.browse == browseLocal && app.reloadLocalRecords(false) {
+			ns.localStale = false
+		}
 	}
 	app.renderNetRecords()
 }
