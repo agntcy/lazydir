@@ -206,7 +206,8 @@ func optionsBarText(focused string, availableWidth int, network bool, st barStat
 	if st.reconciling > 0 {
 		items = append(items, fmt.Sprintf("%d reconciling", st.reconciling))
 	}
-	if st.syncing+st.reconciling > 0 && focused == viewRecords {
+	// X cancels a This-node paste sync; it does nothing in network mode.
+	if st.syncing+st.reconciling > 0 && focused == viewRecords && !network {
 		items = append(items, "cancel sync: X")
 	}
 

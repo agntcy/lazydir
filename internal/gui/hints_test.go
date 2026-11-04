@@ -86,3 +86,13 @@ func TestClearNetSelection(t *testing.T) {
 		t.Fatalf("net selection not cleared: %v", app.state.net.selection)
 	}
 }
+
+func TestOptionsBarText_CancelSyncThisNodeOnly(t *testing.T) {
+	st := barStatus{syncing: 1}
+	if got := optionsBarText(viewRecords, 0, false, st); !strings.Contains(got, "cancel sync: X") {
+		t.Errorf("This node: missing cancel sync hint in %q", got)
+	}
+	if got := optionsBarText(viewRecords, 0, true, st); strings.Contains(got, "cancel sync: X") {
+		t.Errorf("network: unexpected cancel sync hint in %q", got)
+	}
+}
