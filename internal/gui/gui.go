@@ -326,7 +326,9 @@ func New(cfg Config) error {
 	defer close(uiStop)
 	go app.uiRefreshLoop(uiStop)
 
-	if err := g.MainLoop(); !gocui.IsQuit(err) {
+	err = g.MainLoop()
+	app.closePeers()
+	if !gocui.IsQuit(err) {
 		return fmt.Errorf("main loop: %w", err)
 	}
 
@@ -356,6 +358,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		app.stopReconnectLoop()
 		if app.state.client != nil {
 			app.state.client.Close()
+			app.closePeers()
 		}
 		app.state.client = c
 		app.state.serverAddr = cfg.ServerAddress
@@ -643,6 +646,7 @@ func (app *Gui) tryOIDCTokenRefresh(
 			return nil
 		}
 		snap.client.Close()
+		app.closePeers()
 		app.state.client = c
 		app.state.dirLastCfg = &cfg
 		app.state.dirStatus = connOK
