@@ -169,7 +169,7 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewRecords, gocui.KeyEnter, gocui.ModNone, app.recordSelect); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, '/', gocui.ModNone, app.openFilterDialog); err != nil {
+	if err := g.SetKeybinding(viewRecords, '/', gocui.ModNone, app.localOnly(app.openFilterDialog)); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewRecords, gocui.KeyEsc, gocui.ModNone, app.clearFilter); err != nil {
@@ -178,10 +178,10 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewRecords, 'i', gocui.ModNone, app.recordToggleInfo); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'y', gocui.ModNone, app.openCopyMenu); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'y', gocui.ModNone, app.localOnly(app.openCopyMenu)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'd', gocui.ModNone, app.recordDelete); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'd', gocui.ModNone, app.localOnly(app.recordDelete)); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewRecords, gocui.KeySpace, gocui.ModNone, app.recordToggleSelect); err != nil {
@@ -190,19 +190,19 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewRecords, gocui.KeyCtrlA, gocui.ModNone, app.recordSelectAll); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'C', gocui.ModNone, app.clipboardToggle); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'C', gocui.ModNone, app.localOnly(app.clipboardToggle)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'V', gocui.ModNone, app.clipboardPaste); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'V', gocui.ModNone, app.localOnly(app.clipboardPaste)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'P', gocui.ModNone, app.recordPublish); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'P', gocui.ModNone, app.localOnly(app.recordPublish)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'U', gocui.ModNone, app.recordUnpublish); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'U', gocui.ModNone, app.localOnly(app.recordUnpublish)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'X', gocui.ModNone, app.recordCancelSync); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'X', gocui.ModNone, app.localOnly(app.recordCancelSync)); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewRecords, 'S', gocui.ModNone, app.networkSync); err != nil {

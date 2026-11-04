@@ -19,6 +19,8 @@ const (
 	keyEsc       = "esc"
 	keyNavigate  = "↑↓ / j k"
 	keyWheel     = "wheel"
+	keySpace     = "space"
+	keyMinScore  = "+ / -"
 
 	titleFilters = "[2] Filters"
 	titleRecords = "[3] Records"
@@ -65,11 +67,10 @@ var perPanelBindings = map[string]panelBindings{
 			{keyEnter, "expand / cycle filter", true},
 			{"l", hintExpand, false},
 			{"h", hintCollapse, false},
-			{"space", "cycle include/exclude/off", true},
+			{keySpace, "cycle include/exclude/off", true},
 			{"/", "search options", true},
 			{"i", "toggle class info", true},
 			{"x", "clear all filters", true},
-			{"+ / -", "network min match score", false},
 			{keyEsc, "collapse / clear search", true},
 			{keyWheel, hintScroll, false},
 		},
@@ -82,7 +83,7 @@ var perPanelBindings = map[string]panelBindings{
 			{"/", "filter by name", true},
 			{"i", "toggle record info", true},
 			{"y", "yank/copy options", true},
-			{"space", "select record", true},
+			{keySpace, "select record", true},
 			{"ctrl+a", "select all loaded", false},
 			{"C", "clipboard toggle", true},
 			{"V", "paste records", true},
@@ -90,8 +91,6 @@ var perPanelBindings = map[string]panelBindings{
 			{"P", "publish record / selection", true},
 			{"U", "unpublish record / selection", true},
 			{"X", "cancel sync", false},
-			{"S", "network sync record / selection", false},
-			{"+ / -", "network min match score", false},
 			{keyEsc, "clear filter / selection / clipboard", false},
 			{keyWheel, hintScroll, false},
 		},
@@ -127,6 +126,56 @@ var perPanelBindings = map[string]panelBindings{
 	},
 }
 
+// networkPerPanelBindings overrides perPanelBindings for the panels whose keys
+// differ in network mode. Directory, Preview and the popups are shared.
+var networkPerPanelBindings = map[string]panelBindings{
+	viewFilters: networkFiltersBindings,
+	viewRecords: networkRecordsBindings,
+}
+
+var networkFiltersBindings = panelBindings{
+	title: titleFilters,
+	bindings: []binding{
+		{keyNavigate, hintNavigate, true},
+		{keyEnter, "expand / toggle", true},
+		{"l", hintExpand, false},
+		{"h", hintCollapse, false},
+		{keySpace, "toggle", true},
+		{"/", "search options", true},
+		{"x", "clear all filters and versions", true},
+		{keyMinScore, "min match score", true},
+		{keyEsc, "collapse / clear search", true},
+		{keyWheel, hintScroll, false},
+	},
+}
+
+var networkRecordsBindings = panelBindings{
+	title: titleRecords,
+	bindings: []binding{
+		{keyNavigate, hintNavigate, true},
+		{keyEnter, "open preview", true},
+		{"i", "sync failure info", false},
+		{keySpace, "select record", true},
+		{"ctrl+a", "select all", false},
+		{"S", "sync record / selection", true},
+		{keyMinScore, "min match score", true},
+		{keyEsc, "clear selection", false},
+		{keyWheel, hintScroll, false},
+	},
+}
+
+// bindingsFor returns the bindings shown for a panel, using the network-mode
+// table when network is set and the panel has one.
+func bindingsFor(focused string, network bool) (panelBindings, bool) {
+	if network {
+		if pb, ok := networkPerPanelBindings[focused]; ok {
+			return pb, true
+		}
+	}
+	pb, ok := perPanelBindings[focused]
+	return pb, ok
+}
+
 // barStatus is the transient state shown ahead of the hints in the options bar.
 type barStatus struct {
 	selected    int
@@ -139,7 +188,7 @@ type barStatus struct {
 // optionsBarText returns the keybinding hints for the bottom-left options bar,
 // truncated with "…" if they don't fit in availableWidth.
 // Format matches lazygit: "description: key | description: key"
-func optionsBarText(focused string, availableWidth int, st barStatus) string {
+func optionsBarText(focused string, availableWidth int, network bool, st barStatus) string {
 	var items []string
 
 	if st.progress != "" {
@@ -161,7 +210,7 @@ func optionsBarText(focused string, availableWidth int, st barStatus) string {
 		items = append(items, "cancel sync: X")
 	}
 
-	if pb, ok := perPanelBindings[focused]; ok {
+	if pb, ok := bindingsFor(focused, network); ok {
 		for _, b := range pb.bindings {
 			if b.showInBar {
 				items = append(items, fmt.Sprintf("%s: %s", b.description, b.key))
@@ -193,8 +242,8 @@ func optionsBarText(focused string, availableWidth int, st barStatus) string {
 }
 
 // helpPopupLines returns the aligned lines for the ? keybindings popup.
-func helpPopupLines(focused string) []string {
-	pb, ok := perPanelBindings[focused]
+func helpPopupLines(focused string, network bool) []string {
+	pb, ok := bindingsFor(focused, network)
 	if !ok {
 		pb = panelBindings{title: focused}
 	}
