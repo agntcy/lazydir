@@ -146,6 +146,14 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewFilters, 'x', gocui.ModNone, app.filterClearAll); err != nil {
 		return err
 	}
+	for _, view := range []string{viewFilters, viewRecords} {
+		if err := g.SetKeybinding(view, '+', gocui.ModNone, app.minScoreUp); err != nil {
+			return err
+		}
+		if err := g.SetKeybinding(view, '-', gocui.ModNone, app.minScoreDown); err != nil {
+			return err
+		}
+	}
 
 	// ── Records panel ────────────────────────────────────────────────────────
 	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
@@ -453,6 +461,10 @@ func (app *Gui) cycleFocus(g *gocui.Gui, dir int) error {
 // ── Refresh ───────────────────────────────────────────────────────────────────
 
 func (app *Gui) refresh(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.startNetworkSearch()
+		return nil
+	}
 	if app.state.client == nil {
 		return nil
 	}

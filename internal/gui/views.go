@@ -160,6 +160,10 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		return
 	}
 	v.Clear()
+	if app.state.browse == browseNetwork {
+		app.renderNetRecordsView(v)
+		return
+	}
 
 	v.Title = app.recordsTitle()
 
@@ -183,8 +187,8 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	}
 
 	clipBg := "\033[41m"
-	yellow := "\033[33m"
-	red := "\033[31m"
+	yellow := ansiYellow
+	red := ansiRed
 	green := ansiGreen
 
 	for _, row := range rows {
@@ -313,6 +317,12 @@ func recordRowLines(lineColor string, selected, wrap bool, nameW, viewW int, nam
 // recordRowLine formats a Records row that fits on one line.
 func recordRowLine(lineColor string, selected bool, nameW, viewW int, name, version, badges string) string {
 	text := runewidth.FillRight(name, nameW) + "  " + runewidth.FillRight(version, versionColWidth) + "  " + badges
+	return styledRowLine(lineColor, selected, true, viewW, text)
+}
+
+// styledRow lays out a one-line row behind the selection gutter; see
+// styledRowLine.
+func styledRow(lineColor string, selected bool, viewW int, text string) string {
 	return styledRowLine(lineColor, selected, true, viewW, text)
 }
 

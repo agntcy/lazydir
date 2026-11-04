@@ -40,6 +40,8 @@ const (
 	ansiReset     = "\033[0m"  // resets all text attributes
 	ansiBold      = "\033[1m"  // bold text
 	ansiGreen     = "\033[32m" // green foreground
+	ansiYellow    = "\033[33m" // yellow foreground
+	ansiRed       = "\033[31m" // red foreground
 	ansiDefaultFg = "\033[39m" // resets only the foreground color
 )
 
