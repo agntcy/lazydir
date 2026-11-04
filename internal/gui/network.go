@@ -348,12 +348,14 @@ func (app *Gui) networkTitle() string {
 	return title
 }
 
-// renderNetRecords redraws the Records panel when the GUI is running.
+// renderNetRecords redraws the Records panel and the options bar, whose
+// selected count follows the network selection, when the GUI is running.
 func (app *Gui) renderNetRecords() {
 	if app.g == nil {
 		return
 	}
 	app.renderRecordsView(app.g)
+	app.renderStatus(app.g)
 }
 
 // writeNetRecords writes the network Records rows, or the notice dimmed as the
