@@ -134,6 +134,7 @@ func (app *Gui) toggleBrowseMode(g *gocui.Gui, v *gocui.View) error {
 	}
 	app.renderFiltersView(g)
 	app.renderRecordsView(g)
+	app.previewForModeSwitch(g)
 	app.renderDirectory(g)
 	app.renderStatus(g)
 	return nil
