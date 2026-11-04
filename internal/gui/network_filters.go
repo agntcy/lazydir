@@ -466,22 +466,26 @@ func (app *Gui) netFilterCursorDown(g *gocui.Gui) {
 	app.renderFiltersView(g)
 }
 
-// netFilterActivate is enter and mouse click: a header toggles expansion, a
-// value toggles selection.
+// netFilterActivate is enter and mouse click on the row under the cursor.
 func (app *Gui) netFilterActivate(g *gocui.Gui) {
 	_, r, ok := app.netFilterCurrent()
 	if !ok {
 		return
 	}
-	if r.isHeader() {
-		if app.netExpandable(r) {
-			key := app.netExpandKeyFor(r)
-			app.state.net.filters.expanded[key] = !app.state.net.filters.expanded[key]
-		}
-	} else {
+	app.netActivate(r)
+	app.renderFiltersView(g)
+}
+
+// netActivate toggles expansion of a header or a taxonomy node with children,
+// and toggles selection of any other value. Space still selects a parent node.
+func (app *Gui) netActivate(r netRow) {
+	switch {
+	case app.netExpandable(r):
+		key := app.netExpandKeyFor(r)
+		app.state.net.filters.expanded[key] = !app.state.net.filters.expanded[key]
+	case !r.isHeader():
 		app.netToggle(r)
 	}
-	app.renderFiltersView(g)
 }
 
 func (app *Gui) netFilterToggleOption(g *gocui.Gui) {
