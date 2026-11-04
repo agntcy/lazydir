@@ -43,6 +43,7 @@ var globalBindings = []binding{
 	{"tab / shift+tab", "cycle focus", true},
 	{"1 / 2 / 3 / 0", "jump to panel", false},
 	{"r", "refresh", false},
+	{"n", "toggle network mode", true},
 	{"?: help", "show keybindings", true},
 	{"q / ctrl+c", "quit", true},
 }

@@ -49,9 +49,9 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 
 	optionsX1 := maxX - 1
 
-	// [1] Connections shows two lines (Directory, OASF).
-	// Height = frame(2) + 2 content lines.
-	dirH := 4
+	// [1] Connections shows three lines (Directory, OASF, mode).
+	// Height = frame(2) + 3 content lines.
+	dirH := 5
 
 	// The input prompt, when visible, steals a 3-row slot on the left column
 	// above the panel that requested it (the "host"). Panels below the host
@@ -454,6 +454,7 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 		oasfAddr = "(not configured)"
 	}
 	fmt.Fprintf(v, " %s OASF:      %s%s", g.connIcon(g.state.oasfStatus), oasfAddr, connSync(g.state.oasfStatus))
+	fmt.Fprintf(v, "\n %s", modeLine(g.state.browse))
 
 	_ = v.SetCursor(0, g.state.connCursor)
 }
