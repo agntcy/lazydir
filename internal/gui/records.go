@@ -120,7 +120,7 @@ func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
 	if rec.Version != "" {
 		subtitle += " " + rec.Version
 	}
-	go app.pullRecord(subtitle, rec.CID)
+	go app.pullRecord(app.state.browse, subtitle, rec.CID)
 	return app.focusTo(g, viewPreview)
 }
 

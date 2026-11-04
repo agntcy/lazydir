@@ -632,3 +632,53 @@ func TestClosePeers(t *testing.T) {
 		t.Errorf("peers = %v, want none", app.state.net.peers)
 	}
 }
+
+func TestApplyLocalPreview_DropsAfterModeSwitch(t *testing.T) {
+	app := newNetSearchApp()
+	app.state.previewContent = testPreviewBefore
+
+	if app.applyLocalPreview(browseLocal, "rec", `{"a":1}`, nil) {
+		t.Error("local pull rendered over network mode")
+	}
+	if app.state.previewContent != testPreviewBefore {
+		t.Errorf("previewContent = %q, want unchanged", app.state.previewContent)
+	}
+
+	app.state.browse = browseLocal
+	if !app.applyLocalPreview(browseLocal, "rec", `{"a":1}`, nil) {
+		t.Fatal("current mode not rendered")
+	}
+	if app.state.previewSubtitle != "rec" || app.state.previewTree == nil {
+		t.Errorf("subtitle %q, tree %v; want record JSON", app.state.previewSubtitle, app.state.previewTree)
+	}
+}
+
+func TestPreviewForModeSwitch(t *testing.T) {
+	app := newNetSearchApp()
+	app.state.previewContent = testPreviewBefore
+	app.state.previewSubtitle = "rec"
+	app.state.net.previewGen = 1
+
+	// No network row yet: the This-node preview is cleared and a peer fetch
+	// in flight is superseded.
+	app.previewForModeSwitch(nil)
+	if app.state.previewContent != "" || app.state.previewSubtitle != "" || app.state.net.previewGen != 2 {
+		t.Errorf("content %q subtitle %q previewGen %d; want cleared, 2",
+			app.state.previewContent, app.state.previewSubtitle, app.state.net.previewGen)
+	}
+
+	// A network cursor row is previewed.
+	app.state.net.filters.applied[filterSkills] = map[string]bool{"x/y": true}
+	app.state.net.results = []dirclient.NetworkResult{{CID: "net", PeerID: "p"}}
+	app.previewForModeSwitch(nil)
+	if !strings.Contains(app.state.previewContent, noticeNoDirAddr) {
+		t.Errorf("previewContent = %q, want the network row's state", app.state.previewContent)
+	}
+
+	// Back on This node without rows: the network preview is cleared.
+	app.state.browse = browseLocal
+	app.previewForModeSwitch(nil)
+	if app.state.previewContent != "" {
+		t.Errorf("previewContent = %q, want cleared", app.state.previewContent)
+	}
+}
