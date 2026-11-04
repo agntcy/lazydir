@@ -75,6 +75,12 @@ func (app *Gui) pullRecord(subtitle, cid string) {
 // autoPreviewRecord fires a background pull for the record currently under the
 // cursor, resetting the preview scroll position first.
 func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
+	if app.state.browse == browseNetwork {
+		if r, ok := app.netCursorRow(); ok {
+			app.previewNetworkResult(g, r)
+		}
+		return
+	}
 	rows := app.state.recordDisplayRows
 	if app.state.recordCursor >= len(rows) {
 		return
@@ -180,10 +186,23 @@ func (app *Gui) renderPreviewJSON(g *gocui.Gui, subtitle, jsonStr string) {
 	app.writePreview(g, true)
 }
 
+// renderPreviewText writes plain text (no JSON tree) to the preview panel.
+func (app *Gui) renderPreviewText(g *gocui.Gui, subtitle, text string) {
+	app.state.previewSubtitle = subtitle
+	app.state.previewContent = text
+	app.state.previewTree = nil
+	app.state.previewCursor = 0
+	app.setPreviewWrap(g, true)
+	app.writePreview(g, true)
+}
+
 // setPreviewWrap enables or disables line wrapping on the preview view.
 // Wrapping is on for plain text and off for JSON trees so that the gocui
 // cursor row always maps 1:1 to the logical tree line index.
 func (app *Gui) setPreviewWrap(g *gocui.Gui, on bool) {
+	if g == nil {
+		return
+	}
 	v, err := g.View(viewPreview)
 	if err != nil {
 		return
@@ -197,6 +216,9 @@ func (app *Gui) setPreviewWrap(g *gocui.Gui, on bool) {
 // The gocui cursor is positioned on previewCursor so the highlight row is
 // always visible regardless of which panel has focus.
 func (app *Gui) writePreview(g *gocui.Gui, resetScroll bool) {
+	if g == nil {
+		return
+	}
 	v, err := g.View(viewPreview)
 	if err != nil {
 		return

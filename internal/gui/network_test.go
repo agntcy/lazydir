@@ -276,3 +276,71 @@ func TestAdjustMinScore_ClampsToQueries(t *testing.T) {
 		t.Errorf("after --: minScore = %d, want 1", got)
 	}
 }
+
+func TestNetworkInfoText(t *testing.T) {
+	r := dirclient.NetworkResult{
+		CID:     "baf-cid",
+		PeerID:  "12D3-peer",
+		DirAddr: "h:8888",
+		Matched: []dirclient.NetworkQuery{{Category: dirclient.FilterSkill, Value: "a/b"}},
+	}
+	got := networkInfoText(r, Theme{}, netStateFetching)
+	for _, want := range []string{"Address  h:8888", "  skill  a/b", "Fetching from peer…"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+
+	r.DirAddr = ""
+	if got := networkInfoText(r, Theme{}, netStateNoAddress); strings.Contains(got, "Address") {
+		t.Errorf("empty DirAddr still has an Address line:\n%s", got)
+	}
+}
+
+func TestNetworkPreview_DropsStaleGen(t *testing.T) {
+	app := newNetSearchApp()
+	app.state.net.previewGen = 2
+	app.state.previewContent = "before"
+	r := dirclient.NetworkResult{CID: "baf-cid", DirAddr: "h:8888"}
+
+	if app.applyPeerPreview(1, r, `{"a":1}`, nil) {
+		t.Error("stale gen rendered")
+	}
+	if app.state.previewContent != "before" {
+		t.Errorf("previewContent = %q, want unchanged", app.state.previewContent)
+	}
+
+	if !app.applyPeerPreview(2, r, "", fmt.Errorf("boom")) {
+		t.Fatal("current gen not rendered")
+	}
+	if !strings.Contains(app.state.previewContent, noticePeerUnreachable) {
+		t.Errorf("previewContent = %q, want unreachable state", app.state.previewContent)
+	}
+}
+
+func TestNetworkPreview_DropsAfterLeavingNetworkMode(t *testing.T) {
+	app := newNetSearchApp()
+	app.state.net.previewGen = 1
+	app.state.previewContent = "this-node preview"
+	app.state.browse = browseLocal
+
+	if app.applyPeerPreview(1, dirclient.NetworkResult{CID: "c"}, `{}`, nil) {
+		t.Error("rendered over the This-node preview")
+	}
+	if app.state.previewContent != "this-node preview" {
+		t.Errorf("previewContent = %q, want unchanged", app.state.previewContent)
+	}
+}
+
+func TestAutoPreviewRecord_NetworkIgnoresLocalRows(t *testing.T) {
+	app := newNetSearchApp()
+	app.state.recordDisplayRows = []recordDisplayRow{{record: &dirclient.RecordSummary{CID: "local"}}}
+	app.state.net.results = []dirclient.NetworkResult{{CID: "net", PeerID: "p"}}
+	app.state.net.filters.applied[filterSkills] = map[string]bool{"a/b": true}
+
+	app.autoPreviewRecord(nil)
+
+	if strings.Contains(app.state.previewContent, "local") || !strings.Contains(app.state.previewContent, noticeNoDirAddr) {
+		t.Errorf("previewContent = %q, want the network row's no-address state", app.state.previewContent)
+	}
+}

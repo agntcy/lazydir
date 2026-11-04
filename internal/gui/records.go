@@ -49,6 +49,7 @@ func (app *Gui) recordMouseClick(g *gocui.Gui, v *gocui.View) error {
 		if idx >= 0 && idx < len(app.netRecordRows()) {
 			app.state.net.cursor = idx
 			app.renderRecordsView(g)
+			app.autoPreviewRecord(g)
 		}
 		return nil
 	}
@@ -95,6 +96,14 @@ func (app *Gui) recordCursorDown(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		r, ok := app.netCursorRow()
+		if !ok {
+			return nil
+		}
+		app.previewNetworkResult(g, r)
+		return app.focusTo(g, viewPreview)
+	}
 	rows := app.state.recordDisplayRows
 	if app.state.recordCursor >= len(rows) {
 		return nil

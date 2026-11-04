@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/jesseduffield/gocui"
@@ -23,6 +24,18 @@ const (
 	noticePickFilter       = "Pick a skill, domain or module to search the network"
 	noticeNoPeers          = "No peers announced matching records"
 	noticeSearchNotAllowed = "Network search not allowed on this server"
+	noticePeerUnreachable  = "Couldn't reach the peer"
+	noticeNoDirAddr        = "Peer published no directory address; can't preview or sync"
+)
+
+// peerPreviewTimeout bounds fetching a network record from its peer.
+const peerPreviewTimeout = 4 * time.Second
+
+// States shown at the bottom of a network row's info preview.
+const (
+	netStateFetching    = "Fetching from peer…"
+	netStateUnreachable = noticePeerUnreachable + "\nS sync it into this node"
+	netStateNoAddress   = noticeNoDirAddr
 )
 
 // browseMode selects which records the Filters, Records and Preview panels
@@ -54,6 +67,11 @@ type netState struct {
 	// kept are synced rows that stay listed after they drop out of results.
 	kept   map[string]dirclient.NetworkResult
 	status map[string]netSyncEntry
+
+	// previewGen identifies the current peer preview; peers caches peer
+	// connections by directory address.
+	previewGen uint64
+	peers      map[string]*dirclient.PeerClient
 }
 
 // netSyncStatus is the sync state of a network row.
@@ -343,6 +361,7 @@ func (app *Gui) netRecordCursorUp(g *gocui.Gui) {
 	if app.state.net.cursor > 0 {
 		app.state.net.cursor--
 		app.renderRecordsView(g)
+		app.autoPreviewRecord(g)
 	}
 }
 
@@ -350,7 +369,118 @@ func (app *Gui) netRecordCursorDown(g *gocui.Gui) {
 	if app.state.net.cursor < len(app.netRecordRows())-1 {
 		app.state.net.cursor++
 		app.renderRecordsView(g)
+		app.autoPreviewRecord(g)
 	}
+}
+
+// netCursorRow returns the network row under the cursor.
+func (app *Gui) netCursorRow() (dirclient.NetworkResult, bool) {
+	rows := app.netRecordRows()
+	c := app.state.net.cursor
+	if c < 0 || c >= len(rows) {
+		return dirclient.NetworkResult{}, false
+	}
+	return rows[c], true
+}
+
+// networkInfoText describes a network row from its search result alone,
+// ending with state: whether the record is being fetched, or why it can't be.
+func networkInfoText(r dirclient.NetworkResult, t Theme, state string) string {
+	var sb strings.Builder
+	field := func(label, value string) {
+		fmt.Fprintf(&sb, "%s%-7s%s  %s\n", t.Color10, label, t.Reset, value)
+	}
+	field("CID", r.CID)
+	field("Peer", r.PeerID)
+	if r.DirAddr != "" {
+		field("Address", r.DirAddr)
+	}
+	sb.WriteString("\nMatched\n")
+	for _, m := range r.Matched {
+		label, color := "skill", t.Color1
+		switch m.Category {
+		case dirclient.FilterDomain:
+			label, color = "domain", t.Color2
+		case dirclient.FilterModule:
+			label, color = "module", t.Color3
+		}
+		fmt.Fprintf(&sb, "  %s%s%s  %s\n", color, label, t.Reset, m.Value)
+	}
+	sb.WriteString("\n" + state)
+	return sb.String()
+}
+
+// previewNetworkResult previews a network row. A row synced into this node is
+// pulled from it like a local row; otherwise the search info shows at once and
+// the full record is fetched from the announcing peer in the background.
+func (app *Gui) previewNetworkResult(g *gocui.Gui, r dirclient.NetworkResult) {
+	ns := &app.state.net
+	// Bumped for synced rows too, so a peer fetch still in flight can't
+	// overwrite them.
+	ns.previewGen++
+	gen := ns.previewGen
+	if ns.status[r.CID].status == netSynced {
+		go app.pullRecord(shortID(r.CID), r.CID)
+		return
+	}
+	if r.DirAddr == "" {
+		app.renderPreviewText(g, shortID(r.CID), networkInfoText(r, app.theme, netStateNoAddress))
+		return
+	}
+	app.renderPreviewText(g, shortID(r.CID), networkInfoText(r, app.theme, netStateFetching))
+	// grpc.NewClient doesn't dial, so resolving the peer here doesn't block.
+	peer, err := app.peerFor(r.DirAddr)
+	if err != nil {
+		app.applyPeerPreview(gen, r, "", err)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), peerPreviewTimeout)
+		defer cancel()
+		jsonStr, err := peer.PullJSON(ctx, r.CID)
+		app.g.Update(func(*gocui.Gui) error {
+			app.applyPeerPreview(gen, r, jsonStr, err)
+			return nil
+		})
+	}()
+}
+
+// applyPeerPreview lands a peer fetch for r, reporting whether it rendered.
+// Results of a superseded preview, or landing after leaving network mode, are
+// dropped. Must be called on the GUI goroutine.
+func (app *Gui) applyPeerPreview(gen uint64, r dirclient.NetworkResult, jsonStr string, err error) bool {
+	if gen != app.state.net.previewGen || app.state.browse != browseNetwork {
+		return false
+	}
+	if err != nil {
+		app.renderPreviewText(app.g, shortID(r.CID), networkInfoText(r, app.theme, netStateUnreachable))
+		return true
+	}
+	app.renderPreviewJSON(app.g, shortID(r.CID)+" · from peer", jsonStr)
+	return true
+}
+
+// peerFor returns the cached connection to the peer at addr, connecting with
+// the current connection's transport settings on first use. Must be called on
+// the GUI goroutine.
+func (app *Gui) peerFor(addr string) (*dirclient.PeerClient, error) {
+	ns := &app.state.net
+	if p, ok := ns.peers[addr]; ok {
+		return p, nil
+	}
+	client := app.state.client
+	if client == nil {
+		return nil, fmt.Errorf("not connected")
+	}
+	p, err := dirclient.ConnectPeer(client.Config, addr)
+	if err != nil {
+		return nil, err
+	}
+	if ns.peers == nil {
+		ns.peers = map[string]*dirclient.PeerClient{}
+	}
+	ns.peers[addr] = p
+	return p, nil
 }
 
 // adjustMinScore moves the minimum match score by delta within 1..queries and
