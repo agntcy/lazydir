@@ -90,6 +90,7 @@ var perPanelBindings = map[string]panelBindings{
 			{"P", "publish record / selection", true},
 			{"U", "unpublish record / selection", true},
 			{"X", "cancel sync", false},
+			{"S", "network sync record / selection", false},
 			{"+ / -", "network min match score", false},
 			{keyEsc, "clear filter / selection / clipboard", false},
 			{keyWheel, hintScroll, false},

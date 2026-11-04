@@ -5,6 +5,7 @@ package gui
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -374,5 +375,219 @@ func TestNetworkPreview_SyncedDropsStale(t *testing.T) {
 	}
 	if app.state.previewSubtitle != testCID || app.state.previewTree == nil {
 		t.Errorf("subtitle %q, tree %v; want node JSON", app.state.previewSubtitle, app.state.previewTree)
+	}
+}
+
+func planSyncRows() ([]dirclient.NetworkResult, map[string]netSyncEntry) {
+	rows := []dirclient.NetworkResult{
+		{CID: "c1", DirAddr: "p1"},
+		{CID: "c2", DirAddr: "p2"},
+		{CID: "c3", DirAddr: "p1"},
+		{CID: "c4"},
+		{CID: "c5", DirAddr: "p1"},
+	}
+	return rows, map[string]netSyncEntry{"c5": {status: netSynced}}
+}
+
+func TestPlanNetworkSync(t *testing.T) {
+	rows, status := planSyncRows()
+	batches, skipped, noAddr := planNetworkSync(rows, status, authModeInsecure)
+	want := []peerBatch{
+		{addr: "p1", url: "http://p1", cids: []string{"c1", "c3"}},
+		{addr: "p2", url: "http://p2", cids: []string{"c2"}},
+	}
+	if fmt.Sprint(batches) != fmt.Sprint(want) {
+		t.Errorf("batches = %v, want %v", batches, want)
+	}
+	if skipped != 1 || noAddr != 1 {
+		t.Errorf("skipped %d noAddr %d, want 1 1", skipped, noAddr)
+	}
+
+	for _, mode := range []string{"none", ""} {
+		if b, _, _ := planNetworkSync(rows, status, mode); b[0].url != "http://p1" {
+			t.Errorf("auth %q: url = %q, want http", mode, b[0].url)
+		}
+	}
+	if b, _, _ := planNetworkSync(rows, status, "oidc"); b[0].url != "https://p1" || b[1].url != "https://p2" {
+		t.Errorf("oidc urls = %q %q, want https", b[0].url, b[1].url)
+	}
+}
+
+func TestPlanNetworkSync_SkipsSyncingKeepsFailed(t *testing.T) {
+	rows := []dirclient.NetworkResult{{CID: "a", DirAddr: "p"}, {CID: "b", DirAddr: "p"}}
+	status := map[string]netSyncEntry{"a": {status: netSyncing}, "b": {status: netFailed}}
+	batches, skipped, _ := planNetworkSync(rows, status, authModeInsecure)
+	if skipped != 1 || len(batches) != 1 || fmt.Sprint(batches[0].cids) != "[b]" {
+		t.Errorf("batches %v skipped %d; want [b] retried, a skipped", batches, skipped)
+	}
+}
+
+func TestNetworkSyncConfirmBody(t *testing.T) {
+	rows, status := planSyncRows()
+	batches, skipped, noAddr := planNetworkSync(rows, status, authModeInsecure)
+	got := networkSyncConfirmBody(batches, skipped, noAddr)
+	want := "Sync 3 record(s) into this node?\n\n" +
+		"  p1: 2\n" +
+		"  p2: 1\n\n" +
+		"Skipped: 1 (already synced or syncing)\n" +
+		"No address: 1"
+	if got != want {
+		t.Errorf("body =\n%q\nwant\n%q", got, want)
+	}
+	if got := networkSyncConfirmBody(batches, 0, 0); got != "Sync 3 record(s) into this node?\n\n  p1: 2\n  p2: 1" {
+		t.Errorf("body without skips = %q", got)
+	}
+}
+
+func TestResetNetworkForServerSwitch(t *testing.T) {
+	app := newNetSearchApp()
+	ns := &app.state.net
+	searchCancelled, syncCancelled := false, false
+	ns.cancel = func() { searchCancelled = true }
+	ns.syncCancel = func() { syncCancelled = true }
+	peer, err := dirclient.ConnectPeer(dirclient.Config{AuthMode: authModeInsecure}, "127.0.0.1:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := dirclient.NetworkResult{CID: "c1", DirAddr: "p1"}
+	ns.peers = map[string]*dirclient.PeerClient{"127.0.0.1:1": peer}
+	ns.results = []dirclient.NetworkResult{r}
+	ns.selection = map[string]dirclient.NetworkResult{"c1": r}
+	ns.status = map[string]netSyncEntry{"c1": {status: netSyncing}}
+	ns.kept = map[string]dirclient.NetworkResult{"c1": r}
+	ns.local = map[string]bool{"c1": true}
+	ns.notice = noticeNoPeers
+	ns.gen, ns.previewGen = 3, 5
+
+	app.resetNetworkForServerSwitch()
+
+	if !searchCancelled || !syncCancelled {
+		t.Errorf("search cancelled %v, syncs cancelled %v; want both", searchCancelled, syncCancelled)
+	}
+	if ns.cancel != nil || ns.syncCancel != nil {
+		t.Error("cancel funcs kept")
+	}
+	if len(ns.peers)+len(ns.results)+len(ns.selection)+len(ns.status)+len(ns.kept)+len(ns.local) != 0 || ns.notice != "" {
+		t.Errorf("state kept: peers %v results %v selection %v status %v kept %v local %v notice %q",
+			ns.peers, ns.results, ns.selection, ns.status, ns.kept, ns.local, ns.notice)
+	}
+	if ns.gen != 4 || ns.previewGen != 6 {
+		t.Errorf("gen %d previewGen %d, want 4 6", ns.gen, ns.previewGen)
+	}
+}
+
+func TestApplyNetworkSync(t *testing.T) {
+	app := newNetSearchApp()
+	ns := &app.state.net
+	r1 := dirclient.NetworkResult{CID: "c1", DirAddr: "p1"}
+	r2 := dirclient.NetworkResult{CID: "c2", DirAddr: "p2"}
+	ns.status = map[string]netSyncEntry{"c1": {status: netSyncing}, "c2": {status: netSyncing}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	app.applyNetworkSync(ctx, []dirclient.NetworkResult{r1}, "")
+	if ns.status["c1"].status != netSynced || ns.kept["c1"].CID != "c1" {
+		t.Errorf("completed: status %v kept %v", ns.status["c1"], ns.kept)
+	}
+
+	app.applyNetworkSync(ctx, []dirclient.NetworkResult{r2}, "peer p2, sync s1: boom")
+	if e := ns.status["c2"]; e.status != netFailed || e.err != "peer p2, sync s1: boom" {
+		t.Errorf("failed: %+v", e)
+	}
+	if _, ok := ns.kept["c2"]; ok {
+		t.Error("failed row kept")
+	}
+
+	ns.status["c2"] = netSyncEntry{status: netSyncing}
+	cancel()
+	app.applyNetworkSync(ctx, []dirclient.NetworkResult{r2}, "")
+	if ns.status["c2"].status != netSyncing {
+		t.Errorf("cancelled sync landed: %v", ns.status["c2"])
+	}
+}
+
+func TestNetSyncErr(t *testing.T) {
+	if got := netSyncErr("p1", "s1", "boom"); got != "peer p1, sync s1: boom" {
+		t.Errorf("got %q", got)
+	}
+	if got := netSyncErr("p1", "", "boom"); got != "peer p1: boom" {
+		t.Errorf("without id got %q", got)
+	}
+}
+
+func TestSwitchBrowseMode_LeavingNetworkCancelsSearch(t *testing.T) {
+	app := newNetSearchApp()
+	ns := &app.state.net
+	searchCancelled, syncCancelled := false, false
+	ns.cancel = func() { searchCancelled = true }
+	ns.syncCancel = func() { syncCancelled = true }
+	ns.loading = true
+	ns.gen = 2
+
+	app.switchBrowseMode()
+
+	if !searchCancelled || ns.cancel != nil || ns.loading {
+		t.Errorf("search not cancelled: called %v cancel %v loading %v", searchCancelled, ns.cancel != nil, ns.loading)
+	}
+	if ns.gen != 3 {
+		t.Errorf("gen = %d, want 3", ns.gen)
+	}
+	if syncCancelled || ns.syncCancel == nil {
+		t.Error("leaving network mode cancelled syncs")
+	}
+}
+
+func TestApplyNetworkResults_PrunesSelection(t *testing.T) {
+	app := newNetSearchApp()
+	ns := &app.state.net
+	const kept = "here"
+	ns.selection = map[string]dirclient.NetworkResult{"gone": {CID: "gone"}, kept: {CID: kept}}
+
+	app.applyNetworkResults(ns.gen, nil, []dirclient.NetworkResult{{CID: kept}}, nil, nil)
+
+	if _, ok := ns.selection["gone"]; ok || len(ns.selection) != 1 {
+		t.Errorf("selection = %v, want only kept", ns.selection)
+	}
+}
+
+func TestNetSelection_ToggleAndSelectAll(t *testing.T) {
+	app := newNetSearchApp()
+	ns := &app.state.net
+	ns.results = []dirclient.NetworkResult{{CID: "a"}, {CID: "b"}}
+	ns.cursor = 1
+
+	app.toggleNetSelected()
+	if _, ok := ns.selection["b"]; !ok || len(ns.selection) != 1 {
+		t.Fatalf("toggle: %v", ns.selection)
+	}
+	app.toggleNetSelected()
+	if len(ns.selection) != 0 {
+		t.Fatalf("untoggle: %v", ns.selection)
+	}
+
+	app.selectAllNetRows()
+	if len(ns.selection) != 2 {
+		t.Fatalf("select all: %v", ns.selection)
+	}
+	app.selectAllNetRows()
+	if len(ns.selection) != 0 {
+		t.Fatalf("select all again should clear: %v", ns.selection)
+	}
+	if len(app.state.selection) != 0 {
+		t.Error("network selection wrote the This-node selection")
+	}
+}
+
+func TestNetSyncTargets_SelectionInRowOrder(t *testing.T) {
+	app := newNetSearchApp()
+	ns := &app.state.net
+	ns.results = []dirclient.NetworkResult{{CID: "a"}, {CID: "b"}, {CID: "c"}}
+	ns.cursor = 1
+	if got := app.netSyncTargets(); len(got) != 1 || got[0].CID != "b" {
+		t.Errorf("no selection: %v, want cursor row b", got)
+	}
+	ns.selection = map[string]dirclient.NetworkResult{"c": {CID: "c"}, "a": {CID: "a"}}
+	if got := app.netSyncTargets(); len(got) != 2 || got[0].CID != "a" || got[1].CID != "c" {
+		t.Errorf("selection: %v, want a c", got)
 	}
 }

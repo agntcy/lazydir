@@ -189,6 +189,7 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.publishEnriching = false
 	app.state.publishOverrides = nil
 	app.resetSelectionForServerSwitch()
+	app.resetNetworkForServerSwitch()
 
 	if app.state.filterValuesCancel != nil {
 		app.state.filterValuesCancel()

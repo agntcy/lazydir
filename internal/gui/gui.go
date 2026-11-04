@@ -365,6 +365,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		app.renderDirectory(g)
 		app.renderStatus(g)
 		app.startQuery(true)
+		app.startNetworkSearchIfActive()
 		return nil
 	})
 }
@@ -588,6 +589,7 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 			}
 			app.renderDirectory(g)
 			app.startQuery(true)
+			app.startNetworkSearchIfActive()
 			return nil
 		})
 		ticker.Reset(healthInterval)
@@ -646,6 +648,7 @@ func (app *Gui) tryOIDCTokenRefresh(
 		app.state.dirLastConnected = time.Now()
 		app.state.dirError = ""
 		app.renderDirectory(g)
+		app.startNetworkSearchIfActive()
 		return nil
 	})
 	return true
