@@ -138,22 +138,27 @@ tasks:
         cd tests/e2e && go test -v -count=1 -timeout 120s ./...
 
   test:e2e:network:
-    desc: Run network e2e tests (starts the default daemon and a peered second daemon)
+    desc: Run network e2e tests (starts two peered daemons in temp data dirs)
     deps:
       - deps:dirctl
     vars:
       _DIRCTL: "{{ .ROOT_DIR }}/{{ .DIRCTL_BIN }}"
+      MAIN_API: localhost:8878
       PEER_API: localhost:8898
     env:
       DIRCTL_BIN: "{{ ._DIRCTL }}"
-      DIR_SERVER: localhost:8888
+      DIR_SERVER: "{{ .MAIN_API }}"
       DIR_PEER_SERVER: "{{ .PEER_API }}"
     cmds:
       - |
         set -eu
         dirctl="{{ ._DIRCTL }}"
         tmp="$(mktemp -d)"
+        main_dir="$tmp/main"
         peer_dir="$tmp/peer"
+        mkdir -p "$main_dir" "$peer_dir"
+        # Only the two temp-dir daemons started here are stopped; the default
+        # daemon and ~/.agntcy/dir are never touched.
         cleanup() {
           rc=$?
           if [ "$rc" -ne 0 ]; then
@@ -162,42 +167,43 @@ tasks:
             done
           fi
           "$dirctl" daemon stop --data-dir "$peer_dir" >/dev/null 2>&1 || true
-          "$dirctl" daemon stop >/dev/null 2>&1 || true
+          "$dirctl" daemon stop --data-dir "$main_dir" >/dev/null 2>&1 || true
           rm -rf "$tmp"
         }
         trap cleanup EXIT
         # daemon status exits 0 either way; only its message tells.
         wait_running() {
           for i in $(seq 1 30); do
-            "$dirctl" daemon status "$@" 2>&1 | grep -q 'is running' && return 0
+            "$dirctl" daemon status --data-dir "$1" 2>&1 | grep -q 'is running' && return 0
             sleep 1
           done
-          echo "ERROR: daemon $* failed to start" >&2
+          echo "ERROR: daemon in $1 failed to start" >&2
           return 1
         }
-        "$dirctl" daemon stop >/dev/null 2>&1 || true
-        sleep 1
-        # Short reconciler intervals so a sync completes and is indexed quickly.
-        env DIRECTORY_DAEMON_RECONCILER_REGSYNC_INTERVAL=2s \
-          DIRECTORY_DAEMON_RECONCILER_INDEXER_INTERVAL=2s \
-          "$dirctl" daemon start >"$tmp/main.log" 2>&1 &
-        wait_running
+        # start_node DATA_DIR API ZOT_PORT P2P_PORT GATEWAY_PORT BOOTSTRAP LOG
+        # Without --config the daemon uses built-in defaults, so each node is
+        # configured through env overrides on non-default ports. Short
+        # intervals make publication, sync and indexing finish quickly.
+        start_node() {
+          env DIRECTORY_DAEMON_SERVER_LISTEN_ADDRESS="$2" \
+            DIRECTORY_DAEMON_SERVER_STORE_OCI_REGISTRY_ADDRESS="localhost:$3" \
+            DIRECTORY_DAEMON_RECONCILER_LOCAL_REGISTRY_REGISTRY_ADDRESS="localhost:$3" \
+            DIRECTORY_DAEMON_SERVER_ROUTING_LISTEN_ADDRESS="/ip4/127.0.0.1/tcp/$4" \
+            DIRECTORY_DAEMON_SERVER_ROUTING_BOOTSTRAP_PEERS="$6" \
+            DIRECTORY_DAEMON_SERVER_ROUTING_DIRECTORY_API_ADDRESS="$2" \
+            DIRECTORY_DAEMON_SERVER_HTTP_GATEWAY_LISTEN_ADDRESS=":$5" \
+            DIRECTORY_DAEMON_SERVER_HTTP_GATEWAY_PUBLIC_URL="http://localhost:$5" \
+            DIRECTORY_DAEMON_SERVER_PUBLICATION_SCHEDULER_INTERVAL=2s \
+            DIRECTORY_DAEMON_RECONCILER_REGSYNC_INTERVAL=2s \
+            DIRECTORY_DAEMON_RECONCILER_INDEXER_INTERVAL=2s \
+            "$dirctl" daemon start --data-dir "$1" >"$7" 2>&1 &
+          wait_running "$1"
+        }
+        start_node "$main_dir" "{{ .MAIN_API }}" 5545 8979 8879 "" "$tmp/main.log"
         main_id="$(grep -o 'peerID=12D3[[:alnum:]]*' "$tmp/main.log" | head -n 1 | cut -d= -f2)"
         [ -n "$main_id" ] || { echo "ERROR: main daemon peer ID not found in log" >&2; exit 1; }
-        # Without --config the daemon uses built-in defaults, so the peer is
-        # configured through env overrides on non-default ports.
-        mkdir -p "$peer_dir"
-        env DIRECTORY_DAEMON_SERVER_LISTEN_ADDRESS="{{ .PEER_API }}" \
-          DIRECTORY_DAEMON_SERVER_STORE_OCI_REGISTRY_ADDRESS=localhost:5565 \
-          DIRECTORY_DAEMON_RECONCILER_LOCAL_REGISTRY_REGISTRY_ADDRESS=localhost:5565 \
-          DIRECTORY_DAEMON_SERVER_ROUTING_LISTEN_ADDRESS=/ip4/127.0.0.1/tcp/9009 \
-          DIRECTORY_DAEMON_SERVER_ROUTING_BOOTSTRAP_PEERS="/ip4/127.0.0.1/tcp/8999/p2p/$main_id" \
-          DIRECTORY_DAEMON_SERVER_ROUTING_DIRECTORY_API_ADDRESS="{{ .PEER_API }}" \
-          DIRECTORY_DAEMON_SERVER_HTTP_GATEWAY_LISTEN_ADDRESS=:8899 \
-          DIRECTORY_DAEMON_SERVER_HTTP_GATEWAY_PUBLIC_URL=http://localhost:8899 \
-          DIRECTORY_DAEMON_SERVER_PUBLICATION_SCHEDULER_INTERVAL=2s \
-          "$dirctl" daemon start --data-dir "$peer_dir" >"$tmp/peer.log" 2>&1 &
-        wait_running --data-dir "$peer_dir"
+        start_node "$peer_dir" "{{ .PEER_API }}" 5565 9009 8899 \
+          "/ip4/127.0.0.1/tcp/8979/p2p/$main_id" "$tmp/peer.log"
         cd tests/e2e && go test -v -count=1 -timeout 300s -run TestNetwork ./...
 
   check:
