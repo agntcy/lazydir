@@ -17,7 +17,12 @@ import (
 	"github.com/agntcy/lazydir/internal/dirclient"
 )
 
-const defaultDirAddr = "localhost:8888"
+const (
+	defaultDirAddr = "localhost:8888"
+
+	// seedSkill is the skill every seeded record carries.
+	seedSkill = "natural_language_processing/analytical_reasoning"
+)
 
 func dirAddr(t *testing.T) string {
 	t.Helper()
@@ -78,7 +83,7 @@ func seedRecord(t *testing.T, ctx context.Context, addr, dirctl string) (string,
 		"description":    "lazydir e2e test record",
 		"authors":        []string{"lazydir-e2e"},
 		"skills": []map[string]string{
-			{"name": "natural_language_processing/analytical_reasoning"},
+			{"name": seedSkill},
 		},
 		"created_at": "2025-01-01T00:00:00Z",
 	}
@@ -264,7 +269,7 @@ func TestDir_ListFilterValues(t *testing.T) {
 	}
 
 	want := map[dirclient.FilterCategory]string{
-		dirclient.FilterSkill:         "natural_language_processing/analytical_reasoning",
+		dirclient.FilterSkill:         seedSkill,
 		dirclient.FilterAuthor:        "lazydir-e2e",
 		dirclient.FilterSchemaVersion: "1.0.0",
 	}
