@@ -131,7 +131,7 @@ func (app *Gui) switchBrowseMode() {
 	app.state.net.selection = nil
 }
 
-// toggleBrowseMode is the global `n` handler and the mode popup's action.
+// toggleBrowseMode switches the browse mode; the Connections mode popup calls it.
 func (app *Gui) toggleBrowseMode(g *gocui.Gui, v *gocui.View) error {
 	app.switchBrowseMode()
 	if app.state.browse == browseNetwork {
