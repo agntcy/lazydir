@@ -56,7 +56,7 @@ var perPanelBindings = map[string]panelBindings{
 		title: "[1] Connections",
 		bindings: []binding{
 			{keyNavigate, hintNavigate, true},
-			{"c / enter", "select server", true},
+			{"c / enter", "select server / mode", true},
 			{"i", "connection info", true},
 		},
 	},

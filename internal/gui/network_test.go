@@ -62,11 +62,32 @@ func TestToggleBrowseMode_ClearsSelections(t *testing.T) {
 }
 
 func TestModeLine(t *testing.T) {
-	if got, want := modeLine(browseLocal), "Mode: This node  (n: network)"; got != want {
-		t.Errorf("local = %q, want %q", got, want)
+	app := &Gui{theme: defaultTheme}
+	tests := []struct {
+		mode  browseMode
+		color string
+		name  string
+	}{
+		{browseLocal, defaultTheme.Color4, "This node"},
+		{browseNetwork, defaultTheme.Color1, "Network"},
 	}
-	if got, want := modeLine(browseNetwork), "Mode: Network    (n: this node)"; got != want {
-		t.Errorf("network = %q, want %q", got, want)
+	for _, tt := range tests {
+		app.state.browse = tt.mode
+		want := tt.color + "●" + defaultTheme.Reset + " Mode:      " + tt.name
+		if got := app.modeLine(); got != want {
+			t.Errorf("modeLine(%d) = %q, want %q", tt.mode, got, want)
+		}
+	}
+}
+
+func TestConnInfoText_ModeRow(t *testing.T) {
+	app := &Gui{theme: defaultTheme}
+	app.state.connCursor = connRowMode
+	app.state.browse = browseNetwork
+	app.state.oasfError = "oasf down"
+	text, hasErr := app.connInfoText()
+	if hasErr || !strings.Contains(text, "Network") || strings.Contains(text, "oasf down") {
+		t.Errorf("connInfoText() = %q, %v; want the mode without the OASF error", text, hasErr)
 	}
 }
 

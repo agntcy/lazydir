@@ -93,12 +93,22 @@ type netSyncEntry struct {
 	err    string // why a failed sync failed
 }
 
-// modeLine is the non-selectable third line of the Connections panel.
-func modeLine(m browseMode) string {
+// modeName is the display name of a browse mode.
+func modeName(m browseMode) string {
 	if m == browseNetwork {
-		return "Mode: Network    (n: this node)"
+		return modeMenuItems[browseNetwork]
 	}
-	return "Mode: This node  (n: network)"
+	return modeMenuItems[browseLocal]
+}
+
+// modeLine is the third line of the Connections panel: a green dot for this
+// node, a yellow one for the network, then the mode name.
+func (app *Gui) modeLine() string {
+	color := app.theme.Color4
+	if app.state.browse == browseNetwork {
+		color = app.theme.Color1
+	}
+	return color + "●" + app.theme.Reset + " Mode:      " + modeName(app.state.browse)
 }
 
 // switchBrowseMode flips the browse mode and clears both multi-selects, since a
@@ -121,7 +131,7 @@ func (app *Gui) switchBrowseMode() {
 	app.state.net.selection = nil
 }
 
-// toggleBrowseMode is the global `n` handler.
+// toggleBrowseMode is the global `n` handler and the mode popup's action.
 func (app *Gui) toggleBrowseMode(g *gocui.Gui, v *gocui.View) error {
 	app.switchBrowseMode()
 	if app.state.browse == browseNetwork {
