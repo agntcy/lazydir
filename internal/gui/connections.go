@@ -19,6 +19,16 @@ import (
 
 const authModeInsecure = "insecure"
 
+// Rows of the Connections panel, indexed by connCursor.
+const (
+	connRowDirectory = iota
+	connRowOASF
+	connRowMode
+)
+
+// Items of the browse-mode selection popup, in browseMode order.
+var modeMenuItems = []string{"This node", "Network"}
+
 // ── Connections panel cursor ──────────────────────────────────────────────────
 
 func (app *Gui) connCursorUp(g *gocui.Gui, v *gocui.View) error {
@@ -30,7 +40,7 @@ func (app *Gui) connCursorUp(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) connCursorDown(g *gocui.Gui, v *gocui.View) error {
-	if app.state.connCursor < 1 {
+	if app.state.connCursor < connRowMode {
 		app.state.connCursor++
 		app.renderDirectory(g)
 	}
@@ -59,7 +69,15 @@ func (app *Gui) connInfoText() (string, bool) {
 	t := app.theme
 	var sb strings.Builder
 	hasError := false
-	if app.state.connCursor == 0 {
+	switch app.state.connCursor {
+	case connRowMode:
+		fmt.Fprintf(&sb, "%sMode:%s      %s", t.Color1, t.Reset, modeName(app.state.browse))
+		if app.state.browse == browseNetwork {
+			sb.WriteString("\n\nRouting search across the network, the same as\n`dirctl routing search`. Sync matches to this node.")
+		} else {
+			sb.WriteString("\n\nRecords stored on the connected Directory node.")
+		}
+	case connRowDirectory:
 		fmt.Fprintf(&sb, "%sServer:%s    %s", t.Color1, t.Reset, app.state.serverAddr)
 		if app.state.activeDir.OIDCIssuer != "" {
 			fmt.Fprintf(&sb, "\n%sAuth:%s      oidc (%s)", t.Color4, t.Reset, app.state.activeDir.OIDCIssuer)
@@ -75,7 +93,7 @@ func (app *Gui) connInfoText() (string, bool) {
 			fmt.Fprintf(&sb, "\n\n%sError:%s %s", t.Color6, t.Reset, app.state.dirError)
 			hasError = true
 		}
-	} else {
+	default:
 		fmt.Fprintf(&sb, "%sServer:%s    %s", t.Color1, t.Reset, app.state.oasfAddr)
 		if !app.state.oasfLastConnected.IsZero() {
 			fmt.Fprintf(&sb, "\n%sConnected:%s %s", t.Color3, t.Reset, app.state.oasfLastConnected.Format("15:04:05"))
@@ -92,7 +110,14 @@ func (app *Gui) connInfoText() (string, bool) {
 
 func (app *Gui) openServerSelectPopup(g *gocui.Gui, v *gocui.View) error {
 	var items []string
-	if app.state.connCursor == 0 {
+	title := " Select server "
+	cursor := 0
+	switch app.state.connCursor {
+	case connRowMode:
+		items = append(items, modeMenuItems...)
+		title = " Select mode "
+		cursor = int(app.state.browse)
+	case connRowDirectory:
 		for _, entry := range app.cfg.DirectoryServers {
 			label := entry.Label()
 			if entry.OIDCIssuer != "" && entry.ContextName == "" {
@@ -100,22 +125,25 @@ func (app *Gui) openServerSelectPopup(g *gocui.Gui, v *gocui.View) error {
 			}
 			items = append(items, label)
 		}
-	} else {
+	default:
 		items = append(items, app.cfg.OASFServers...)
 	}
-	items = append(items, "Custom...")
+	if app.state.connCursor != connRowMode {
+		items = append(items, "Custom...")
+	}
 
 	app.state.serverMenuItems = items
-	app.state.serverMenuCursor = 0
+	app.state.serverMenuCursor = cursor
 	app.state.serverMenuVisible = true
 
 	smv, err := g.View(viewServerMenu)
 	if err == nil {
+		smv.Title = title
 		smv.Clear()
 		for _, item := range items {
 			fmt.Fprintln(smv, " "+item)
 		}
-		_ = smv.SetCursor(0, 0)
+		_ = smv.SetCursor(0, cursor)
 	}
 	app.showPopup(g, viewServerMenu)
 	return nil
@@ -153,6 +181,13 @@ func (app *Gui) serverMenuSelect(g *gocui.Gui, v *gocui.View) error {
 
 	app.state.serverMenuVisible = false
 	app.hidePopup(g, viewServerMenu)
+
+	if app.state.connCursor == connRowMode {
+		if browseMode(idx) != app.state.browse {
+			return app.toggleBrowseMode(g, v)
+		}
+		return nil
+	}
 
 	if selected == "Custom..." {
 		if app.state.connCursor == 0 {

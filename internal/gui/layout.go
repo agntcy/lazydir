@@ -458,7 +458,7 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 		oasfAddr = "(not configured)"
 	}
 	fmt.Fprintf(v, " %s OASF:      %s%s", g.connIcon(g.state.oasfStatus), oasfAddr, connSync(g.state.oasfStatus))
-	fmt.Fprintf(v, "\n %s", modeLine(g.state.browse))
+	fmt.Fprintf(v, "\n %s", g.modeLine())
 
 	_ = v.SetCursor(0, g.state.connCursor)
 }

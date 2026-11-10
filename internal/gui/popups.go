@@ -257,9 +257,10 @@ func (app *Gui) infoPopupCopyError(g *gocui.Gui, v *gocui.View) error {
 	var errText string
 	switch app.state.infoPopupPanel {
 	case viewDirectory:
-		if app.state.connCursor == 0 {
+		switch app.state.connCursor {
+		case connRowDirectory:
 			errText = app.state.dirError
-		} else {
+		case connRowOASF:
 			errText = app.state.oasfError
 		}
 	case viewFilters:
