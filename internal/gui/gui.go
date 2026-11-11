@@ -115,6 +115,9 @@ type appState struct {
 	// recordDisplayRows are the flat display rows for the records panel: one
 	// row per record in the current page (no version grouping).
 	recordDisplayRows []recordDisplayRow
+	// recordRowHeight is how many lines each Records row takes: 2 when the
+	// panel is too narrow and the trust badges wrap, else 1.
+	recordRowHeight int
 
 	// page holds the server-side pagination state for the records panel
 	// (accumulated pages, offset, total, exhausted/loading flags).

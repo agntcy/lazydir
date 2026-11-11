@@ -361,3 +361,60 @@ func TestBatchProgress_LateUpdateAfterEnd(t *testing.T) {
 		t.Fatalf("stale end stopped the next batch: running=%d progress=%q", app.state.batchRunning, app.state.batchProgress)
 	}
 }
+
+func TestRecordRowLines_Wrap(t *testing.T) {
+	one := recordRowLines("", false, false, 6, 30, "agent", "v1", "T V S")
+	if len(one) != 1 || one[0] != recordRowLine("", false, 6, 30, "agent", "v1", "T V S") {
+		t.Fatalf("unwrapped row = %q", one)
+	}
+
+	lines := recordRowLines("", false, true, 6, 20, "agent", "v1", "T V S")
+	if len(lines) != 2 || lines[0] != "  agent   v1" || lines[1] != "  T V S" {
+		t.Fatalf("wrapped row = %q", lines)
+	}
+
+	// A selected wrapped row marks only its first line, and both lines are
+	// padded to the panel width.
+	sel := recordRowLines("", true, true, 6, 20, "agent", "v1", "T V S")
+	if !strings.Contains(sel[0], selectedMark) || strings.Contains(sel[1], selectedMark) {
+		t.Errorf("selection mark placement wrong: %q", sel)
+	}
+	for _, l := range sel {
+		if got := utf8.RuneCountInString(stripANSI(l)); got != 20 {
+			t.Errorf("line visible width = %d, want 20: %q", got, l)
+		}
+	}
+}
+
+func TestOneLineRowMinWidth(t *testing.T) {
+	// The narrowest one-line row exactly fills a panel of that width.
+	w := oneLineRowMinWidth
+	line := recordRowLine("", false, minNameColWidth, w, "n", "v", "T V S")
+	if got := utf8.RuneCountInString(line); got != w {
+		t.Fatalf("row width = %d, want %d: %q", got, w, line)
+	}
+}
+
+func TestRowScroll(t *testing.T) {
+	tests := []struct {
+		name                  string
+		cursor, height, viewH int
+		wantOrigin, wantLine  int
+	}{
+		{"one-line top", 0, 1, 5, 0, 0},
+		{"one-line in view", 4, 1, 5, 0, 4},
+		{"one-line below", 7, 1, 5, 3, 4},
+		{"wrapped in view", 1, 2, 5, 0, 2},
+		{"wrapped second line below", 2, 2, 5, 1, 3},
+		{"wrapped below", 5, 2, 5, 7, 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origin, line := rowScroll(tt.cursor, tt.height, tt.viewH)
+			if origin != tt.wantOrigin || line != tt.wantLine {
+				t.Fatalf("rowScroll(%d, %d, %d) = %d, %d; want %d, %d",
+					tt.cursor, tt.height, tt.viewH, origin, line, tt.wantOrigin, tt.wantLine)
+			}
+		})
+	}
+}

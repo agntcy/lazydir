@@ -44,7 +44,7 @@ func (app *Gui) recordMouseClick(g *gocui.Gui, v *gocui.View) error {
 	}
 	_, cy := v.Cursor()
 	_, oy := v.Origin()
-	idx := oy + cy
+	idx := (oy + cy) / max(app.state.recordRowHeight, 1)
 	rows := app.state.recordDisplayRows
 	if idx >= 0 && idx < len(rows) {
 		app.state.recordCursor = idx

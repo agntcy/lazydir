@@ -183,11 +183,19 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 
 	v.Title = app.recordsTitle()
 
-	viewW, _ := v.Size()
+	viewW, viewH := v.Size()
+	wrap := viewW < oneLineRowMinWidth
 	nameW := viewW - rowGutterWidth - 2 - versionColWidth - 2 - badgeColWidth
-	if nameW < 8 {
-		nameW = 8
+	if wrap {
+		// Badges go on their own line, so the name only shares with the version.
+		nameW = viewW - rowGutterWidth - 2 - versionColWidth
 	}
+	nameW = max(nameW, minNameColWidth)
+	app.state.recordRowHeight = 1
+	if wrap {
+		app.state.recordRowHeight = 2
+	}
+	height := app.state.recordRowHeight
 
 	rows := app.state.recordDisplayRows
 	if app.state.recordCursor >= len(rows) && len(rows) > 0 {
@@ -199,17 +207,10 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	red := "\033[31m"
 	green := ansiGreen
 
-	lineNum := 0
-	targetLine := 0
-
-	for i, row := range rows {
-		if i == app.state.recordCursor {
-			targetLine = lineNum
-		}
-
+	for _, row := range rows {
 		rec := row.record
 		if rec == nil {
-			lineNum++
+			fmt.Fprint(v, strings.Repeat("\n", height))
 			continue
 		}
 
@@ -248,18 +249,25 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		}
 		selected := app.isSelected(rec.CID)
 		badges := trustBadges(rec, app.theme, rowStyle(lineColor, selected))
-		fmt.Fprintln(v, recordRowLine(lineColor, selected, nameW, viewW, name, version, badges))
-		lineNum++
+		for _, line := range recordRowLines(lineColor, selected, wrap, nameW, viewW, name, version, badges) {
+			fmt.Fprintln(v, line)
+		}
 	}
 
-	_, viewH := v.Size()
-	if targetLine >= viewH {
-		_ = v.SetOrigin(0, targetLine-viewH+1)
-		_ = v.SetCursor(0, viewH-1)
-	} else {
-		_ = v.SetOrigin(0, 0)
-		_ = v.SetCursor(0, targetLine)
+	origin, cursor := rowScroll(app.state.recordCursor, height, viewH)
+	_ = v.SetOrigin(0, origin)
+	_ = v.SetCursor(0, cursor)
+}
+
+// rowScroll returns the view origin and cursor line that show every line of
+// the row at index cursor, each row being height lines tall, in a view viewH
+// lines high. The cursor sits on the row's first line.
+func rowScroll(cursor, height, viewH int) (origin, line int) {
+	first := cursor * height
+	if last := first + height - 1; last >= viewH {
+		origin = last - viewH + 1
 	}
+	return origin, first - origin
 }
 
 // rowGutterWidth is the width of the column ahead of each record row that
@@ -269,8 +277,12 @@ const rowGutterWidth = 2
 // Records row column widths. A longer version is cut with an ellipsis so the
 // badge column stays aligned.
 const (
+	minNameColWidth = 8
 	versionColWidth = 10
 	badgeColWidth   = 5 // "T V S"
+	// oneLineRowMinWidth is the narrowest panel that fits a whole row on one
+	// line; below it the badges wrap onto a second line.
+	oneLineRowMinWidth = rowGutterWidth + minNameColWidth + 2 + versionColWidth + 2 + badgeColWidth
 )
 
 // rowStyle is the ANSI style a Records row is drawn with: its line color, in
@@ -308,19 +320,36 @@ func trustBadges(r *dirclient.RecordSummary, t Theme, restore string) string {
 	return badge(r.Trusted, "T") + " " + badge(r.Verified, "V") + " " + safe
 }
 
-// recordRowLine formats one Records row: name, version and the trust badges.
-// lineColor (may be empty) colors the whole row. A selected row shows a green
-// marker in the gutter and bold text; after the marker only the foreground is
-// reset, so a background color such as the clipboard's carries on. Colored
-// and selected rows are padded to the panel width so their color spans the
-// row.
+// recordRowLines formats one Records row: name, version and the trust badges
+// on one line, or, with wrap, name and version on the first line and the
+// badges on a second one. lineColor (may be empty) colors the whole row.
+func recordRowLines(lineColor string, selected, wrap bool, nameW, viewW int, name, version, badges string) []string {
+	if !wrap {
+		return []string{recordRowLine(lineColor, selected, nameW, viewW, name, version, badges)}
+	}
+	return []string{
+		styledRowLine(lineColor, selected, true, viewW, fmt.Sprintf("%-*s  %s", nameW, name, version)),
+		styledRowLine(lineColor, selected, false, viewW, badges),
+	}
+}
+
+// recordRowLine formats a Records row that fits on one line.
 func recordRowLine(lineColor string, selected bool, nameW, viewW int, name, version, badges string) string {
 	text := fmt.Sprintf("%-*s  %-*s  %s", nameW, name, versionColWidth, version, badges)
+	return styledRowLine(lineColor, selected, true, viewW, text)
+}
+
+// styledRowLine lays text out behind the selection gutter. A selected row is
+// bold, and its first line (mark) shows a green marker in the gutter; after
+// the marker only the foreground is reset, so a background color such as the
+// clipboard's carries on. Colored and selected lines are padded to the panel
+// width so their color spans the row.
+func styledRowLine(lineColor string, selected, mark bool, viewW int, text string) string {
 	if lineColor == "" && !selected {
 		return strings.Repeat(" ", rowGutterWidth) + text
 	}
 	gutter := strings.Repeat(" ", rowGutterWidth)
-	if selected {
+	if selected && mark {
 		gutter = ansiGreen + selectedMark + ansiDefaultFg + lineColor + strings.Repeat(" ", rowGutterWidth-1)
 	}
 	// Pad by visible width: the badges carry ANSI codes fmt would count.
