@@ -379,6 +379,7 @@ func (app *Gui) deleteRecord(cid string) {
 			return nil
 		}
 		app.removeRecordFromState(cid)
+		app.forgetNetSynced(cid)
 		// The deleted record may have carried the last instance of some
 		// filter values; refetch so they drop out of the pick-lists.
 		app.startFilterValuesFetch(true)

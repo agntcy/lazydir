@@ -126,10 +126,28 @@ var perPanelBindings = map[string]panelBindings{
 }
 
 // networkPerPanelBindings overrides perPanelBindings for the panels whose keys
-// differ in network mode. Directory, Preview and the popups are shared.
+// differ in network mode. Directory and the popups are shared.
 var networkPerPanelBindings = map[string]panelBindings{
 	viewFilters: networkFiltersBindings,
 	viewRecords: networkRecordsBindings,
+	viewPreview: networkPreviewBindings,
+}
+
+// networkPreviewBindings adds S to the Preview keys: the preview of an
+// unreachable peer offers it.
+var networkPreviewBindings = panelBindings{
+	title: titlePreview,
+	bindings: []binding{
+		{keyNavigate, hintNavigate, true},
+		{keyEnter, "expand / collapse", true},
+		{"l", hintExpand, false},
+		{"h", hintCollapse, false},
+		{"e", "expand all", true},
+		{"E", "collapse all", true},
+		{"S", "sync record / selection", true},
+		{keyEsc, "back to records", true},
+		{keyWheel, hintScroll, false},
+	},
 }
 
 var networkFiltersBindings = panelBindings{

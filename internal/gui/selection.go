@@ -395,6 +395,7 @@ func (app *Gui) runBatchDelete(client *dirclient.Client, id uint64, records []*d
 		for _, cid := range deleted {
 			app.removeRecordFromState(cid)
 		}
+		app.forgetNetSynced(deleted...)
 		app.state.selection = nil
 		if len(deleted) > 0 {
 			// Reload the records: pages fetched while the deletes ran, and

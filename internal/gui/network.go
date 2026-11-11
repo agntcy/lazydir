@@ -91,6 +91,9 @@ const (
 type netSyncEntry struct {
 	status netSyncStatus
 	err    string // why a failed sync failed
+	// gen is the search generation at which a row became synced. A presence
+	// check taken by an older search than gen can't clear the marker.
+	gen uint64
 }
 
 // modeName is the display name of a browse mode.
@@ -182,6 +185,7 @@ func (app *Gui) startNetworkSearch() {
 	ns.results = nil
 	ns.loading = false
 	ns.notice = ""
+	app.clearNetPreview()
 	qs := app.networkQueries()
 	client := app.state.client
 	if len(qs) == 0 || client == nil {
@@ -233,18 +237,7 @@ func (app *Gui) applyNetworkResults(gen uint64, qs []dirclient.NetworkQuery, res
 		}
 	default:
 		ns.results = res
-		for cid := range local {
-			// A row on this node is synced, even if an earlier sync of it
-			// failed; only a running sync keeps its own state.
-			switch ns.status[cid].status {
-			case netSyncing, netSynced:
-				continue
-			}
-			if ns.status == nil {
-				ns.status = map[string]netSyncEntry{}
-			}
-			ns.status[cid] = netSyncEntry{status: netSynced}
-		}
+		app.applyLocalPresence(gen, res, local)
 		minScore := clampMinScore(ns.filters.minScore, len(qs))
 		if len(networkRows(res, ns.kept, qs, minScore)) == 0 {
 			ns.notice = noticeNoPeers
@@ -252,6 +245,66 @@ func (app *Gui) applyNetworkResults(gen uint64, qs []dirclient.NetworkQuery, res
 	}
 	app.pruneNetSelection()
 	app.renderNetRecords()
+	if app.g != nil && app.state.browse == browseNetwork {
+		if _, ok := app.netCursorRow(); ok {
+			app.autoPreviewRecord(app.g)
+		}
+	}
+}
+
+// applyLocalPresence marks the results this node holds as synced and, when
+// the presence check of search gen succeeded (local is non-nil), clears the
+// marker of results it no longer holds, as after a delete on This node. Rows
+// still syncing, and rows synced while search gen ran, keep their state. Must
+// be called on the GUI goroutine.
+func (app *Gui) applyLocalPresence(gen uint64, res []dirclient.NetworkResult, local map[string]bool) {
+	if local == nil {
+		return
+	}
+	ns := &app.state.net
+	if ns.status == nil {
+		ns.status = map[string]netSyncEntry{}
+	}
+	for _, r := range res {
+		st := ns.status[r.CID]
+		if st.status == netSyncing {
+			continue
+		}
+		if local[r.CID] {
+			// A row on this node is synced, even if an earlier sync of it
+			// failed.
+			if st.status != netSynced {
+				ns.status[r.CID] = netSyncEntry{status: netSynced, gen: gen}
+			}
+			continue
+		}
+		if st.status == netSynced && st.gen < gen {
+			app.forgetNetSynced(r.CID)
+		}
+	}
+}
+
+// forgetNetSynced drops the synced marker and the kept row of cids, after
+// they were deleted from this node. Must be called on the GUI goroutine.
+func (app *Gui) forgetNetSynced(cids ...string) {
+	ns := &app.state.net
+	for _, cid := range cids {
+		if ns.status[cid].status == netSynced {
+			delete(ns.status, cid)
+		}
+		delete(ns.kept, cid)
+	}
+}
+
+// clearNetPreview drops a network preview in flight and blanks the Preview,
+// so a superseded search's record doesn't linger. Network mode only. Must be
+// called on the GUI goroutine.
+func (app *Gui) clearNetPreview() {
+	if app.state.browse != browseNetwork {
+		return
+	}
+	app.state.net.previewGen++
+	app.renderPreviewText(app.g, "", "")
 }
 
 // pruneNetSelection drops selected rows that are no longer listed, so a sync
@@ -791,12 +844,11 @@ func (app *Gui) runNetworkSync(ctx context.Context, client *dirclient.Client, b 
 	if err != nil {
 		errMsg = netSyncErr(b.addr, syncID, err.Error())
 	}
-	indexed := false
-	if errMsg == "" {
-		indexed = waitForIndexed(ctx, client, b.cids, netIndexPollInterval, netIndexTimeout)
+	if errMsg == "" && !waitForIndexed(ctx, client, b.cids, netIndexPollInterval, netIndexTimeout) && ctx.Err() == nil {
+		errMsg = netSyncErr(b.addr, syncID, fmt.Sprintf("synced, but this node did not index the records within %s", netIndexTimeout))
 	}
 	app.g.Update(func(*gocui.Gui) error {
-		app.applyNetworkSync(ctx, rows, errMsg, indexed)
+		app.applyNetworkSync(ctx, rows, errMsg)
 		return nil
 	})
 }
@@ -805,10 +857,11 @@ func (app *Gui) runNetworkSync(ctx context.Context, client *dirclient.Client, b 
 // reporting whether they were before timeout or ctx ended. Lookup errors are
 // retried until then.
 func waitForIndexed(ctx context.Context, client *dirclient.Client, cids []string, every, timeout time.Duration) bool {
+	// The deadline is on the context so it also interrupts a stalled check.
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
 
 	for {
 		// A CID-only search asks whether the indexer has the records without
@@ -818,8 +871,6 @@ func waitForIndexed(ctx context.Context, client *dirclient.Client, cids []string
 		}
 		select {
 		case <-ctx.Done():
-			return false
-		case <-deadline.C:
 			return false
 		case <-ticker.C:
 		}
@@ -840,13 +891,13 @@ func containsAll(have, want []string) bool {
 	return true
 }
 
-// applyNetworkSync lands a batch sync of rows: synced rows stay listed even
-// when they drop out of the results; failed ones keep errMsg for `i`. indexed
-// tells whether this node indexed the synced records before the wait timed
-// out. Once indexed they are reloaded into This node's list when it is
-// showing; otherwise it reloads on the next visit. Results of syncs cancelled
-// by a server switch are dropped. Must be called on the GUI goroutine.
-func (app *Gui) applyNetworkSync(ctx context.Context, rows []dirclient.NetworkResult, errMsg string, indexed bool) {
+// applyNetworkSync lands a batch sync of rows: synced rows, which this node
+// has indexed, stay listed even when they drop out of the results; failed ones
+// keep errMsg for `i`. Synced rows are reloaded into This node's list when it
+// is showing; otherwise it reloads on the next visit. Results of syncs
+// cancelled by a server switch are dropped. Must be called on the GUI
+// goroutine.
+func (app *Gui) applyNetworkSync(ctx context.Context, rows []dirclient.NetworkResult, errMsg string) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -859,7 +910,7 @@ func (app *Gui) applyNetworkSync(ctx context.Context, rows []dirclient.NetworkRe
 			ns.status[r.CID] = netSyncEntry{status: netFailed, err: errMsg}
 			continue
 		}
-		ns.status[r.CID] = netSyncEntry{status: netSynced}
+		ns.status[r.CID] = netSyncEntry{status: netSynced, gen: ns.gen}
 		if ns.kept == nil {
 			ns.kept = map[string]dirclient.NetworkResult{}
 		}
@@ -867,7 +918,7 @@ func (app *Gui) applyNetworkSync(ctx context.Context, rows []dirclient.NetworkRe
 	}
 	if errMsg == "" {
 		ns.localStale = true
-		if indexed && app.state.browse == browseLocal && app.reloadLocalRecords(false) {
+		if app.state.browse == browseLocal && app.reloadLocalRecords(false) {
 			ns.localStale = false
 		}
 	}
