@@ -258,6 +258,33 @@ func TestSummaryFromRPC(t *testing.T) {
 	}
 }
 
+func TestSummaryFromRPC_TrustStatus(t *testing.T) {
+	t.Parallel()
+
+	safe, unsafe := true, false
+	tests := []struct {
+		name     string
+		in       *searchv1.RecordSummary
+		trusted  bool
+		verified bool
+		scan     ScanVerdict
+	}{
+		{"none", &searchv1.RecordSummary{}, false, false, ScanNone},
+		{"all good", &searchv1.RecordSummary{Trusted: true, Verified: true, Safe: &safe}, true, true, ScanSafe},
+		{"unsafe", &searchv1.RecordSummary{Trusted: true, Safe: &unsafe}, true, false, ScanUnsafe},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s := summaryFromRPC(tt.in)
+			if s.Trusted != tt.trusted || s.Verified != tt.verified || s.Scan != tt.scan {
+				t.Fatalf("got trusted=%v verified=%v scan=%v, want %v %v %v",
+					s.Trusted, s.Verified, s.Scan, tt.trusted, tt.verified, tt.scan)
+			}
+		})
+	}
+}
+
 func TestSummaryFromRPC_EmptyNameFallsBackToCID(t *testing.T) {
 	t.Parallel()
 

@@ -163,11 +163,13 @@ func (app *Gui) recordToggleInfo(g *gocui.Gui, v *gocui.View) error {
 	app.state.recordInfoLoading = true
 	app.openInfoPopup(g, viewRecords)
 
-	go app.fetchRecordInfo(cid)
+	go app.fetchRecordInfo(cid, *r)
 	return nil
 }
 
-func (app *Gui) fetchRecordInfo(cid string) {
+// fetchRecordInfo pulls the record's metadata and fills the info popup with
+// it and the trust status rec carries from the summary listing.
+func (app *Gui) fetchRecordInfo(cid string, rec dirclient.RecordSummary) {
 	client := app.state.client
 	if client == nil {
 		return
@@ -183,7 +185,7 @@ func (app *Gui) fetchRecordInfo(cid string) {
 			app.state.recordInfoText = err.Error()
 			app.state.recordInfoError = true
 		} else {
-			app.state.recordInfoText = formatRecordInfo(info, app.theme)
+			app.state.recordInfoText = formatRecordInfo(info, &rec, app.theme)
 			app.state.recordInfoError = false
 		}
 		app.renderInfoPopup(g)
@@ -191,8 +193,9 @@ func (app *Gui) fetchRecordInfo(cid string) {
 	})
 }
 
-// formatRecordInfo renders a RecordInfo as colored, human-readable lines.
-func formatRecordInfo(info *dirclient.RecordInfo, t Theme) string {
+// formatRecordInfo renders a RecordInfo as colored, human-readable lines,
+// followed by rec's trust and scan status.
+func formatRecordInfo(info *dirclient.RecordInfo, rec *dirclient.RecordSummary, t Theme) string {
 	var sb strings.Builder
 	first := true
 
@@ -221,9 +224,38 @@ func formatRecordInfo(info *dirclient.RecordInfo, t Theme) string {
 			sb.WriteString("\n")
 		}
 		fmt.Fprintf(&sb, "%sCreated at:%s %s", t.Color3, t.Reset, info.CreatedAt)
+		first = false
+	}
+
+	if rec != nil {
+		if !first {
+			sb.WriteString("\n")
+		}
+		fmt.Fprintf(&sb, "%sTrusted:%s %s\n", t.Color8, t.Reset, yesNo(rec.Trusted))
+		fmt.Fprintf(&sb, "%sVerified:%s %s\n", t.Color8, t.Reset, yesNo(rec.Verified))
+		fmt.Fprintf(&sb, "%sSafe:%s %s", t.Color8, t.Reset, scanText(rec.Scan))
 	}
 
 	return sb.String()
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
+
+// scanText describes a scan verdict for the info popup.
+func scanText(s dirclient.ScanVerdict) string {
+	switch s {
+	case dirclient.ScanSafe:
+		return "yes"
+	case dirclient.ScanUnsafe:
+		return "no (flagged by a scanner)"
+	default:
+		return "not scanned"
+	}
 }
 
 // recordDelete opens a confirmation popup for the currently selected record.

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
 )
@@ -252,19 +253,19 @@ func TestOptionsBarText_SelectionAndProgress(t *testing.T) {
 }
 
 func TestRecordRowLine(t *testing.T) {
-	plain := recordRowLine("", false, 6, 20, "agent", "v1")
-	if plain != "  agent   v1" {
+	plain := recordRowLine("", false, 6, 30, "agent", "v1", "T V S")
+	if plain != "  agent   v1          T V S" {
 		t.Errorf("plain row = %q", plain)
 	}
 
-	sel := recordRowLine("", true, 6, 20, "agent", "v1")
-	want := ansiBold + ansiGreen + selectedMark + ansiDefaultFg + " " + fmt.Sprintf("%-18s", "agent   v1") + ansiReset
+	sel := recordRowLine("", true, 6, 30, "agent", "v1", "T V S")
+	want := ansiBold + ansiGreen + selectedMark + ansiDefaultFg + " " + fmt.Sprintf("%-28s", "agent   v1          T V S") + ansiReset
 	if sel != want {
 		t.Errorf("selected row = %q, want %q", sel, want)
 	}
 
 	// On a colored row the line color is re-applied after the green marker.
-	pub := recordRowLine("\033[32m", true, 6, 20, "agent", "v1")
+	pub := recordRowLine("\033[32m", true, 6, 30, "agent", "v1", "T V S")
 	if !strings.HasPrefix(pub, "\033[32m"+ansiBold+ansiGreen+selectedMark+ansiDefaultFg+"\033[32m ") {
 		t.Errorf("colored selected row = %q", pub)
 	}
@@ -272,6 +273,58 @@ func TestRecordRowLine(t *testing.T) {
 	// Plain text is aligned the same whether or not the row is selected.
 	if strings.Index(plain, "agent") != rowGutterWidth {
 		t.Errorf("text should start after the %d-column gutter: %q", rowGutterWidth, plain)
+	}
+
+	// Padding counts visible width, not the badges' ANSI codes.
+	colored := recordRowLine("\033[32m", false, 6, 30, "agent", "v1", trustBadges(&dirclient.RecordSummary{}, defaultTheme, "\033[32m"))
+	if got := utf8.RuneCountInString(stripANSI(colored)); got != 30 {
+		t.Errorf("colored row visible width = %d, want 30: %q", got, colored)
+	}
+}
+
+func TestTrustBadges(t *testing.T) {
+	tests := []struct {
+		name string
+		rec  dirclient.RecordSummary
+		want string
+	}{
+		{"none", dirclient.RecordSummary{}, "· · ·"},
+		{"all", dirclient.RecordSummary{Trusted: true, Verified: true, Scan: dirclient.ScanSafe}, "T V S"},
+		{"unsafe", dirclient.RecordSummary{Verified: true, Scan: dirclient.ScanUnsafe}, "· V !"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := trustBadges(&tt.rec, defaultTheme, "")
+			if plain := stripANSI(got); plain != tt.want {
+				t.Errorf("badges = %q, want %q", plain, tt.want)
+			}
+		})
+	}
+
+	// The unsafe marker is red; the row style is restored after each glyph.
+	got := trustBadges(&dirclient.RecordSummary{Scan: dirclient.ScanUnsafe}, defaultTheme, "\033[41m")
+	if !strings.Contains(got, defaultTheme.Color6+"!"+ansiDefaultFg+"\033[41m") {
+		t.Errorf("unsafe badge = %q", got)
+	}
+}
+
+func TestFormatRecordInfo_TrustStatus(t *testing.T) {
+	info := &dirclient.RecordInfo{CID: "bafy", SchemaVersion: "1.0.0"}
+	tests := []struct {
+		rec  dirclient.RecordSummary
+		want []string
+	}{
+		{dirclient.RecordSummary{}, []string{"Trusted: no", "Verified: no", "Safe: not scanned"}},
+		{dirclient.RecordSummary{Trusted: true, Verified: true, Scan: dirclient.ScanSafe}, []string{"Trusted: yes", "Verified: yes", "Safe: yes"}},
+		{dirclient.RecordSummary{Scan: dirclient.ScanUnsafe}, []string{"Safe: no (flagged by a scanner)"}},
+	}
+	for _, tt := range tests {
+		got := stripANSI(formatRecordInfo(info, &tt.rec, defaultTheme))
+		for _, w := range append(tt.want, "Schema version: 1.0.0\n") {
+			if !strings.Contains(got, w) {
+				t.Errorf("info missing %q:\n%s", w, got)
+			}
+		}
 	}
 }
 

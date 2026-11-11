@@ -56,6 +56,31 @@ type RecordSummary struct {
 	Status        RecordStatus // lifecycle state; zero = StatusLocal
 	StatusError   string       // error message when Status == StatusFailed
 	Published     bool         // lazydir-only; background-enriched via ListPublished
+	Trusted       bool         // a signature on the record passed verification
+	Verified      bool         // the record's ownership claim was verified
+	Scan          ScanVerdict  // security scan verdict
+}
+
+// ScanVerdict is a record's security scan verdict. The zero value means no
+// scanner reached a verdict, which is kept apart from an unsafe one.
+type ScanVerdict int
+
+const (
+	ScanNone   ScanVerdict = iota // not scanned, or no scan completed
+	ScanSafe                      // no scanner flagged the record
+	ScanUnsafe                    // at least one scanner flagged it
+)
+
+// scanVerdictFromRPC maps the server's optional safe flag to a ScanVerdict.
+func scanVerdictFromRPC(r *searchv1.RecordSummary) ScanVerdict {
+	switch {
+	case r.Safe == nil:
+		return ScanNone
+	case r.GetSafe():
+		return ScanSafe
+	default:
+		return ScanUnsafe
+	}
 }
 
 // Client wraps the agntcy/dir gRPC client.
@@ -182,7 +207,8 @@ type SummaryPage struct {
 // ListSummaries fetches one page of record summaries matching queries via the
 // SearchService.ListRecordSummaries RPC (dir >= v1.8.0), which answers from
 // the server's database without pulling each record from its store. Older
-// servers return codes.Unimplemented.
+// servers return codes.Unimplemented. Trust and scan status are filled from
+// dir >= v1.9.0; older servers leave them unset.
 func (c *Client) ListSummaries(ctx context.Context, queries []Query, limit, offset uint32) (*SummaryPage, error) {
 	l, o := limit, offset
 	resp, err := c.c.ListRecordSummaries(ctx, &searchv1.ListRecordSummariesRequest{
@@ -215,6 +241,9 @@ func summaryFromRPC(r *searchv1.RecordSummary) *RecordSummary {
 		Skills:        r.GetSkills(),
 		Domains:       r.GetDomains(),
 		Modules:       r.GetModules(),
+		Trusted:       r.GetTrusted(),
+		Verified:      r.GetVerified(),
+		Scan:          scanVerdictFromRPC(r),
 	})
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/jesseduffield/gocui"
@@ -183,7 +184,7 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	v.Title = app.recordsTitle()
 
 	viewW, _ := v.Size()
-	nameW := viewW - 14 - (rowGutterWidth - 1)
+	nameW := viewW - rowGutterWidth - 2 - versionColWidth - 2 - badgeColWidth
 	if nameW < 8 {
 		nameW = 8
 	}
@@ -233,6 +234,9 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		if len(name) > nameW {
 			name = name[:nameW-1] + "…"
 		}
+		if len(version) > versionColWidth {
+			version = version[:versionColWidth-1] + "…"
+		}
 		lineColor := ""
 		switch {
 		case statusColor != "":
@@ -242,7 +246,9 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		case rec.Published:
 			lineColor = green
 		}
-		fmt.Fprintln(v, recordRowLine(lineColor, app.isSelected(rec.CID), nameW, viewW, name, version))
+		selected := app.isSelected(rec.CID)
+		badges := trustBadges(rec, app.theme, rowStyle(lineColor, selected))
+		fmt.Fprintln(v, recordRowLine(lineColor, selected, nameW, viewW, name, version, badges))
 		lineNum++
 	}
 
@@ -260,23 +266,66 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 // holds the selection marker, so text lines up whether a row is selected or not.
 const rowGutterWidth = 2
 
-// recordRowLine formats one Records row. lineColor (may be empty) colors the
-// whole row. A selected row shows a green marker in the gutter and bold text;
-// after the marker only the foreground is reset, so a background color such
-// as the clipboard's carries on. Colored and selected rows are padded to the
-// panel width so their color spans the row.
-func recordRowLine(lineColor string, selected bool, nameW, viewW int, name, version string) string {
-	text := fmt.Sprintf("%-*s  %s", nameW, name, version)
+// Records row column widths. A longer version is cut with an ellipsis so the
+// badge column stays aligned.
+const (
+	versionColWidth = 10
+	badgeColWidth   = 5 // "T V S"
+)
+
+// rowStyle is the ANSI style a Records row is drawn with: its line color, in
+// bold when the row is selected.
+func rowStyle(lineColor string, selected bool) string {
+	if selected {
+		return lineColor + ansiBold
+	}
+	return lineColor
+}
+
+// trustBadges renders the T(rusted) V(erified) S(afe) badge column for a
+// record. A set badge is colored; an unset one is a dim dot. A record a
+// scanner flagged unsafe shows a red "!" in the S slot, so "not scanned"
+// (dot) stays apart from "unsafe". After each glyph the foreground is reset
+// and restore re-applied, so the row's own style carries on.
+func trustBadges(r *dirclient.RecordSummary, t Theme, restore string) string {
+	glyph := func(color, g string) string {
+		return color + g + ansiDefaultFg + restore
+	}
+	dot := glyph(t.Color10, "·")
+	badge := func(on bool, letter string) string {
+		if on {
+			return glyph(t.Color9, letter)
+		}
+		return dot
+	}
+	safe := dot
+	switch r.Scan {
+	case dirclient.ScanSafe:
+		safe = glyph(t.Color9, "S")
+	case dirclient.ScanUnsafe:
+		safe = glyph(t.Color6, "!")
+	}
+	return badge(r.Trusted, "T") + " " + badge(r.Verified, "V") + " " + safe
+}
+
+// recordRowLine formats one Records row: name, version and the trust badges.
+// lineColor (may be empty) colors the whole row. A selected row shows a green
+// marker in the gutter and bold text; after the marker only the foreground is
+// reset, so a background color such as the clipboard's carries on. Colored
+// and selected rows are padded to the panel width so their color spans the
+// row.
+func recordRowLine(lineColor string, selected bool, nameW, viewW int, name, version, badges string) string {
+	text := fmt.Sprintf("%-*s  %-*s  %s", nameW, name, versionColWidth, version, badges)
 	if lineColor == "" && !selected {
 		return strings.Repeat(" ", rowGutterWidth) + text
 	}
 	gutter := strings.Repeat(" ", rowGutterWidth)
-	style := lineColor
 	if selected {
-		style += ansiBold
 		gutter = ansiGreen + selectedMark + ansiDefaultFg + lineColor + strings.Repeat(" ", rowGutterWidth-1)
 	}
-	return fmt.Sprintf("%s%s%-*s%s", style, gutter, viewW-rowGutterWidth, text, ansiReset)
+	// Pad by visible width: the badges carry ANSI codes fmt would count.
+	pad := max(viewW-rowGutterWidth-utf8.RuneCountInString(stripANSI(text)), 0)
+	return rowStyle(lineColor, selected) + gutter + text + strings.Repeat(" ", pad) + ansiReset
 }
 
 // wrapText splits text into lines that fit within maxWidth, breaking on word
