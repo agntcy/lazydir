@@ -10,6 +10,7 @@ vars:
   GOLANGCI_LINT_BIN: "{{ .BIN_DIR }}/golangci-lint-{{ .GOLANGCI_LINT_VERSION }}"
   DIRCTL_VERSION: "1.8.0"
   DIRCTL_BIN: "{{ .BIN_DIR }}/dirctl"
+  DEV_NETWORK_DIR: "{{ .ROOT_DIR }}/.bin/dirnet"
 
   VERSION_LDFLAGS: >-
     -X main.version={{.VERSION | default "dev"}}
@@ -152,11 +153,7 @@ tasks:
     cmds:
       - |
         set -eu
-        dirctl="{{ ._DIRCTL }}"
         tmp="$(mktemp -d)"
-        main_dir="$tmp/main"
-        peer_dir="$tmp/peer"
-        mkdir -p "$main_dir" "$peer_dir"
         # Only the two temp-dir daemons started here are stopped; the default
         # daemon and ~/.agntcy/dir are never touched.
         cleanup() {
@@ -166,45 +163,32 @@ tasks:
               [ -f "$log" ] && { echo "--- $log" >&2; tail -n 20 "$log" >&2; }
             done
           fi
-          "$dirctl" daemon stop --data-dir "$peer_dir" >/dev/null 2>&1 || true
-          "$dirctl" daemon stop --data-dir "$main_dir" >/dev/null 2>&1 || true
+          sh "{{ .ROOT_DIR }}/tests/e2e/dirnet.sh" stop "$tmp"
           rm -rf "$tmp"
         }
         trap cleanup EXIT
-        # daemon status exits 0 either way; only its message tells.
-        wait_running() {
-          for i in $(seq 1 30); do
-            "$dirctl" daemon status --data-dir "$1" 2>&1 | grep -q 'is running' && return 0
-            sleep 1
-          done
-          echo "ERROR: daemon in $1 failed to start" >&2
-          return 1
-        }
-        # start_node DATA_DIR API ZOT_PORT P2P_PORT GATEWAY_PORT BOOTSTRAP LOG
-        # Without --config the daemon uses built-in defaults, so each node is
-        # configured through env overrides on non-default ports. Short
-        # intervals make publication, sync and indexing finish quickly.
-        start_node() {
-          env DIRECTORY_DAEMON_SERVER_LISTEN_ADDRESS="$2" \
-            DIRECTORY_DAEMON_SERVER_STORE_OCI_REGISTRY_ADDRESS="localhost:$3" \
-            DIRECTORY_DAEMON_RECONCILER_LOCAL_REGISTRY_REGISTRY_ADDRESS="localhost:$3" \
-            DIRECTORY_DAEMON_SERVER_ROUTING_LISTEN_ADDRESS="/ip4/127.0.0.1/tcp/$4" \
-            DIRECTORY_DAEMON_SERVER_ROUTING_BOOTSTRAP_PEERS="$6" \
-            DIRECTORY_DAEMON_SERVER_ROUTING_DIRECTORY_API_ADDRESS="$2" \
-            DIRECTORY_DAEMON_SERVER_HTTP_GATEWAY_LISTEN_ADDRESS=":$5" \
-            DIRECTORY_DAEMON_SERVER_HTTP_GATEWAY_PUBLIC_URL="http://localhost:$5" \
-            DIRECTORY_DAEMON_SERVER_PUBLICATION_SCHEDULER_INTERVAL=2s \
-            DIRECTORY_DAEMON_RECONCILER_REGSYNC_INTERVAL=2s \
-            DIRECTORY_DAEMON_RECONCILER_INDEXER_INTERVAL=2s \
-            "$dirctl" daemon start --data-dir "$1" >"$7" 2>&1 &
-          wait_running "$1"
-        }
-        start_node "$main_dir" "{{ .MAIN_API }}" 5545 8979 8879 "" "$tmp/main.log"
-        main_id="$(grep -o 'peerID=12D3[[:alnum:]]*' "$tmp/main.log" | head -n 1 | cut -d= -f2)"
-        [ -n "$main_id" ] || { echo "ERROR: main daemon peer ID not found in log" >&2; exit 1; }
-        start_node "$peer_dir" "{{ .PEER_API }}" 5565 9009 8899 \
-          "/ip4/127.0.0.1/tcp/8979/p2p/$main_id" "$tmp/peer.log"
+        sh "{{ .ROOT_DIR }}/tests/e2e/dirnet.sh" start "$tmp"
         cd tests/e2e && go test -v -count=1 -timeout 300s -run TestNetwork ./...
+
+  dev:network:
+    desc: Start two peered dir daemons (main localhost:8878, peer localhost:8898) and seed sample records; they keep running until dev:network:stop
+    deps:
+      - deps:dirctl
+    env:
+      DIRCTL_BIN: "{{ .ROOT_DIR }}/{{ .DIRCTL_BIN }}"
+    cmds:
+      - sh "{{ .ROOT_DIR }}/tests/e2e/dirnet.sh" start "{{ .DEV_NETWORK_DIR }}"
+      - sh "{{ .ROOT_DIR }}/tests/e2e/dirnet.sh" seed
+      - 'echo "Run lazydir against main: DIRECTORY_CLIENT_SERVER_ADDRESS=localhost:8878 task run"'
+
+  dev:network:stop:
+    desc: Stop the daemons started by dev:network (data stays in DEV_NETWORK_DIR)
+    deps:
+      - deps:dirctl
+    env:
+      DIRCTL_BIN: "{{ .ROOT_DIR }}/{{ .DIRCTL_BIN }}"
+    cmds:
+      - sh "{{ .ROOT_DIR }}/tests/e2e/dirnet.sh" stop "{{ .DEV_NETWORK_DIR }}"
 
   check:
     desc: Run all checks (fmt, vet, lint, unit+e2e tests) then build

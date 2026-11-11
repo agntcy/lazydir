@@ -68,8 +68,8 @@ func TestModeLine(t *testing.T) {
 		color string
 		name  string
 	}{
-		{browseLocal, defaultTheme.Color4, "This node"},
-		{browseNetwork, defaultTheme.Color1, "Network"},
+		{browseLocal, defaultTheme.Color4, "node"},
+		{browseNetwork, defaultTheme.Color1, "network"},
 	}
 	for _, tt := range tests {
 		app.state.browse = tt.mode
@@ -86,7 +86,7 @@ func TestConnInfoText_ModeRow(t *testing.T) {
 	app.state.browse = browseNetwork
 	app.state.oasfError = "oasf down"
 	text, hasErr := app.connInfoText()
-	if hasErr || !strings.Contains(text, "Network") || strings.Contains(text, "oasf down") {
+	if hasErr || !strings.Contains(text, "network") || strings.Contains(text, "oasf down") {
 		t.Errorf("connInfoText() = %q, %v; want the mode without the OASF error", text, hasErr)
 	}
 }

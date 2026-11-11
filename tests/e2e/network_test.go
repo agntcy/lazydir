@@ -64,7 +64,7 @@ func TestNetwork_SearchPreviewSync(t *testing.T) {
 	}
 	t.Logf("published %s on peer %s", cid, peerAddr)
 
-	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
+	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr, AuthMode: "insecure"})
 	if err != nil {
 		t.Fatalf("Connect(%s): %v", addr, err)
 	}
@@ -90,7 +90,7 @@ func TestNetwork_SearchPreviewSync(t *testing.T) {
 		t.Fatalf("DirAddr = %q, want %q", found.DirAddr, peerAddr)
 	}
 
-	peer, err := dirclient.ConnectPeer(dirclient.Config{ServerAddress: addr}, found.DirAddr)
+	peer, err := dirclient.ConnectPeer(dirclient.Config{ServerAddress: addr, AuthMode: "insecure"}, found.DirAddr)
 	if err != nil {
 		t.Fatalf("ConnectPeer(%s): %v", found.DirAddr, err)
 	}
