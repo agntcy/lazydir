@@ -231,10 +231,10 @@ func formatRecordInfo(info *dirclient.RecordInfo, rec *dirclient.RecordSummary, 
 		if !first {
 			sb.WriteString("\n")
 		}
-		fmt.Fprintf(&sb, "%sTrusted:%s %s | %sVerified:%s %s | %sSafe:%s %s",
-			t.Color5, t.Reset, statusMark(rec.Trusted, t),
-			t.Color5, t.Reset, statusMark(rec.Verified, t),
-			t.Color5, t.Reset, scanMark(rec.Scan, t))
+		fmt.Fprintf(&sb, "%s %sTrusted%s   %s %sVerified%s   %s %sSafe%s",
+			statusMark(rec.Trusted, t), t.Color5, t.Reset,
+			statusMark(rec.Verified, t), t.Color5, t.Reset,
+			scanMark(rec.Scan, t), t.Color5, t.Reset)
 	}
 
 	return sb.String()

@@ -314,13 +314,13 @@ func TestFormatRecordInfo_TrustStatus(t *testing.T) {
 		rec  dirclient.RecordSummary
 		want []string
 	}{
-		{dirclient.RecordSummary{}, []string{"Trusted: ✗ | Verified: ✗ | Safe: ?"}},
-		{dirclient.RecordSummary{Trusted: true, Verified: true, Scan: dirclient.ScanSafe}, []string{"Trusted: ✓ | Verified: ✓ | Safe: ✓"}},
-		{dirclient.RecordSummary{Scan: dirclient.ScanUnsafe}, []string{"Safe: ✗"}},
+		{dirclient.RecordSummary{}, []string{"✗ Trusted   ✗ Verified   ? Safe"}},
+		{dirclient.RecordSummary{Trusted: true, Verified: true, Scan: dirclient.ScanSafe}, []string{"✓ Trusted   ✓ Verified   ✓ Safe"}},
+		{dirclient.RecordSummary{Scan: dirclient.ScanUnsafe}, []string{"✗ Safe"}},
 	}
 	for _, tt := range tests {
 		raw := formatRecordInfo(info, &tt.rec, defaultTheme)
-		if !strings.Contains(raw, defaultTheme.Color5+"Trusted:"+defaultTheme.Reset) {
+		if !strings.Contains(raw, defaultTheme.Color5+"Trusted"+defaultTheme.Reset) {
 			t.Errorf("Trusted label not in Color5: %q", raw)
 		}
 		if tt.rec.Trusted && !strings.Contains(raw, defaultTheme.Color4+markYes) {
