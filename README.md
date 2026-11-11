@@ -47,7 +47,7 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 ## Prerequisites
 
 - **Go 1.27.2+**
-- A running [AGNTCY Directory](https://github.com/agntcy/dir) server (local daemon or remote), **`>= v1.8.0`**. lazydir lists records with `ListRecordSummaries` and fills the filter options with `ListFilterValues`; against an older server the Records panel shows an error asking for v1.8.0 or newer. The trust badges need **`>= v1.9.0`**; a v1.8.x server leaves them unset.
+- A running [AGNTCY Directory](https://github.com/agntcy/dir) server (local daemon or remote), **`>= v1.9.0`**. lazydir lists records with `ListRecordSummaries` and fills the filter options with `ListFilterValues`; against an older server the Records panel shows an error asking for v1.9.0 or newer. The trust badges and the info popup's trust status come from the `trusted`, `verified` and `safe` fields v1.9.0 added to `ListRecordSummaries`.
 
 To start a local daemon for testing:
 

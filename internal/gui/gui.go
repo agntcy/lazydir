@@ -887,7 +887,7 @@ func (app *Gui) loadNextPage() {
 // error.
 func queryErrorText(err error) string {
 	if rpcUnimplemented(err) {
-		return "server does not support ListRecordSummaries; lazydir requires dir v1.8.0 or newer"
+		return "server does not support ListRecordSummaries; lazydir requires dir v1.9.0 or newer"
 	}
 	return err.Error()
 }

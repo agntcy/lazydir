@@ -205,10 +205,10 @@ type SummaryPage struct {
 }
 
 // ListSummaries fetches one page of record summaries matching queries via the
-// SearchService.ListRecordSummaries RPC (dir >= v1.8.0), which answers from
-// the server's database without pulling each record from its store. Older
-// servers return codes.Unimplemented. Trust and scan status are filled from
-// dir >= v1.9.0; older servers leave them unset.
+// SearchService.ListRecordSummaries RPC, which answers from the server's
+// database without pulling each record from its store. lazydir requires dir
+// >= v1.9.0, which also fills each summary's trust and scan status; servers
+// before v1.8.0 return codes.Unimplemented.
 func (c *Client) ListSummaries(ctx context.Context, queries []Query, limit, offset uint32) (*SummaryPage, error) {
 	l, o := limit, offset
 	resp, err := c.c.ListRecordSummaries(ctx, &searchv1.ListRecordSummariesRequest{
