@@ -26,7 +26,7 @@ const (
 )
 
 // Items of the browse-mode selection popup, in browseMode order.
-var modeMenuItems = []string{"This node", "Network"}
+var modeMenuItems = []string{"node", "network"}
 
 // ── Connections panel cursor ──────────────────────────────────────────────────
 

@@ -108,6 +108,8 @@ task build        # downloads deps and builds into .bin/lazydir
 | `task lint` | Run `golangci-lint` (must be [installed](https://golangci-lint.run/welcome/install/)) |
 | `task test:unit` | Run unit/integration tests in `internal/*` (includes mocked OASF coverage) |
 | `task test:e2e` | Run end-to-end tests against a local DIR daemon |
+| `task test:e2e:network` | Run network-mode end-to-end tests against two peered daemons in temp dirs |
+| `task dev:network` / `task dev:network:stop` | Start (and seed) or stop two peered DIR daemons for trying network mode: main on `localhost:8878`, peer on `localhost:8898` |
 | `task check` | Run fmt + vet + lint + test:unit + test:e2e + build in one step |
 
 OASF behavior is validated in the `internal/oasf` test suite using a mocked server.
