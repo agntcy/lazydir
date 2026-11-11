@@ -231,30 +231,40 @@ func formatRecordInfo(info *dirclient.RecordInfo, rec *dirclient.RecordSummary, 
 		if !first {
 			sb.WriteString("\n")
 		}
-		fmt.Fprintf(&sb, "%sTrusted:%s %s\n", t.Color8, t.Reset, yesNo(rec.Trusted))
-		fmt.Fprintf(&sb, "%sVerified:%s %s\n", t.Color8, t.Reset, yesNo(rec.Verified))
-		fmt.Fprintf(&sb, "%sSafe:%s %s", t.Color8, t.Reset, scanText(rec.Scan))
+		fmt.Fprintf(&sb, "%sTrusted:%s %s | %sVerified:%s %s | %sSafe:%s %s",
+			t.Color5, t.Reset, statusMark(rec.Trusted, t),
+			t.Color5, t.Reset, statusMark(rec.Verified, t),
+			t.Color5, t.Reset, scanMark(rec.Scan, t))
 	}
 
 	return sb.String()
 }
 
-func yesNo(b bool) string {
+// Info popup status marks: a green check, a red cross, and a dim question
+// mark for a record no scanner reached a verdict on.
+const (
+	markYes     = "✓"
+	markNo      = "✗"
+	markUnknown = "?"
+)
+
+// statusMark is the info popup's colored mark for a true/false status.
+func statusMark(b bool, t Theme) string {
 	if b {
-		return "yes"
+		return t.Color4 + markYes + t.Reset
 	}
-	return "no"
+	return t.Color6 + markNo + t.Reset
 }
 
-// scanText describes a scan verdict for the info popup.
-func scanText(s dirclient.ScanVerdict) string {
+// scanMark is the info popup's colored mark for a scan verdict.
+func scanMark(s dirclient.ScanVerdict, t Theme) string {
 	switch s {
 	case dirclient.ScanSafe:
-		return "yes"
+		return statusMark(true, t)
 	case dirclient.ScanUnsafe:
-		return "no (flagged by a scanner)"
+		return statusMark(false, t)
 	default:
-		return "not scanned"
+		return t.Color10 + markUnknown + t.Reset
 	}
 }
 

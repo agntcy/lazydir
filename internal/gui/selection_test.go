@@ -314,12 +314,22 @@ func TestFormatRecordInfo_TrustStatus(t *testing.T) {
 		rec  dirclient.RecordSummary
 		want []string
 	}{
-		{dirclient.RecordSummary{}, []string{"Trusted: no", "Verified: no", "Safe: not scanned"}},
-		{dirclient.RecordSummary{Trusted: true, Verified: true, Scan: dirclient.ScanSafe}, []string{"Trusted: yes", "Verified: yes", "Safe: yes"}},
-		{dirclient.RecordSummary{Scan: dirclient.ScanUnsafe}, []string{"Safe: no (flagged by a scanner)"}},
+		{dirclient.RecordSummary{}, []string{"Trusted: ✗ | Verified: ✗ | Safe: ?"}},
+		{dirclient.RecordSummary{Trusted: true, Verified: true, Scan: dirclient.ScanSafe}, []string{"Trusted: ✓ | Verified: ✓ | Safe: ✓"}},
+		{dirclient.RecordSummary{Scan: dirclient.ScanUnsafe}, []string{"Safe: ✗"}},
 	}
 	for _, tt := range tests {
-		got := stripANSI(formatRecordInfo(info, &tt.rec, defaultTheme))
+		raw := formatRecordInfo(info, &tt.rec, defaultTheme)
+		if !strings.Contains(raw, defaultTheme.Color5+"Trusted:"+defaultTheme.Reset) {
+			t.Errorf("Trusted label not in Color5: %q", raw)
+		}
+		if tt.rec.Trusted && !strings.Contains(raw, defaultTheme.Color4+markYes) {
+			t.Errorf("check mark not green: %q", raw)
+		}
+		if !tt.rec.Trusted && !strings.Contains(raw, defaultTheme.Color6+markNo) {
+			t.Errorf("cross not red: %q", raw)
+		}
+		got := stripANSI(raw)
 		for _, w := range append(tt.want, "Schema version: 1.0.0\n") {
 			if !strings.Contains(got, w) {
 				t.Errorf("info missing %q:\n%s", w, got)
