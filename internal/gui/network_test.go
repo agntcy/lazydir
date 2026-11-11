@@ -505,12 +505,12 @@ func TestApplyNetworkSync(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	app.applyNetworkSync(ctx, []dirclient.NetworkResult{r1}, "", true)
+	app.applyNetworkSync(ctx, []dirclient.NetworkResult{r1}, "")
 	if ns.status["c1"].status != netSynced || ns.kept["c1"].CID != "c1" {
 		t.Errorf("completed: status %v kept %v", ns.status["c1"], ns.kept)
 	}
 
-	app.applyNetworkSync(ctx, []dirclient.NetworkResult{r2}, "peer p2, sync s1: boom", false)
+	app.applyNetworkSync(ctx, []dirclient.NetworkResult{r2}, "peer p2, sync s1: boom")
 	if e := ns.status["c2"]; e.status != netFailed || e.err != "peer p2, sync s1: boom" {
 		t.Errorf("failed: %+v", e)
 	}
@@ -520,7 +520,7 @@ func TestApplyNetworkSync(t *testing.T) {
 
 	ns.status["c2"] = netSyncEntry{status: netSyncing}
 	cancel()
-	app.applyNetworkSync(ctx, []dirclient.NetworkResult{r2}, "", true)
+	app.applyNetworkSync(ctx, []dirclient.NetworkResult{r2}, "")
 	if ns.status["c2"].status != netSyncing {
 		t.Errorf("cancelled sync landed: %v", ns.status["c2"])
 	}
@@ -704,32 +704,28 @@ func TestPreviewForModeSwitch(t *testing.T) {
 	}
 }
 
-func TestApplyNetworkSync_IndexedTransition(t *testing.T) {
+func TestApplyNetworkSync_SyncedTransition(t *testing.T) {
 	r := dirclient.NetworkResult{CID: "c1", DirAddr: "p1"}
 	for _, tc := range []struct {
-		name    string
-		browse  browseMode
-		indexed bool
+		name   string
+		browse browseMode
 	}{
-		// Indexed while in network mode: This node reloads on return.
-		{"indexed in network mode", browseNetwork, true},
-		// Timed out: synced anyway, This node still reloads on return.
-		{"index timeout", browseNetwork, false},
-		{"index timeout on This node", browseLocal, false},
-		// Indexed on This node without a client: no reload ran, so it stays
-		// stale.
-		{"indexed on This node, not connected", browseLocal, true},
+		// In network mode: This node reloads on return.
+		{"network mode", browseNetwork},
+		// On This node without a client: no reload ran, so it stays stale.
+		{"This node, not connected", browseLocal},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newNetSearchApp()
 			app.state.browse = tc.browse
 			ns := &app.state.net
+			ns.gen = 7
 			ns.status = map[string]netSyncEntry{"c1": {status: netSyncing}}
 
-			app.applyNetworkSync(context.Background(), []dirclient.NetworkResult{r}, "", tc.indexed)
+			app.applyNetworkSync(context.Background(), []dirclient.NetworkResult{r}, "")
 
-			if ns.status["c1"].status != netSynced || ns.kept["c1"].CID != "c1" {
-				t.Errorf("status %v kept %v, want synced and kept", ns.status["c1"], ns.kept)
+			if st := ns.status["c1"]; st.status != netSynced || st.gen != 7 || ns.kept["c1"].CID != "c1" {
+				t.Errorf("status %+v kept %v, want synced at gen 7 and kept", st, ns.kept)
 			}
 			if !ns.localStale {
 				t.Error("localStale cleared without a This-node reload")
@@ -738,11 +734,85 @@ func TestApplyNetworkSync_IndexedTransition(t *testing.T) {
 	}
 }
 
+// CIDs of TestApplyLocalPresence.
+const (
+	cidHeld    = "held"
+	cidGone    = "gone"
+	cidLate    = "late"
+	cidRunning = "running"
+	cidFailed  = "failed"
+)
+
+func TestApplyLocalPresence(t *testing.T) {
+	res := []dirclient.NetworkResult{{CID: cidHeld}, {CID: cidGone}, {CID: cidLate}, {CID: cidRunning}, {CID: cidFailed}}
+	app := newNetSearchApp()
+	ns := &app.state.net
+	ns.status = map[string]netSyncEntry{
+		cidGone:    {status: netSynced, gen: 2},                 // synced before search 5, deleted since
+		cidLate:    {status: netSynced, gen: 5},                 // synced while search 5 ran
+		cidRunning: {status: netSyncing},                        // sync still running
+		cidFailed:  {status: netFailed, err: "earlier failure"}, // failed earlier, now held
+	}
+	ns.kept = map[string]dirclient.NetworkResult{cidGone: {CID: cidGone}, cidLate: {CID: cidLate}}
+
+	app.applyLocalPresence(5, res, map[string]bool{cidHeld: true, cidFailed: true})
+
+	want := map[string]netSyncStatus{cidHeld: netSynced, cidLate: netSynced, cidRunning: netSyncing, cidFailed: netSynced}
+	for cid, st := range want {
+		if ns.status[cid].status != st {
+			t.Errorf("status[%s] = %v, want %v", cid, ns.status[cid].status, st)
+		}
+	}
+	if _, ok := ns.status[cidGone]; ok {
+		t.Error("deleted record kept its synced marker")
+	}
+	if _, ok := ns.kept[cidGone]; ok {
+		t.Error("deleted record still kept")
+	}
+	if _, ok := ns.kept[cidLate]; !ok {
+		t.Error("record synced during the search dropped")
+	}
+
+	// A failed presence check (nil) changes nothing.
+	app.applyLocalPresence(6, res, nil)
+	if ns.status[cidHeld].status != netSynced {
+		t.Error("failed presence check cleared a marker")
+	}
+}
+
+func TestStartNetworkSearch_ClearsPreview(t *testing.T) {
+	app := newNetSearchApp()
+	app.state.previewContent = "old record"
+	gen := app.state.net.previewGen
+
+	app.startNetworkSearch() // no filters: no search runs
+
+	if app.state.previewContent != "" || app.state.net.previewGen == gen {
+		t.Errorf("previewContent %q previewGen %d, want cleared and bumped", app.state.previewContent, app.state.net.previewGen)
+	}
+}
+
+func TestForgetNetSynced(t *testing.T) {
+	app := newNetSearchApp()
+	ns := &app.state.net
+	ns.status = map[string]netSyncEntry{"a": {status: netSynced}, "b": {status: netSyncing}}
+	ns.kept = map[string]dirclient.NetworkResult{"a": {CID: "a"}}
+
+	app.forgetNetSynced("a", "b")
+
+	if _, ok := ns.status["a"]; ok || len(ns.kept) != 0 {
+		t.Errorf("status %v kept %v, want a forgotten", ns.status, ns.kept)
+	}
+	if ns.status["b"].status != netSyncing {
+		t.Error("running sync forgotten")
+	}
+}
+
 func TestApplyNetworkSync_FailedKeepsLocalFresh(t *testing.T) {
 	app := newNetSearchApp()
 	app.state.net.status = map[string]netSyncEntry{"c1": {status: netSyncing}}
 
-	app.applyNetworkSync(context.Background(), []dirclient.NetworkResult{{CID: "c1"}}, "peer p1: down", false)
+	app.applyNetworkSync(context.Background(), []dirclient.NetworkResult{{CID: "c1"}}, "peer p1: down")
 
 	if app.state.net.localStale {
 		t.Error("failed sync marked This node stale")

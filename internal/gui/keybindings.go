@@ -205,6 +205,10 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewRecords, 'S', gocui.ModNone, app.networkSync); err != nil {
 		return err
 	}
+	// The unreachable-peer preview offers S, so it works from Preview too.
+	if err := g.SetKeybinding(viewPreview, 'S', gocui.ModNone, app.networkSync); err != nil {
+		return err
+	}
 
 	// ── Info popup ──────────────────────────────────────────────────────────
 	if err := g.SetKeybinding(viewInfoPopup, gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
