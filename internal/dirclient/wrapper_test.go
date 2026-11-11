@@ -285,6 +285,14 @@ func TestSummaryFromRPC_TrustStatus(t *testing.T) {
 	}
 }
 
+func TestScanVerdictFromRPC_Nil(t *testing.T) {
+	t.Parallel()
+
+	if got := scanVerdictFromRPC(nil); got != ScanNone {
+		t.Fatalf("nil summary: got %v, want ScanNone", got)
+	}
+}
+
 func TestSummaryFromRPC_EmptyNameFallsBackToCID(t *testing.T) {
 	t.Parallel()
 

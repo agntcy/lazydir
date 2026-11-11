@@ -10,6 +10,7 @@ require (
 	github.com/agntcy/oasf-sdk/pkg v1.1.0
 	github.com/alecthomas/chroma/v2 v2.23.1
 	github.com/jesseduffield/gocui v0.3.1-0.20240418080333-8cd33929c513
+	github.com/mattn/go-runewidth v0.0.23
 	go.yaml.in/yaml/v3 v3.0.5
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
@@ -100,7 +101,6 @@ require (
 	github.com/lestrrat-go/jwx/v2 v2.1.7 // indirect
 	github.com/lestrrat-go/option v1.0.1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
-	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/miekg/pkcs11 v1.1.2 // indirect
 	github.com/minio/sha256-simd v1.0.1 // indirect
 	github.com/mitchellh/mapstructure v1.5.1-0.20231216201459-8508981c8b6c // indirect

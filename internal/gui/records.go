@@ -162,14 +162,17 @@ func (app *Gui) recordToggleInfo(g *gocui.Gui, v *gocui.View) error {
 	app.state.recordInfoText = ""
 	app.state.recordInfoLoading = true
 	app.openInfoPopup(g, viewRecords)
+	// Trust status comes with the summary, so it shows right away and stays
+	// when PullInfo fails.
+	app.state.recordInfoTrust = formatTrustLine(r, app.theme)
+	app.renderInfoPopup(g)
 
-	go app.fetchRecordInfo(cid, *r)
+	go app.fetchRecordInfo(cid)
 	return nil
 }
 
-// fetchRecordInfo pulls the record's metadata and fills the info popup with
-// it and the trust status rec carries from the summary listing.
-func (app *Gui) fetchRecordInfo(cid string, rec dirclient.RecordSummary) {
+// fetchRecordInfo pulls the record's metadata and fills the info popup with it.
+func (app *Gui) fetchRecordInfo(cid string) {
 	client := app.state.client
 	if client == nil {
 		return
@@ -185,7 +188,7 @@ func (app *Gui) fetchRecordInfo(cid string, rec dirclient.RecordSummary) {
 			app.state.recordInfoText = err.Error()
 			app.state.recordInfoError = true
 		} else {
-			app.state.recordInfoText = formatRecordInfo(info, &rec, app.theme)
+			app.state.recordInfoText = formatRecordInfo(info, app.theme)
 			app.state.recordInfoError = false
 		}
 		app.renderInfoPopup(g)
@@ -193,9 +196,8 @@ func (app *Gui) fetchRecordInfo(cid string, rec dirclient.RecordSummary) {
 	})
 }
 
-// formatRecordInfo renders a RecordInfo as colored, human-readable lines,
-// followed by rec's trust and scan status.
-func formatRecordInfo(info *dirclient.RecordInfo, rec *dirclient.RecordSummary, t Theme) string {
+// formatRecordInfo renders a RecordInfo as colored, human-readable lines.
+func formatRecordInfo(info *dirclient.RecordInfo, t Theme) string {
 	var sb strings.Builder
 	first := true
 
@@ -224,24 +226,22 @@ func formatRecordInfo(info *dirclient.RecordInfo, rec *dirclient.RecordSummary, 
 			sb.WriteString("\n")
 		}
 		fmt.Fprintf(&sb, "%sCreated at:%s %s", t.Color3, t.Reset, info.CreatedAt)
-		first = false
-	}
-
-	if rec != nil {
-		if !first {
-			sb.WriteString("\n")
-		}
-		fmt.Fprintf(&sb, "%s %sTrusted%s   %s %sVerified%s   %s %sSafe%s",
-			statusMark(rec.Trusted, t), t.Color5, t.Reset,
-			statusMark(rec.Verified, t), t.Color5, t.Reset,
-			scanMark(rec.Scan, t), t.Color5, t.Reset)
 	}
 
 	return sb.String()
 }
 
-// Info popup status marks: a green check, a red cross, and a dim question
-// mark for a record no scanner reached a verdict on.
+// formatTrustLine renders a record's trust and scan status as the info
+// popup's one-line summary, each item led by its mark.
+func formatTrustLine(rec *dirclient.RecordSummary, t Theme) string {
+	return fmt.Sprintf("%s %sTrusted%s   %s %sVerified%s   %s %sSafe%s",
+		statusMark(rec.Trusted, t), t.Color5, t.Reset,
+		statusMark(rec.Verified, t), t.Color5, t.Reset,
+		scanMark(rec.Scan, t), t.Color5, t.Reset)
+}
+
+// Info popup status marks: a check and a cross in the trust badges' colors,
+// and a dim question mark for a record no scanner reached a verdict on.
 const (
 	markYes     = "✓"
 	markNo      = "✗"
@@ -251,7 +251,7 @@ const (
 // statusMark is the info popup's colored mark for a true/false status.
 func statusMark(b bool, t Theme) string {
 	if b {
-		return t.Color4 + markYes + t.Reset
+		return t.Color9 + markYes + t.Reset
 	}
 	return t.Color6 + markNo + t.Reset
 }

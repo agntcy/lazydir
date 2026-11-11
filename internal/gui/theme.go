@@ -24,7 +24,7 @@ type Theme struct {
 	Color6  string // default: red          — disconnected indicator, unsafe badge
 	Color7  string // default: bright red   — author filter
 	Color8  string // default: bright yellow— trusted / verified / safe filter
-	Color9  string // default: bright green — trust badges
+	Color9  string // default: bright green — trust badges and info popup marks
 	Color10 string // default: bright black — dim/muted (IDs, gray, unset badges)
 	Reset   string // ANSI reset sequence
 	Strike  string // ANSI strikethrough sequence (excluded/negated filters)

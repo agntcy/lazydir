@@ -606,11 +606,7 @@ func (g *Gui) infoPopupText() string {
 		text = g.state.filters.inlineDescText
 		hasError = g.state.filters.inlineDescError
 	case viewRecords:
-		if g.state.recordInfoLoading {
-			return "loading…"
-		}
-		text = g.state.recordInfoText
-		hasError = g.state.recordInfoError
+		text, hasError = g.recordInfoBody("loading…")
 	}
 	if hasError {
 		text += "\n\n  y  copy error   i / esc  close"

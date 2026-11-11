@@ -74,7 +74,7 @@ const (
 // scanVerdictFromRPC maps the server's optional safe flag to a ScanVerdict.
 func scanVerdictFromRPC(r *searchv1.RecordSummary) ScanVerdict {
 	switch {
-	case r.Safe == nil:
+	case r == nil || r.Safe == nil:
 		return ScanNone
 	case r.GetSafe():
 		return ScanSafe

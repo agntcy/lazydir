@@ -8,10 +8,10 @@ import (
 	"io"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/jesseduffield/gocui"
+	"github.com/mattn/go-runewidth"
 )
 
 // syncedAgo renders roughly how long ago the displayed records were last
@@ -232,12 +232,8 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 			statusColor = red
 		}
 
-		if len(name) > nameW {
-			name = name[:nameW-1] + "…"
-		}
-		if len(version) > versionColWidth {
-			version = version[:versionColWidth-1] + "…"
-		}
+		name = runewidth.Truncate(name, nameW, "…")
+		version = runewidth.Truncate(version, versionColWidth, "…")
 		lineColor := ""
 		switch {
 		case statusColor != "":
@@ -328,14 +324,14 @@ func recordRowLines(lineColor string, selected, wrap bool, nameW, viewW int, nam
 		return []string{recordRowLine(lineColor, selected, nameW, viewW, name, version, badges)}
 	}
 	return []string{
-		styledRowLine(lineColor, selected, true, viewW, fmt.Sprintf("%-*s  %s", nameW, name, version)),
+		styledRowLine(lineColor, selected, true, viewW, runewidth.FillRight(name, nameW)+"  "+version),
 		styledRowLine(lineColor, selected, false, viewW, badges),
 	}
 }
 
 // recordRowLine formats a Records row that fits on one line.
 func recordRowLine(lineColor string, selected bool, nameW, viewW int, name, version, badges string) string {
-	text := fmt.Sprintf("%-*s  %-*s  %s", nameW, name, versionColWidth, version, badges)
+	text := runewidth.FillRight(name, nameW) + "  " + runewidth.FillRight(version, versionColWidth) + "  " + badges
 	return styledRowLine(lineColor, selected, true, viewW, text)
 }
 
@@ -352,8 +348,9 @@ func styledRowLine(lineColor string, selected, mark bool, viewW int, text string
 	if selected && mark {
 		gutter = ansiGreen + selectedMark + ansiDefaultFg + lineColor + strings.Repeat(" ", rowGutterWidth-1)
 	}
-	// Pad by visible width: the badges carry ANSI codes fmt would count.
-	pad := max(viewW-rowGutterWidth-utf8.RuneCountInString(stripANSI(text)), 0)
+	// Pad by display width: the badges carry ANSI codes, and wide characters
+	// take two cells.
+	pad := max(viewW-rowGutterWidth-runewidth.StringWidth(stripANSI(text)), 0)
 	return rowStyle(lineColor, selected) + gutter + text + strings.Repeat(" ", pad) + ansiReset
 }
 

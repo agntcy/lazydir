@@ -6,12 +6,12 @@ package gui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
+	"github.com/mattn/go-runewidth"
 )
 
 func named(cid, name string) *dirclient.RecordSummary {
@@ -259,7 +259,7 @@ func TestRecordRowLine(t *testing.T) {
 	}
 
 	sel := recordRowLine("", true, 6, 30, "agent", "v1", "T V S")
-	want := ansiBold + ansiGreen + selectedMark + ansiDefaultFg + " " + fmt.Sprintf("%-28s", "agent   v1          T V S") + ansiReset
+	want := ansiBold + ansiGreen + selectedMark + ansiDefaultFg + " " + "agent   v1          T V S   " + ansiReset
 	if sel != want {
 		t.Errorf("selected row = %q, want %q", sel, want)
 	}
@@ -308,33 +308,76 @@ func TestTrustBadges(t *testing.T) {
 	}
 }
 
-func TestFormatRecordInfo_TrustStatus(t *testing.T) {
-	info := &dirclient.RecordInfo{CID: "bafy", SchemaVersion: "1.0.0"}
+func TestFormatTrustLine(t *testing.T) {
 	tests := []struct {
 		rec  dirclient.RecordSummary
-		want []string
+		want string
 	}{
-		{dirclient.RecordSummary{}, []string{"✗ Trusted   ✗ Verified   ? Safe"}},
-		{dirclient.RecordSummary{Trusted: true, Verified: true, Scan: dirclient.ScanSafe}, []string{"✓ Trusted   ✓ Verified   ✓ Safe"}},
-		{dirclient.RecordSummary{Scan: dirclient.ScanUnsafe}, []string{"✗ Safe"}},
+		{dirclient.RecordSummary{}, "✗ Trusted   ✗ Verified   ? Safe"},
+		{dirclient.RecordSummary{Trusted: true, Verified: true, Scan: dirclient.ScanSafe}, "✓ Trusted   ✓ Verified   ✓ Safe"},
+		{dirclient.RecordSummary{Scan: dirclient.ScanUnsafe}, "✗ Trusted   ✗ Verified   ✗ Safe"},
 	}
 	for _, tt := range tests {
-		raw := formatRecordInfo(info, &tt.rec, defaultTheme)
+		raw := formatTrustLine(&tt.rec, defaultTheme)
+		if got := stripANSI(raw); got != tt.want {
+			t.Errorf("trust line = %q, want %q", got, tt.want)
+		}
 		if !strings.Contains(raw, defaultTheme.Color5+"Trusted"+defaultTheme.Reset) {
 			t.Errorf("Trusted label not in Color5: %q", raw)
 		}
-		if tt.rec.Trusted && !strings.Contains(raw, defaultTheme.Color4+markYes) {
-			t.Errorf("check mark not green: %q", raw)
+		// Marks share the row badges' colors.
+		if tt.rec.Trusted && !strings.Contains(raw, defaultTheme.Color9+markYes) {
+			t.Errorf("check mark not in Color9: %q", raw)
 		}
 		if !tt.rec.Trusted && !strings.Contains(raw, defaultTheme.Color6+markNo) {
-			t.Errorf("cross not red: %q", raw)
+			t.Errorf("cross not in Color6: %q", raw)
 		}
-		got := stripANSI(raw)
-		for _, w := range append(tt.want, "Schema version: 1.0.0\n") {
-			if !strings.Contains(got, w) {
-				t.Errorf("info missing %q:\n%s", w, got)
-			}
-		}
+	}
+}
+
+func TestFormatRecordInfo_NoTrustLine(t *testing.T) {
+	// The trust line is rendered separately so it survives a PullInfo error
+	// and stays out of a copied error message.
+	got := stripANSI(formatRecordInfo(&dirclient.RecordInfo{CID: "bafy", SchemaVersion: "1.0.0"}, defaultTheme))
+	if got != "Schema version: 1.0.0" {
+		t.Fatalf("info = %q", got)
+	}
+}
+
+func TestRecordInfoBody(t *testing.T) {
+	app := &Gui{}
+	app.state.recordInfoTrust = "TRUST"
+
+	app.state.recordInfoLoading = true
+	if got, isErr := app.recordInfoBody("loading"); got != "loading\nTRUST" || isErr {
+		t.Errorf("loading body = %q, %v", got, isErr)
+	}
+
+	// A PullInfo error keeps the trust line, which the summary already holds.
+	app.state.recordInfoLoading = false
+	app.state.recordInfoText, app.state.recordInfoError = "pull failed", true
+	if got, isErr := app.recordInfoBody("loading"); got != "pull failed\nTRUST" || !isErr {
+		t.Errorf("error body = %q, %v", got, isErr)
+	}
+
+	app.state.recordInfoTrust = ""
+	if got, _ := app.recordInfoBody("loading"); got != "pull failed" {
+		t.Errorf("body without trust line = %q", got)
+	}
+}
+
+func TestRecordRowLine_WideCharacters(t *testing.T) {
+	// A wide name and a long non-ASCII version are cut by display width at a
+	// character boundary, and the row still fills the panel exactly.
+	wide := strings.Repeat(string(rune(0x65E5)), 10) // a two-cell CJK ideograph
+	name := runewidth.Truncate(wide, 8, "…")
+	version := runewidth.Truncate("v1.0.0-αβγδε", versionColWidth, "…")
+	if !utf8.ValidString(name) || !utf8.ValidString(version) {
+		t.Fatalf("truncation split a character: %q %q", name, version)
+	}
+	line := recordRowLine(ansiGreen, false, 8, 40, name, version, "T V S")
+	if got := runewidth.StringWidth(stripANSI(line)); got != 40 {
+		t.Fatalf("row display width = %d, want 40: %q", got, line)
 	}
 }
 

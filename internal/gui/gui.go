@@ -143,6 +143,7 @@ type appState struct {
 	recordInfoCID     string // CID of the record whose info is expanded, "" if none
 	recordInfoText    string // cached description text
 	recordInfoError   bool   // true when recordInfoText is an error message
+	recordInfoTrust   string // record info toggle's trust line, shown below recordInfoText
 	recordInfoLoading bool   // fetch in progress
 
 	// distinct values usable as filter options for each category, as returned
