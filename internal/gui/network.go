@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/jesseduffield/gocui"
@@ -193,6 +194,7 @@ func (app *Gui) startNetworkSearch() {
 			ns.cursor = 0
 			ns.notice = noticePickFilter
 		}
+		app.pruneNetSelection()
 		app.renderNetRecords()
 		return
 	}
@@ -397,11 +399,28 @@ func networkRowLine(r dirclient.NetworkResult, total int, st netSyncEntry, selec
 	case r.DirAddr == "":
 		marker = "no address"
 	}
-	text := fmt.Sprintf("%s  peer %s  %d/%d", shortID(r.CID), shortID(r.PeerID), r.Score, total)
-	if marker != "" {
-		text += "  " + marker
+	return styledRow(color, selected, viewW, fitNetworkRow(shortID(r.CID), shortID(r.PeerID), fmt.Sprintf("%d/%d", r.Score, total), marker, viewW-rowGutterWidth))
+}
+
+// fitNetworkRow joins a network row's fields to fit width columns. The CID,
+// score and marker always stay; the peer field shortens to the bare ID, then
+// drops, when the row is too wide.
+func fitNetworkRow(cid, peer, score, marker string, width int) string {
+	join := func(parts ...string) string {
+		var kept []string
+		for _, p := range parts {
+			if p != "" {
+				kept = append(kept, p)
+			}
+		}
+		return strings.Join(kept, "  ")
 	}
-	return styledRow(color, selected, viewW, text)
+	for _, p := range []string{"peer " + peer, peer} {
+		if text := join(cid, p, score, marker); utf8.RuneCountInString(text) <= width {
+			return text
+		}
+	}
+	return join(cid, score, marker)
 }
 
 // networkTitle builds the network-mode Records panel title.
@@ -722,7 +741,11 @@ func networkSyncConfirmBody(batches []peerBatch, skipped, noAddr int) string {
 	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Sync %d record(s) into this node?\n", n)
-	for _, b := range batches {
+	for i, b := range batches {
+		if i == batchConfirmListMax {
+			fmt.Fprintf(&sb, "\n  … and %d more peers", len(batches)-batchConfirmListMax)
+			break
+		}
 		fmt.Fprintf(&sb, "\n  %s: %d", b.addr, len(b.cids))
 	}
 	if left := netSyncLeftOut(skipped, noAddr); left != "" {
@@ -844,7 +867,14 @@ func (app *Gui) runNetworkSync(ctx context.Context, client *dirclient.Client, b 
 	if err != nil {
 		errMsg = netSyncErr(b.addr, syncID, err.Error())
 	}
-	if errMsg == "" && !waitForIndexed(ctx, client, b.cids, netIndexPollInterval, netIndexTimeout) && ctx.Err() == nil {
+	present := func(ctx context.Context) (map[string]bool, error) {
+		// A CID-only search asks whether the indexer has the records without
+		// pulling them; batches share one read per poll.
+		return app.netIndex.get(ctx, client, netIndexPollInterval, func(ctx context.Context) ([]string, error) {
+			return client.MatchingCIDs(ctx, nil)
+		})
+	}
+	if errMsg == "" && !waitForIndexed(ctx, present, b.cids, netIndexPollInterval, netIndexTimeout) && ctx.Err() == nil {
 		errMsg = netSyncErr(b.addr, syncID, fmt.Sprintf("synced, but this node did not index the records within %s", netIndexTimeout))
 	}
 	app.g.Update(func(*gocui.Gui) error {
@@ -853,10 +883,10 @@ func (app *Gui) runNetworkSync(ctx context.Context, client *dirclient.Client, b 
 	})
 }
 
-// waitForIndexed polls this node every interval until all cids are indexed,
-// reporting whether they were before timeout or ctx ended. Lookup errors are
+// waitForIndexed polls present every interval until it holds all cids,
+// reporting whether it did before timeout or ctx ended. Lookup errors are
 // retried until then.
-func waitForIndexed(ctx context.Context, client *dirclient.Client, cids []string, every, timeout time.Duration) bool {
+func waitForIndexed(ctx context.Context, present func(context.Context) (map[string]bool, error), cids []string, every, timeout time.Duration) bool {
 	// The deadline is on the context so it also interrupts a stalled check.
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -864,9 +894,7 @@ func waitForIndexed(ctx context.Context, client *dirclient.Client, cids []string
 	defer ticker.Stop()
 
 	for {
-		// A CID-only search asks whether the indexer has the records without
-		// pulling them.
-		if present, err := client.MatchingCIDs(ctx, nil); err == nil && containsAll(present, cids) {
+		if have, err := present(ctx); err == nil && containsAll(have, cids) {
 			return true
 		}
 		select {
@@ -878,13 +906,9 @@ func waitForIndexed(ctx context.Context, client *dirclient.Client, cids []string
 }
 
 // containsAll reports whether have holds every one of want.
-func containsAll(have, want []string) bool {
-	set := make(map[string]bool, len(have))
-	for _, c := range have {
-		set[c] = true
-	}
+func containsAll(have map[string]bool, want []string) bool {
 	for _, c := range want {
-		if !set[c] {
+		if !have[c] {
 			return false
 		}
 	}

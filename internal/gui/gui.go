@@ -276,6 +276,9 @@ type Gui struct {
 	// daemon manages a local dirctl daemon; nil when disabled or dirctl is
 	// missing. Set once in New, read-only afterwards.
 	daemon localDaemon
+	// netIndex is shared by the network syncs' background goroutines, so it
+	// lives outside the GUI-goroutine state.
+	netIndex indexSnapshot
 }
 
 // New creates and starts the lazydir GUI.
@@ -570,7 +573,8 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 					if prev != connOK && len(app.state.page.records) == 0 {
 						app.startQuery(true)
 					}
-					if prev != connOK && len(app.state.net.results) == 0 {
+					if prev != connOK {
+						// A search that failed during the outage is rerun.
 						app.startNetworkSearchIfActive()
 					}
 					return nil
@@ -787,6 +791,11 @@ func (app *Gui) oasfHealthLoop(stop chan struct{}) {
 			}
 			if app.state.oasfStatus != prev {
 				app.renderDirectory(g)
+			}
+			if err == nil && prev != connOK && app.state.browse == browseNetwork {
+				// Retries a taxonomy fetch that failed during the outage.
+				app.startNetworkTaxonomyFetch()
+				app.renderFiltersView(g)
 			}
 			return nil
 		})

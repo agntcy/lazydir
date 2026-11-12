@@ -466,6 +466,9 @@ func (app *Gui) cycleFocus(g *gocui.Gui, dir int) error {
 
 func (app *Gui) refresh(g *gocui.Gui, v *gocui.View) error {
 	if app.state.browse == browseNetwork {
+		// Also retries a taxonomy fetch that failed; loaded versions are kept.
+		app.startNetworkTaxonomyFetch()
+		app.renderFiltersView(g)
 		app.startNetworkSearch()
 		return nil
 	}

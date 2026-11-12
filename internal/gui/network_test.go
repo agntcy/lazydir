@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
 	"google.golang.org/grpc/codes"
@@ -827,11 +828,82 @@ func TestReloadLocalRecords_NotConnected(t *testing.T) {
 }
 
 func TestContainsAll(t *testing.T) {
-	have := []string{"a", "b", "c"}
+	have := map[string]bool{"a": true, "b": true, "c": true}
 	if !containsAll(have, []string{"c", "a"}) || !containsAll(have, nil) {
 		t.Error("subset not contained")
 	}
 	if containsAll(have, []string{"a", "d"}) {
 		t.Error("missing CID contained")
+	}
+}
+
+func TestFitNetworkRow(t *testing.T) {
+	const cid, peer, score, marker = "baeareih…mscu", "12D3KooW…U4tv", "1/2", "✓ synced"
+	for _, tc := range []struct {
+		width int
+		want  string
+	}{
+		{80, cid + "  peer " + peer + "  " + score + "  " + marker},
+		{46, cid + "  " + peer + "  " + score + "  " + marker},
+		{37, cid + "  " + score + "  " + marker},
+	} {
+		if got := fitNetworkRow(cid, peer, score, marker, tc.width); got != tc.want {
+			t.Errorf("width %d: got %q, want %q", tc.width, got, tc.want)
+		}
+	}
+	if got := fitNetworkRow(cid, peer, score, "", 80); got != cid+"  peer "+peer+"  "+score {
+		t.Errorf("no marker: got %q", got)
+	}
+}
+
+func TestNetworkSyncConfirmBody_CapsPeers(t *testing.T) {
+	var batches []peerBatch
+	for i := range batchConfirmListMax + 3 {
+		batches = append(batches, peerBatch{addr: fmt.Sprintf("peer%d:8888", i), cids: []string{fmt.Sprintf("c%d", i)}})
+	}
+	body := networkSyncConfirmBody(batches, 0, 0)
+	if strings.Contains(body, fmt.Sprintf("peer%d:", batchConfirmListMax)) || !strings.Contains(body, "… and 3 more peers") {
+		t.Errorf("body = %q, want %d peers listed and the rest summarized", body, batchConfirmListMax)
+	}
+	if !strings.HasPrefix(body, fmt.Sprintf("Sync %d record(s)", batchConfirmListMax+3)) {
+		t.Errorf("body = %q, want the full record count", body)
+	}
+}
+
+func TestStartNetworkSearch_NoFilterPrunesSelection(t *testing.T) {
+	app := newNetSearchApp()
+	app.state.net.selection = map[string]dirclient.NetworkResult{"c1": {CID: "c1"}}
+
+	app.startNetworkSearch() // no filters: no rows
+
+	if len(app.state.net.selection) != 0 {
+		t.Errorf("selection = %v, want pruned", app.state.net.selection)
+	}
+}
+
+func TestWaitForIndexed(t *testing.T) {
+	calls := 0
+	present := func(context.Context) (map[string]bool, error) {
+		calls++
+		if calls < 3 {
+			return map[string]bool{"a": true}, nil
+		}
+		return map[string]bool{"a": true, "b": true}, nil
+	}
+	if !waitForIndexed(context.Background(), present, []string{"a", "b"}, time.Millisecond, time.Second) {
+		t.Error("indexed records not reported")
+	}
+
+	// A stalled check is interrupted by the timeout.
+	stalled := func(ctx context.Context) (map[string]bool, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	start := time.Now()
+	if waitForIndexed(context.Background(), stalled, []string{"a"}, time.Millisecond, 50*time.Millisecond) {
+		t.Error("stalled check reported indexed")
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Error("timeout did not interrupt the stalled check")
 	}
 }
