@@ -6,7 +6,10 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // Sample directory addresses reused across the config tests.
@@ -247,5 +250,41 @@ func TestPageSize_LegacyStreamFallback(t *testing.T) {
 	c := Config{Stream: StreamConfig{FirstPageSize: 30}}
 	if got := c.PageSize(); got != 30 {
 		t.Fatalf("expected legacy fallback 30, got %d", got)
+	}
+}
+
+func TestLocalDaemonEffectiveMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct{ in, want string }{
+		{"", LocalDaemonAsk},
+		{"ask", LocalDaemonAsk},
+		{"AUTO", LocalDaemonAuto},
+		{" never ", LocalDaemonNever},
+		{"bogus", LocalDaemonAsk},
+	}
+	for _, tt := range tests {
+		got := LocalDaemonConfig{Mode: tt.in}.EffectiveMode()
+		if got != tt.want {
+			t.Errorf("EffectiveMode(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestLocalDaemonConfig_YAML(t *testing.T) {
+	t.Parallel()
+
+	src := "server:\n  localDaemon:\n    mode: auto\n    dirctlPath: /x/dirctl\n    dataDir: ~/d\n"
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	ld := cfg.Server.LocalDaemon
+	if ld.Mode != "auto" || ld.DirctlPath != "/x/dirctl" || ld.DataDir != "~/d" {
+		t.Fatalf("unexpected parse: %+v", ld)
+	}
+	r := ld.Resolved()
+	if strings.HasPrefix(r.DataDir, "~") || !strings.HasSuffix(r.DataDir, "/d") {
+		t.Errorf("Resolved().DataDir = %q", r.DataDir)
 	}
 }

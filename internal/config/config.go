@@ -80,14 +80,51 @@ func (e DirectoryEntry) Label() string {
 	return e.Address
 }
 
+// Local daemon start-up modes.
+const (
+	LocalDaemonAsk   = "ask"
+	LocalDaemonAuto  = "auto"
+	LocalDaemonNever = "never"
+)
+
+// LocalDaemonConfig controls whether lazydir offers to start a local
+// `dirctl daemon` when the local directory server is unreachable.
+type LocalDaemonConfig struct {
+	// Mode is one of ask (default), auto or never.
+	Mode string `yaml:"mode"`
+	// DirctlPath is the dirctl binary; empty means dirctl on PATH.
+	DirctlPath string `yaml:"dirctlPath"`
+	// DataDir is passed as --data-dir when set; empty uses dirctl's default.
+	DataDir string `yaml:"dataDir"`
+}
+
+// EffectiveMode returns the normalized mode, falling back to ask for an
+// empty or unknown value.
+func (l LocalDaemonConfig) EffectiveMode() string {
+	switch m := strings.ToLower(strings.TrimSpace(l.Mode)); m {
+	case LocalDaemonAuto, LocalDaemonNever:
+		return m
+	default:
+		return LocalDaemonAsk
+	}
+}
+
+// Resolved returns a copy with "~/" expanded in the path fields.
+func (l LocalDaemonConfig) Resolved() LocalDaemonConfig {
+	l.DirctlPath = expandHome(l.DirctlPath)
+	l.DataDir = expandHome(l.DataDir)
+	return l
+}
+
 // ServerConfig holds server addresses. Each list may contain multiple
 // predefined servers the user can switch between in the TUI; the first
 // entry in each list is used as the initial/default connection target.
 type ServerConfig struct {
-	DirctlConfigPath string           `yaml:"dirctlConfigPath"`
-	DirectoryServers []DirectoryEntry `yaml:"directoryServers"`
-	OASFServers      []string         `yaml:"oasfServers"`
-	OASFTimeout      int              `yaml:"oasfTimeout"`
+	DirctlConfigPath string            `yaml:"dirctlConfigPath"`
+	DirectoryServers []DirectoryEntry  `yaml:"directoryServers"`
+	OASFServers      []string          `yaml:"oasfServers"`
+	OASFTimeout      int               `yaml:"oasfTimeout"`
+	LocalDaemon      LocalDaemonConfig `yaml:"localDaemon"`
 
 	// Deprecated single-address fields kept for backward compatibility.
 	DirectoryAddress string `yaml:"directoryAddress"`

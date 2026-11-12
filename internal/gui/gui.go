@@ -232,6 +232,7 @@ type Config struct {
 	InputDebounceDelay int
 	DimLevel           float64
 	PageSize           int
+	LocalDaemon        config.LocalDaemonConfig
 }
 
 // Gui is the top-level lazydir GUI object.
