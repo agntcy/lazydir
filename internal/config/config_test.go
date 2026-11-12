@@ -271,20 +271,40 @@ func TestLocalDaemonEffectiveMode(t *testing.T) {
 	}
 }
 
+const testCustomDaemonAddr = "localhost:9999"
+
 func TestLocalDaemonConfig_YAML(t *testing.T) {
 	t.Parallel()
 
-	src := "server:\n  localDaemon:\n    mode: auto\n    dirctlPath: /x/dirctl\n    dataDir: ~/d\n"
+	src := "server:\n  localDaemon:\n    mode: auto\n    dirctlPath: /x/dirctl\n    dataDir: ~/d\n    address: " + testCustomDaemonAddr + "\n"
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	ld := cfg.Server.LocalDaemon
-	if ld.Mode != "auto" || ld.DirctlPath != "/x/dirctl" || ld.DataDir != "~/d" {
+	if ld.Mode != "auto" || ld.DirctlPath != "/x/dirctl" || ld.DataDir != "~/d" || ld.EffectiveAddress() != testCustomDaemonAddr {
 		t.Fatalf("unexpected parse: %+v", ld)
 	}
 	r := ld.Resolved()
 	if strings.HasPrefix(r.DataDir, "~") || !strings.HasSuffix(r.DataDir, "/d") {
 		t.Errorf("Resolved().DataDir = %q", r.DataDir)
+	}
+}
+
+func TestLocalDaemonEffectiveAddress(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct{ in, want string }{
+		{"", DefaultLocalDaemonAddress},
+		{"  ", DefaultLocalDaemonAddress},
+		{testCustomDaemonAddr, testCustomDaemonAddr},
+	}
+	for _, tt := range tests {
+		if got := (LocalDaemonConfig{Address: tt.in}).EffectiveAddress(); got != tt.want {
+			t.Errorf("EffectiveAddress(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+	if DefaultLocalDaemonAddress != "localhost:8888" {
+		t.Errorf("DefaultLocalDaemonAddress = %q, want localhost:8888", DefaultLocalDaemonAddress)
 	}
 }

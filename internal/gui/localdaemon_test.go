@@ -14,28 +14,40 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const testLocalAddr = "localhost:8888"
+const (
+	testLocalAddr        = "localhost:8888"
+	testCustomDaemonAddr = "localhost:9999"
+)
 
 func TestLocalDaemonEligible(t *testing.T) {
 	t.Parallel()
 
+	def := config.DefaultLocalDaemonAddress
 	tests := []struct {
-		name     string
-		mode     string
-		addr     string
-		authMode string
-		want     bool
+		name       string
+		mode       string
+		addr       string
+		authMode   string
+		daemonAddr string
+		want       bool
 	}{
-		{name: "ask localhost no auth", mode: config.LocalDaemonAsk, addr: testLocalAddr, authMode: "", want: true},
-		{name: "never", mode: config.LocalDaemonNever, addr: testLocalAddr, authMode: "", want: false},
-		{name: "tls", mode: config.LocalDaemonAsk, addr: testLocalAddr, authMode: "tls", want: false},
-		{name: "remote host", mode: config.LocalDaemonAsk, addr: "dir.example.com:443", authMode: "insecure", want: false},
+		{name: "ask localhost no auth", mode: config.LocalDaemonAsk, addr: testLocalAddr, daemonAddr: def, want: true},
+		{name: "never", mode: config.LocalDaemonNever, addr: testLocalAddr, daemonAddr: def, want: false},
+		{name: "tls", mode: config.LocalDaemonAsk, addr: testLocalAddr, authMode: "tls", daemonAddr: def, want: false},
+		{name: "remote host", mode: config.LocalDaemonAsk, addr: "dir.example.com:443", authMode: "insecure", daemonAddr: def, want: false},
+		{name: "other loopback port", mode: config.LocalDaemonAsk, addr: "localhost:8080", daemonAddr: def, want: false},
+		{name: "127.0.0.1 default port", mode: config.LocalDaemonAsk, addr: "127.0.0.1:8888", daemonAddr: def, want: true},
+		{name: "ipv6 loopback default port", mode: config.LocalDaemonAsk, addr: "[::1]:8888", daemonAddr: def, want: true},
+		{name: "custom daemon address", mode: config.LocalDaemonAsk, addr: testCustomDaemonAddr, daemonAddr: testCustomDaemonAddr, want: true},
+		{name: "custom daemon address other port", mode: config.LocalDaemonAsk, addr: testLocalAddr, daemonAddr: testCustomDaemonAddr, want: false},
+		{name: "daemon address not loopback", mode: config.LocalDaemonAsk, addr: testLocalAddr, daemonAddr: "10.0.0.1:8888", want: false},
+		{name: "no port", mode: config.LocalDaemonAsk, addr: "localhost", daemonAddr: def, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := localDaemonEligible(tt.mode, tt.addr, tt.authMode); got != tt.want {
-				t.Errorf("localDaemonEligible(%q, %q, %q) = %v, want %v", tt.mode, tt.addr, tt.authMode, got, tt.want)
+			if got := localDaemonEligible(tt.mode, tt.addr, tt.authMode, tt.daemonAddr); got != tt.want {
+				t.Errorf("localDaemonEligible(%q, %q, %q, %q) = %v, want %v", tt.mode, tt.addr, tt.authMode, tt.daemonAddr, got, tt.want)
 			}
 		})
 	}
@@ -46,7 +58,7 @@ func TestDecideLocalDaemon(t *testing.T) {
 
 	unavailable := status.Error(codes.Unavailable, "down")
 	deadline := status.Error(codes.DeadlineExceeded, "slow")
-	local := daemonDecision{Mode: config.LocalDaemonAsk, Addr: testLocalAddr, AuthMode: "insecure", PingErr: unavailable, HaveDirctl: true}
+	local := daemonDecision{Mode: config.LocalDaemonAsk, Addr: testLocalAddr, AuthMode: "insecure", DaemonAddr: config.DefaultLocalDaemonAddress, PingErr: unavailable, HaveDirctl: true}
 
 	with := func(f func(*daemonDecision)) daemonDecision {
 		d := local
@@ -60,6 +72,7 @@ func TestDecideLocalDaemon(t *testing.T) {
 		want daemonAction
 	}{
 		{name: "remote host", d: with(func(d *daemonDecision) { d.Addr = "dir.example.com:443" }), want: daemonNone},
+		{name: "other loopback port", d: with(func(d *daemonDecision) { d.Addr = "localhost:8080" }), want: daemonNone},
 		{name: "ping ok", d: with(func(d *daemonDecision) { d.PingErr = nil }), want: daemonNone},
 		{name: "deadline exceeded", d: with(func(d *daemonDecision) { d.PingErr = deadline }), want: daemonNone},
 		{name: "no dirctl", d: with(func(d *daemonDecision) { d.HaveDirctl = false }), want: daemonNone},
