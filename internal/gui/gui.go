@@ -78,6 +78,11 @@ type appState struct {
 	// Connections panel cursor (0 = Directory, 1 = OASF)
 	connCursor int
 
+	// browse selects between This node and Network discovery mode. net holds
+	// the network-mode state, kept separate from the This-node state.
+	browse browseMode
+	net    netState
+
 	// Directory connection
 	activeDir        config.DirectoryEntry
 	serverAddr       string
@@ -170,6 +175,17 @@ type appState struct {
 	classEntries     map[oasf.ClassType]map[string]oasf.ClassEntry
 	classEntriesVers map[string]bool
 
+	// Network-mode taxonomy, reset when the OASF client changes. netVersions
+	// is nil until the server's version list has loaded; netTaxonomy holds the
+	// trees by version and class type; netTaxonomyVers tracks versions fetched
+	// or in flight; netTaxonomyFailed records that the last fetch failed.
+	netVersions        []string
+	netDefaultVersion  string
+	netVersionsLoading bool
+	netTaxonomy        map[string]map[oasf.ClassType][]oasf.TreeNode
+	netTaxonomyVers    map[string]bool
+	netTaxonomyFailed  bool
+
 	// [2] Filters panel state
 	filters filterState
 
@@ -240,6 +256,9 @@ type Gui struct {
 	state appState
 	cfg   Config
 	theme Theme
+	// netIndex is shared by the network syncs' background goroutines, so it
+	// lives outside the GUI-goroutine state.
+	netIndex indexSnapshot
 }
 
 // New creates and starts the lazydir GUI.
@@ -265,6 +284,7 @@ func New(cfg Config) error {
 			oasfClient:   oasfClient,
 			filters:      newFilterState(),
 			filterValues: newFilterValueAggregator(),
+			net:          netState{filters: newNetFilterState()},
 		},
 	}
 
@@ -309,7 +329,9 @@ func New(cfg Config) error {
 	defer close(uiStop)
 	go app.uiRefreshLoop(uiStop)
 
-	if err := g.MainLoop(); !gocui.IsQuit(err) {
+	err = g.MainLoop()
+	app.closePeers()
+	if !gocui.IsQuit(err) {
 		return fmt.Errorf("main loop: %w", err)
 	}
 
@@ -339,6 +361,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		app.stopReconnectLoop()
 		if app.state.client != nil {
 			app.state.client.Close()
+			app.closePeers()
 		}
 		app.state.client = c
 		app.state.serverAddr = cfg.ServerAddress
@@ -348,6 +371,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		app.renderDirectory(g)
 		app.renderStatus(g)
 		app.startQuery(true)
+		app.startNetworkSearchIfActive()
 		return nil
 	})
 }
@@ -392,14 +416,15 @@ func (app *Gui) uiRefreshLoop(stop chan struct{}) {
 			return
 		case <-ticker.C:
 			app.g.Update(func(g *gocui.Gui) error {
-				if !app.state.loadedOnce || app.state.dataFetchedAt.IsZero() {
+				network := app.state.browse == browseNetwork
+				if !network && (!app.state.loadedOnce || app.state.dataFetchedAt.IsZero()) {
 					return nil
 				}
 				v, err := g.View(viewRecords)
 				if err != nil {
 					return nil
 				}
-				if title := app.recordsTitle(); title != v.Title {
+				if title := app.recordsPanelTitle(); title != v.Title {
 					v.Title = title
 				}
 				return nil
@@ -477,6 +502,10 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 					}
 					if prev != connOK && len(app.state.page.records) == 0 {
 						app.startQuery(true)
+					}
+					if prev != connOK {
+						// A search that failed during the outage is rerun.
+						app.startNetworkSearchIfActive()
 					}
 					return nil
 				})
@@ -571,6 +600,7 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 			}
 			app.renderDirectory(g)
 			app.startQuery(true)
+			app.startNetworkSearchIfActive()
 			return nil
 		})
 		ticker.Reset(healthInterval)
@@ -623,12 +653,14 @@ func (app *Gui) tryOIDCTokenRefresh(
 			return nil
 		}
 		snap.client.Close()
+		app.closePeers()
 		app.state.client = c
 		app.state.dirLastCfg = &cfg
 		app.state.dirStatus = connOK
 		app.state.dirLastConnected = time.Now()
 		app.state.dirError = ""
 		app.renderDirectory(g)
+		app.startNetworkSearchIfActive()
 		return nil
 	})
 	return true
@@ -689,6 +721,11 @@ func (app *Gui) oasfHealthLoop(stop chan struct{}) {
 			}
 			if app.state.oasfStatus != prev {
 				app.renderDirectory(g)
+			}
+			if err == nil && prev != connOK && app.state.browse == browseNetwork {
+				// Retries a taxonomy fetch that failed during the outage.
+				app.startNetworkTaxonomyFetch()
+				app.renderFiltersView(g)
 			}
 			return nil
 		})
@@ -1235,6 +1272,92 @@ func (app *Gui) fetchClassEntries(schemaVersion string) {
 func (app *Gui) forgetClassEntriesVersion(schemaVersion string) {
 	app.g.Update(func(g *gocui.Gui) error {
 		delete(app.state.classEntriesVers, schemaVersion)
+		return nil
+	})
+}
+
+// startNetworkTaxonomyFetch loads, in the background, the OASF version list
+// (once per OASF client) and then the taxonomy trees of every active version
+// not yet fetched or in flight. Results land on the GUI goroutine and are
+// dropped when the OASF client has changed meanwhile. Must be called on the GUI
+// goroutine.
+func (app *Gui) startNetworkTaxonomyFetch() {
+	client := app.state.oasfClient
+	if client == nil {
+		return
+	}
+	if app.state.netVersions == nil {
+		if app.state.netVersionsLoading {
+			return
+		}
+		app.state.netVersionsLoading = true
+		app.state.netTaxonomyFailed = false
+		go app.fetchNetworkVersions(client)
+		return
+	}
+	for _, v := range app.activeNetVersions() {
+		if app.state.netTaxonomyVers[v] {
+			continue
+		}
+		if app.state.netTaxonomyVers == nil {
+			app.state.netTaxonomyVers = map[string]bool{}
+		}
+		app.state.netTaxonomyVers[v] = true
+		app.state.netTaxonomyFailed = false
+		go app.fetchNetworkTaxonomy(client, v)
+	}
+}
+
+func (app *Gui) fetchNetworkVersions(client *oasf.Client) {
+	versions, def, err := client.SchemaVersions(context.Background())
+	app.g.Update(func(g *gocui.Gui) error {
+		if app.state.oasfClient != client {
+			return nil
+		}
+		app.state.netVersionsLoading = false
+		if err != nil {
+			app.state.netTaxonomyFailed = true
+			app.renderFiltersView(g)
+			return nil
+		}
+		if versions == nil {
+			versions = []string{}
+		}
+		app.state.netVersions = versions
+		app.state.netDefaultVersion = def
+		app.startNetworkTaxonomyFetch()
+		app.renderFiltersView(g)
+		return nil
+	})
+}
+
+// fetchNetworkTaxonomy fetches the skill, domain and module trees of one OASF
+// version. On failure the version is forgotten so the next trigger retries it.
+func (app *Gui) fetchNetworkTaxonomy(client *oasf.Client, version string) {
+	trees := map[oasf.ClassType][]oasf.TreeNode{}
+	var fetchErr error
+	for _, ct := range []oasf.ClassType{oasf.ClassTypeSkill, oasf.ClassTypeDomain, oasf.ClassTypeModule} {
+		tree, err := client.FetchTree(context.Background(), ct, version)
+		if err != nil {
+			fetchErr = err
+			break
+		}
+		trees[ct] = tree
+	}
+	app.g.Update(func(g *gocui.Gui) error {
+		if app.state.oasfClient != client {
+			return nil
+		}
+		if fetchErr != nil {
+			delete(app.state.netTaxonomyVers, version)
+			app.state.netTaxonomyFailed = true
+		} else {
+			if app.state.netTaxonomy == nil {
+				app.state.netTaxonomy = map[string]map[oasf.ClassType][]oasf.TreeNode{}
+			}
+			app.state.netTaxonomy[version] = trees
+		}
+		app.renderFiltersView(g)
 		return nil
 	})
 }

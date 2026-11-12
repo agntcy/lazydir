@@ -329,6 +329,11 @@ func (c *Client) PullJSON(ctx context.Context, cid string) (string, error) {
 		return "", fmt.Errorf("pulling record %s: %w", cid, err)
 	}
 
+	return recordJSON(record)
+}
+
+// recordJSON formats a record's data as indented JSON.
+func recordJSON(record *corev1.Record) (string, error) {
 	data := record.GetData()
 	if data == nil {
 		return "{}", nil

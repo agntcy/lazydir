@@ -257,9 +257,10 @@ func (app *Gui) infoPopupCopyError(g *gocui.Gui, v *gocui.View) error {
 	var errText string
 	switch app.state.infoPopupPanel {
 	case viewDirectory:
-		if app.state.connCursor == 0 {
+		switch app.state.connCursor {
+		case connRowDirectory:
 			errText = app.state.dirError
-		} else {
+		case connRowOASF:
 			errText = app.state.oasfError
 		}
 	case viewFilters:
@@ -294,7 +295,7 @@ func (app *Gui) openHelp(g *gocui.Gui, v *gocui.View) error {
 	}
 	hv.Clear()
 	_ = hv.SetOrigin(0, 0)
-	for _, line := range helpPopupLines(app.state.popupPrevView) {
+	for _, line := range helpPopupLines(app.state.popupPrevView, app.state.browse == browseNetwork) {
 		fmt.Fprintln(hv, line)
 	}
 	hv.Visible = true

@@ -49,9 +49,9 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 
 	optionsX1 := maxX - 1
 
-	// [1] Connections shows two lines (Directory, OASF).
-	// Height = frame(2) + 2 content lines.
-	dirH := 4
+	// [1] Connections shows three lines (Directory, OASF, mode).
+	// Height = frame(2) + 3 content lines.
+	dirH := 5
 
 	// The input prompt, when visible, steals a 3-row slot on the left column
 	// above the panel that requested it (the "host"). Panels below the host
@@ -405,14 +405,18 @@ func (g *Gui) renderStatus(gui *gocui.Gui) {
 	if v, err := gui.View(viewOptions); err == nil {
 		v.Clear()
 		syncingCount, reconcilingCount := g.syncCounts()
+		selected := len(g.state.selection)
+		if g.state.browse == browseNetwork {
+			selected = len(g.state.net.selection)
+		}
 		status := barStatus{
-			selected:    len(g.state.selection),
+			selected:    selected,
 			copied:      len(g.state.clipboard),
 			syncing:     syncingCount,
 			reconciling: reconcilingCount,
 			progress:    g.state.batchProgress,
 		}
-		fmt.Fprintf(v, "%s%s%s", g.theme.Color5, optionsBarText(focused, v.InnerWidth(), status), g.theme.Reset)
+		fmt.Fprintf(v, "%s%s%s", g.theme.Color5, optionsBarText(focused, v.InnerWidth(), g.state.browse == browseNetwork, status), g.theme.Reset)
 	}
 }
 
@@ -454,6 +458,7 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 		oasfAddr = "(not configured)"
 	}
 	fmt.Fprintf(v, " %s OASF:      %s%s", g.connIcon(g.state.oasfStatus), oasfAddr, connSync(g.state.oasfStatus))
+	fmt.Fprintf(v, "\n %s", g.modeLine())
 
 	_ = v.SetCursor(0, g.state.connCursor)
 }

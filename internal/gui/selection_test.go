@@ -245,7 +245,7 @@ func TestRecordsTitle_SelectedCount(t *testing.T) {
 }
 
 func TestOptionsBarText_SelectionAndProgress(t *testing.T) {
-	got := optionsBarText(viewRecords, 0, barStatus{selected: 2, progress: "deleting 1/2"})
+	got := optionsBarText(viewRecords, 0, false, barStatus{selected: 2, progress: "deleting 1/2"})
 	if !strings.Contains(got, "2 selected") || !strings.Contains(got, "deleting 1/2") {
 		t.Fatalf("options bar = %q", got)
 	}

@@ -55,7 +55,9 @@ func init() {
 
 // ── Preview panel: data fetching ──────────────────────────────────────────────
 
-func (app *Gui) pullRecord(subtitle, cid string) {
+// pullRecord fetches a This-node record for the preview; mode is the browse
+// mode captured on the GUI goroutine when the pull started.
+func (app *Gui) pullRecord(mode browseMode, subtitle, cid string) {
 	client := app.state.client
 	if client == nil {
 		return
@@ -63,18 +65,36 @@ func (app *Gui) pullRecord(subtitle, cid string) {
 	ctx := context.Background()
 	jsonStr, err := client.PullJSON(ctx, cid)
 	app.g.Update(func(g *gocui.Gui) error {
-		if err != nil {
-			app.renderPreviewError(g, err.Error())
-			return nil
-		}
-		app.renderPreviewJSON(g, subtitle, jsonStr)
+		app.applyLocalPreview(mode, subtitle, jsonStr, err)
 		return nil
 	})
+}
+
+// applyLocalPreview lands a pull started in browse mode mode, reporting
+// whether it rendered. A pull landing after a mode switch is dropped so it
+// can't overwrite the other mode's preview. Must be called on the GUI
+// goroutine.
+func (app *Gui) applyLocalPreview(mode browseMode, subtitle, jsonStr string, err error) bool {
+	if mode != app.state.browse {
+		return false
+	}
+	if err != nil {
+		app.renderPreviewError(app.g, err.Error())
+		return true
+	}
+	app.renderPreviewJSON(app.g, subtitle, jsonStr)
+	return true
 }
 
 // autoPreviewRecord fires a background pull for the record currently under the
 // cursor, resetting the preview scroll position first.
 func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
+	if app.state.browse == browseNetwork {
+		if r, ok := app.netCursorRow(); ok {
+			app.previewNetworkResult(g, r)
+		}
+		return
+	}
 	rows := app.state.recordDisplayRows
 	if app.state.recordCursor >= len(rows) {
 		return
@@ -93,7 +113,25 @@ func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
 	if pv, err := g.View(viewPreview); err == nil {
 		_ = pv.SetOrigin(0, 0)
 	}
-	go app.pullRecord(subtitle, rec.CID)
+	go app.pullRecord(app.state.browse, subtitle, rec.CID)
+}
+
+// previewForModeSwitch previews the cursor row of the mode just switched to,
+// or clears the preview when that mode has no cursor row yet, so the other
+// mode's preview never lingers. Must be called on the GUI goroutine.
+func (app *Gui) previewForModeSwitch(g *gocui.Gui) {
+	if app.state.browse == browseNetwork {
+		if _, ok := app.netCursorRow(); ok {
+			app.autoPreviewRecord(g)
+			return
+		}
+	} else if c, rows := app.state.recordCursor, app.state.recordDisplayRows; c < len(rows) && rows[c].record != nil && rows[c].record.CID != "" {
+		app.autoPreviewRecord(g)
+		return
+	}
+	// Drops a peer fetch still in flight.
+	app.state.net.previewGen++
+	app.renderPreviewText(g, "", "")
 }
 
 // ── Preview panel: rendering ──────────────────────────────────────────────────
@@ -180,10 +218,23 @@ func (app *Gui) renderPreviewJSON(g *gocui.Gui, subtitle, jsonStr string) {
 	app.writePreview(g, true)
 }
 
+// renderPreviewText writes plain text (no JSON tree) to the preview panel.
+func (app *Gui) renderPreviewText(g *gocui.Gui, subtitle, text string) {
+	app.state.previewSubtitle = subtitle
+	app.state.previewContent = text
+	app.state.previewTree = nil
+	app.state.previewCursor = 0
+	app.setPreviewWrap(g, true)
+	app.writePreview(g, true)
+}
+
 // setPreviewWrap enables or disables line wrapping on the preview view.
 // Wrapping is on for plain text and off for JSON trees so that the gocui
 // cursor row always maps 1:1 to the logical tree line index.
 func (app *Gui) setPreviewWrap(g *gocui.Gui, on bool) {
+	if g == nil {
+		return
+	}
 	v, err := g.View(viewPreview)
 	if err != nil {
 		return
@@ -197,6 +248,9 @@ func (app *Gui) setPreviewWrap(g *gocui.Gui, on bool) {
 // The gocui cursor is positioned on previewCursor so the highlight row is
 // always visible regardless of which panel has focus.
 func (app *Gui) writePreview(g *gocui.Gui, resetScroll bool) {
+	if g == nil {
+		return
+	}
 	v, err := g.View(viewPreview)
 	if err != nil {
 		return

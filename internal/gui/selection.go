@@ -268,6 +268,12 @@ func deleteEach(ctx context.Context, records []*dirclient.RecordSummary, del fun
 
 // recordToggleSelect selects or unselects the highlighted record (space).
 func (app *Gui) recordToggleSelect(g *gocui.Gui, _ *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.toggleNetSelected()
+		app.renderRecordsView(g)
+		app.renderStatus(g)
+		return nil
+	}
 	r := app.cursorRecord()
 	if r == nil || r.CID == "" {
 		return nil
@@ -279,9 +285,13 @@ func (app *Gui) recordToggleSelect(g *gocui.Gui, _ *gocui.View) error {
 }
 
 // recordSelectAll selects every loaded record, or clears the selection when
-// all are selected (ctrl+a).
+// all are selected (ctrl+a). In network mode it acts on the listed rows.
 func (app *Gui) recordSelectAll(g *gocui.Gui, _ *gocui.View) error {
-	app.selectAllLoaded()
+	if app.state.browse == browseNetwork {
+		app.selectAllNetRows()
+	} else {
+		app.selectAllLoaded()
+	}
 	app.renderRecordsView(g)
 	app.renderStatus(g)
 	return nil
@@ -385,6 +395,7 @@ func (app *Gui) runBatchDelete(client *dirclient.Client, id uint64, records []*d
 		for _, cid := range deleted {
 			app.removeRecordFromState(cid)
 		}
+		app.forgetNetSynced(deleted...)
 		app.state.selection = nil
 		if len(deleted) > 0 {
 			// Reload the records: pages fetched while the deletes ran, and

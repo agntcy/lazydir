@@ -10,6 +10,7 @@ vars:
   GOLANGCI_LINT_BIN: "{{ .BIN_DIR }}/golangci-lint-{{ .GOLANGCI_LINT_VERSION }}"
   DIRCTL_VERSION: "1.8.0"
   DIRCTL_BIN: "{{ .BIN_DIR }}/dirctl"
+  DEV_NETWORK_DIR: "{{ .ROOT_DIR }}/.bin/dirnet"
 
   VERSION_LDFLAGS: >-
     -X main.version={{.VERSION | default "dev"}}
@@ -136,6 +137,58 @@ tasks:
         done
         "{{ ._DIRCTL }}" daemon status >/dev/null 2>&1 || { echo "ERROR: daemon failed to start" >&2; exit 1; }
         cd tests/e2e && go test -v -count=1 -timeout 120s ./...
+
+  test:e2e:network:
+    desc: Run network e2e tests (starts two peered daemons in temp data dirs)
+    deps:
+      - deps:dirctl
+    vars:
+      _DIRCTL: "{{ .ROOT_DIR }}/{{ .DIRCTL_BIN }}"
+      MAIN_API: localhost:8878
+      PEER_API: localhost:8898
+    env:
+      DIRCTL_BIN: "{{ ._DIRCTL }}"
+      DIR_SERVER: "{{ .MAIN_API }}"
+      DIR_PEER_SERVER: "{{ .PEER_API }}"
+    cmds:
+      - |
+        set -eu
+        tmp="$(mktemp -d)"
+        # Only the two temp-dir daemons started here are stopped; the default
+        # daemon and ~/.agntcy/dir are never touched.
+        cleanup() {
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            for log in "$tmp"/*.log; do
+              [ -f "$log" ] && { echo "--- $log" >&2; tail -n 20 "$log" >&2; }
+            done
+          fi
+          sh "{{ .ROOT_DIR }}/tests/e2e/dirnet.sh" stop "$tmp"
+          rm -rf "$tmp"
+        }
+        trap cleanup EXIT
+        sh "{{ .ROOT_DIR }}/tests/e2e/dirnet.sh" start "$tmp"
+        cd tests/e2e && go test -v -count=1 -timeout 300s -run TestNetwork ./...
+
+  dev:network:
+    desc: Start two peered dir daemons (main localhost:8878, peer localhost:8898) and seed sample records; they keep running until dev:network:stop
+    deps:
+      - deps:dirctl
+    env:
+      DIRCTL_BIN: "{{ .ROOT_DIR }}/{{ .DIRCTL_BIN }}"
+    cmds:
+      - sh "{{ .ROOT_DIR }}/tests/e2e/dirnet.sh" start "{{ .DEV_NETWORK_DIR }}"
+      - sh "{{ .ROOT_DIR }}/tests/e2e/dirnet.sh" seed
+      - 'echo "Run lazydir against main: DIRECTORY_CLIENT_SERVER_ADDRESS=localhost:8878 task run"'
+
+  dev:network:stop:
+    desc: Stop the daemons started by dev:network (data stays in DEV_NETWORK_DIR)
+    deps:
+      - deps:dirctl
+    env:
+      DIRCTL_BIN: "{{ .ROOT_DIR }}/{{ .DIRCTL_BIN }}"
+    cmds:
+      - sh "{{ .ROOT_DIR }}/tests/e2e/dirnet.sh" stop "{{ .DEV_NETWORK_DIR }}"
 
   check:
     desc: Run all checks (fmt, vet, lint, unit+e2e tests) then build
