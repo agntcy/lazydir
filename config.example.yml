@@ -21,6 +21,11 @@ gui:
   inputDebounceDelay: 150 # ms before live filter fires
 
 server:
+  # Offer to start a local `dirctl daemon` when the local server is unreachable.
+  # localDaemon:
+  #   mode: ask # ask | auto | never
+  #   dirctlPath: "dirctl" # default: dirctl on PATH
+  #   dataDir: "~/.local/share/dirctl" # passed as --data-dir; default: dirctl's own
   # dirctlConfigPath: "~/.config/dirctl/config.yaml" # import named contexts from dirctl
   directoryServers: # predefined servers shown in popup (first = default)
     - address: "localhost:8888"
