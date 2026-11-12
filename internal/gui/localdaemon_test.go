@@ -17,6 +17,7 @@ import (
 const (
 	testLocalAddr        = "localhost:8888"
 	testCustomDaemonAddr = "localhost:9999"
+	testRemoteAddr       = "dir.example.com:443"
 )
 
 func TestLocalDaemonEligible(t *testing.T) {
@@ -34,7 +35,7 @@ func TestLocalDaemonEligible(t *testing.T) {
 		{name: "ask localhost no auth", mode: config.LocalDaemonAsk, addr: testLocalAddr, daemonAddr: def, want: true},
 		{name: "never", mode: config.LocalDaemonNever, addr: testLocalAddr, daemonAddr: def, want: false},
 		{name: "tls", mode: config.LocalDaemonAsk, addr: testLocalAddr, authMode: "tls", daemonAddr: def, want: false},
-		{name: "remote host", mode: config.LocalDaemonAsk, addr: "dir.example.com:443", authMode: "insecure", daemonAddr: def, want: false},
+		{name: "remote host", mode: config.LocalDaemonAsk, addr: testRemoteAddr, authMode: "insecure", daemonAddr: def, want: false},
 		{name: "other loopback port", mode: config.LocalDaemonAsk, addr: "localhost:8080", daemonAddr: def, want: false},
 		{name: "127.0.0.1 default port", mode: config.LocalDaemonAsk, addr: "127.0.0.1:8888", daemonAddr: def, want: true},
 		{name: "ipv6 loopback default port", mode: config.LocalDaemonAsk, addr: "[::1]:8888", daemonAddr: def, want: true},
@@ -71,7 +72,7 @@ func TestDecideLocalDaemon(t *testing.T) {
 		d    daemonDecision
 		want daemonAction
 	}{
-		{name: "remote host", d: with(func(d *daemonDecision) { d.Addr = "dir.example.com:443" }), want: daemonNone},
+		{name: "remote host", d: with(func(d *daemonDecision) { d.Addr = testRemoteAddr }), want: daemonNone},
 		{name: "other loopback port", d: with(func(d *daemonDecision) { d.Addr = "localhost:8080" }), want: daemonNone},
 		{name: "ping ok", d: with(func(d *daemonDecision) { d.PingErr = nil }), want: daemonNone},
 		{name: "deadline exceeded", d: with(func(d *daemonDecision) { d.PingErr = deadline }), want: daemonNone},
@@ -292,4 +293,73 @@ func TestStopOwnedDaemon_NotOwned(t *testing.T) {
 func TestStopOwnedDaemon_NilDaemon(t *testing.T) {
 	t.Parallel()
 	(&Gui{}).stopOwnedDaemon()
+}
+
+func TestConnectNormally(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		action  daemonAction
+		pingErr error
+		want    bool
+	}{
+		{name: "ping ok", action: daemonNone, want: true},
+		{name: "deadline exceeded", action: daemonNone, pingErr: status.Error(codes.DeadlineExceeded, "slow"), want: true},
+		{name: "plain error", action: daemonNone, pingErr: errors.New("boom"), want: true},
+		{name: "unavailable no offer", action: daemonNone, pingErr: status.Error(codes.Unavailable, "down"), want: false},
+		{name: "ask", action: daemonAsk, pingErr: status.Error(codes.Unavailable, "down"), want: false},
+		{name: "auto", action: daemonAuto, pingErr: status.Error(codes.Unavailable, "down"), want: false},
+		{name: "wait owned", action: daemonWaitOwned, pingErr: status.Error(codes.Unavailable, "down"), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := connectNormally(tt.action, tt.pingErr); got != tt.want {
+				t.Errorf("connectNormally(%v, %v) = %v, want %v", tt.action, tt.pingErr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOfferStillValid(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		server string
+		status connStatus
+		want   bool
+	}{
+		{name: "still down", server: testLocalAddr, status: connFailed, want: true},
+		{name: "came up on its own", server: testLocalAddr, status: connOK, want: false},
+		{name: "switched server", server: testRemoteAddr, status: connFailed, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			app := &Gui{state: appState{serverAddr: tt.server, dirStatus: tt.status}}
+			if got := app.offerStillValid(testLocalAddr); got != tt.want {
+				t.Errorf("offerStillValid = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDaemonOfferOpen(t *testing.T) {
+	t.Parallel()
+
+	app := &Gui{}
+	if app.daemonOfferOpen() {
+		t.Fatal("no popup open")
+	}
+	app.state.daemonOfferAddr = testLocalAddr
+	app.state.menu = menuState{view: viewConfirmPopup}
+	if !app.daemonOfferOpen() {
+		t.Fatal("offer popup not recognised")
+	}
+	app.state.daemonOfferAddr = "" // another confirm popup replaced it
+	if app.daemonOfferOpen() {
+		t.Fatal("a different confirm popup must not count as the offer")
+	}
 }

@@ -227,6 +227,7 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.daemonStarting = false
 	app.state.daemonReady = nil
 	app.state.localDaemonHint = false
+	app.state.daemonOfferAddr = ""
 	app.state.recordCursor = 0
 	app.state.page.reset()
 	app.state.dirUnsupported = false

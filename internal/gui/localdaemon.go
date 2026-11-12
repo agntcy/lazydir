@@ -121,6 +121,15 @@ func decideLocalDaemon(d daemonDecision) daemonAction {
 	return daemonAsk
 }
 
+// connectNormally reports whether connect should take the plain path:
+// install the client and run startQuery. That is the case when no daemon is
+// offered and the ping either succeeded or failed with something other than
+// Unavailable (e.g. a slow server), exactly as before the local daemon
+// feature. Only an Unavailable ping with nothing to offer shows the error.
+func connectNormally(action daemonAction, pingErr error) bool {
+	return action == daemonNone && status.Code(pingErr) != codes.Unavailable
+}
+
 // startOutcome is how waiting for a started daemon ended.
 type startOutcome int
 
@@ -161,12 +170,45 @@ func daemonFailureReason(outcome startOutcome, err error) string {
 // the GUI goroutine.
 func (app *Gui) offerLocalDaemon(g *gocui.Gui, addr string) {
 	body := fmt.Sprintf("Nothing is listening on %s. Start a local daemon? It stops when lazydir quits.", addr)
-	app.openConfirmPopup(g, "No local directory", body, func() { app.startLocalDaemon(g) })
-	showError := func() { app.openInfoPopup(g, viewDirectory) }
+	app.openConfirmPopup(g, "No local directory", body, func() {
+		if app.offerStillValid(addr) {
+			app.startLocalDaemon(g)
+		}
+	})
+	app.state.daemonOfferAddr = addr
+	showError := func() {
+		if app.offerStillValid(addr) {
+			app.openInfoPopup(g, viewDirectory)
+		}
+	}
 	if len(app.state.menu.options) > 1 {
 		app.state.menu.options[1].action = showError
 	}
 	app.state.menu.onClose = showError
+}
+
+// offerStillValid reports whether a daemon offer for addr still applies: the
+// same server is selected and it has not answered in the meantime.
+func (app *Gui) offerStillValid(addr string) bool {
+	return app.state.serverAddr == addr && app.state.dirStatus != connOK
+}
+
+// daemonOfferOpen reports whether the open confirm popup is the daemon offer.
+func (app *Gui) daemonOfferOpen() bool {
+	return app.state.daemonOfferAddr != "" && app.state.menu.view == viewConfirmPopup
+}
+
+// closeStaleDaemonOffer closes the daemon offer once the server answered on
+// its own, without running the offer's cancel action. Must be called on the
+// GUI goroutine.
+func (app *Gui) closeStaleDaemonOffer(g *gocui.Gui) {
+	if !app.daemonOfferOpen() {
+		return
+	}
+	app.state.daemonOfferAddr = ""
+	app.state.confirmPopupText = ""
+	app.state.menu = menuState{}
+	app.hidePopup(g, viewConfirmPopup)
 }
 
 // startLocalDaemon launches the daemon and waits in the background for it to

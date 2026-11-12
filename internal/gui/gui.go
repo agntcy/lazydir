@@ -98,10 +98,12 @@ type appState struct {
 	// coming up (display only: dirStatus stays connFailed so the health loop
 	// keeps pinging); daemonReady is closed when records first load.
 	// localDaemonHint adds a "dirctl daemon start" hint to the error popup
-	// when dirctl could not be found.
+	// when dirctl could not be found. daemonOfferAddr is the server address
+	// while the "No local directory" offer is the open confirm popup.
 	daemonStarting  bool
 	daemonReady     chan struct{}
 	localDaemonHint bool
+	daemonOfferAddr string
 
 	// OASF connection
 	oasfAddr          string
@@ -391,7 +393,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		PingErr: pingErr, HaveDirctl: app.daemon != nil, Running: running, Owned: owned,
 	})
 
-	if action == daemonNone && pingErr == nil {
+	if connectNormally(action, pingErr) {
 		app.g.Update(func(g *gocui.Gui) error {
 			app.stopReconnectLoop()
 			if app.state.client != nil {
@@ -906,6 +908,7 @@ func (app *Gui) showRecordsError(g *gocui.Gui, text string) {
 // query is safe. Must be called on the GUI goroutine.
 func (app *Gui) markQueryResponded(g *gocui.Gui, resetCursor bool) {
 	app.markDaemonReady()
+	app.closeStaleDaemonOffer(g)
 	app.state.dirStatus = connOK
 	app.state.dirLastConnected = time.Now()
 	app.state.dirError = ""
