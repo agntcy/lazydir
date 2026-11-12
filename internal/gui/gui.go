@@ -6,7 +6,10 @@ package gui
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/agntcy/lazydir/internal/config"
@@ -318,7 +321,24 @@ func New(cfg Config) error {
 	app.state.oasfStatus = connTrying
 	go app.pingOASF(oasfClient)
 
-	if err := g.MainLoop(); !gocui.IsQuit(err) {
+	// Turn termination signals into a clean quit so an owned daemon is stopped.
+	// sigStop ends the watcher once the main loop exits.
+	sigStop := make(chan struct{})
+	defer close(sigStop)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP, os.Interrupt)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			g.Update(func(*gocui.Gui) error { return gocui.ErrQuit })
+		case <-sigStop:
+		}
+	}()
+
+	err = g.MainLoop()
+	app.stopOwnedDaemon()
+	if !gocui.IsQuit(err) {
 		return fmt.Errorf("main loop: %w", err)
 	}
 
@@ -401,7 +421,6 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		// server answers it runs startQuery itself, as no records are loaded.
 		app.state.dirStatus = connFailed
 		app.state.dirError = queryErrorText(pingErr)
-		app.state.loadedOnce = false
 		app.startReconnectLoop()
 
 		switch action {
