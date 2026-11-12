@@ -96,6 +96,22 @@ type LocalDaemonConfig struct {
 	DirctlPath string `yaml:"dirctlPath"`
 	// DataDir is passed as --data-dir when set; empty uses dirctl's default.
 	DataDir string `yaml:"dataDir"`
+	// Address is where the started daemon listens (dirctl's
+	// server.listen_address); empty means DefaultLocalDaemonAddress. lazydir
+	// only offers a daemon for a selected server on the same port.
+	Address string `yaml:"address"`
+}
+
+// DefaultLocalDaemonAddress is dirctl's default daemon listen address.
+const DefaultLocalDaemonAddress = "localhost:8888"
+
+// EffectiveAddress returns the daemon listen address, falling back to
+// DefaultLocalDaemonAddress when unset.
+func (l LocalDaemonConfig) EffectiveAddress() string {
+	if a := strings.TrimSpace(l.Address); a != "" {
+		return a
+	}
+	return DefaultLocalDaemonAddress
 }
 
 // EffectiveMode returns the normalized mode, falling back to ask for an

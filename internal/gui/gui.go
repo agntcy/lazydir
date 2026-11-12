@@ -371,7 +371,8 @@ func (app *Gui) connect(cfg dirclient.Config) {
 	// A local server may simply not be running yet: ping it now (dialing is
 	// lazy) so a missing daemon can be offered instead of a bare error.
 	mode := app.cfg.LocalDaemon.EffectiveMode()
-	eligible := localDaemonEligible(mode, cfg.ServerAddress, cfg.AuthMode)
+	daemonAddr := app.cfg.LocalDaemon.EffectiveAddress()
+	eligible := localDaemonEligible(mode, cfg.ServerAddress, cfg.AuthMode, daemonAddr)
 	var pingErr error
 	var running, owned bool
 	if eligible {
@@ -386,7 +387,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		}
 	}
 	action := decideLocalDaemon(daemonDecision{
-		Mode: mode, Addr: cfg.ServerAddress, AuthMode: cfg.AuthMode,
+		Mode: mode, Addr: cfg.ServerAddress, AuthMode: cfg.AuthMode, DaemonAddr: daemonAddr,
 		PingErr: pingErr, HaveDirctl: app.daemon != nil, Running: running, Owned: owned,
 	})
 

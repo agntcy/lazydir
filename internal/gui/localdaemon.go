@@ -6,6 +6,7 @@ package gui
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -59,10 +60,12 @@ const (
 // daemonDecision collects the inputs of decideLocalDaemon.
 type daemonDecision struct {
 	Mode, Addr, AuthMode string
-	PingErr              error
-	HaveDirctl           bool
-	Running              bool
-	Owned                bool
+	// DaemonAddr is where a started daemon would listen.
+	DaemonAddr string
+	PingErr    error
+	HaveDirctl bool
+	Running    bool
+	Owned      bool
 }
 
 // newLocalDaemon builds the daemon manager, or returns nil when the feature is
@@ -79,21 +82,31 @@ func newLocalDaemon(cfg config.LocalDaemonConfig) localDaemon {
 }
 
 // localDaemonEligible reports whether a server could be a local daemon that
-// lazydir may start: the feature is on, the host is loopback and the
-// connection is plain insecure gRPC.
-func localDaemonEligible(mode, addr, authMode string) bool {
+// lazydir may start: the feature is on, the connection is plain insecure
+// gRPC, and the selected address and the address the daemon listens on
+// (daemonAddr) are both loopback with the same port. Any loopback host
+// (localhost, 127.0.0.1, ::1) counts as the same host.
+func localDaemonEligible(mode, addr, authMode, daemonAddr string) bool {
 	if mode == config.LocalDaemonNever {
 		return false
 	}
-	if !localdaemon.IsLoopback(addr) {
+	if authMode != "" && authMode != authModeInsecure {
 		return false
 	}
-	return authMode == "" || authMode == authModeInsecure
+	if !localdaemon.IsLoopback(addr) || !localdaemon.IsLoopback(daemonAddr) {
+		return false
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	_, daemonPort, err := net.SplitHostPort(daemonAddr)
+	return err == nil && port == daemonPort
 }
 
 // decideLocalDaemon picks what to do after the connect ping.
 func decideLocalDaemon(d daemonDecision) daemonAction {
-	if !localDaemonEligible(d.Mode, d.Addr, d.AuthMode) || status.Code(d.PingErr) != codes.Unavailable {
+	if !localDaemonEligible(d.Mode, d.Addr, d.AuthMode, d.DaemonAddr) || status.Code(d.PingErr) != codes.Unavailable {
 		return daemonNone
 	}
 	if d.Owned {
