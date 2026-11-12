@@ -184,6 +184,22 @@ server:
 
 Servers with `oidcIssuer` and `oidcClientID` trigger an OIDC device-flow login when no cached token is available. The TUI displays the authorization URL and code inline.
 
+### Local daemon
+
+When the selected server is a loopback address (for example `localhost:8888`) using plain insecure gRPC and it is unreachable, lazydir can start a local daemon for you with `dirctl daemon start`. If `dirctl` cannot be found, lazydir shows the hint "Start one with: dirctl daemon start" instead.
+
+```yaml
+server:
+  localDaemon:
+    mode: ask          # ask (default) | auto | never
+    # dirctlPath: "/usr/local/bin/dirctl"  # default: look up dirctl on PATH
+    # dataDir: "~/.agntcy/dir"             # passed to dirctl --data-dir
+```
+
+- `ask` prompts before starting the daemon, `auto` starts it without asking, and `never` disables the feature.
+- The daemon's output is written to `<user cache dir>/lazydir/daemon.log` (see `os.UserCacheDir()`; `~/Library/Caches` on macOS, `~/.cache` on Linux).
+- A daemon that lazydir started is stopped when lazydir quits, or when the terminal tab closes. A daemon you started yourself is never stopped by lazydir.
+
 ### Importing dirctl contexts
 
 If you use [dirctl](https://github.com/agntcy/dir), you can point `dirctlConfigPath` at your dirctl config file to import its named contexts as directory server entries. This avoids duplicating server definitions across both tools.
