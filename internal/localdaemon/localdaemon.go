@@ -1,8 +1,8 @@
 // Copyright AGNTCY Contributors (https://github.com/agntcy)
 // SPDX-License-Identifier: Apache-2.0
 
-// Package localdaemon wraps `dirctl daemon start|status|stop` and owns the
-// child process lazydir starts.
+// Package localdaemon wraps `dirctl daemon start|status` and owns the child
+// process lazydir starts. Stopping signals that child directly.
 package localdaemon
 
 import (
@@ -137,18 +137,21 @@ func (d *Daemon) Owned() bool {
 	return d.owned
 }
 
-// Stop stops a daemon lazydir started: `dirctl daemon stop`, wait up to
-// timeout, then SIGKILL the process group.
+// Stop stops a daemon lazydir started: it asks the owned child process to
+// terminate (SIGTERM on Unix, a hard kill on Windows), waits up to timeout
+// for it to exit, then kills its process group and waits up to one more
+// second. It never runs `dirctl daemon stop`: that acts on whatever pid
+// dirctl's pid file names, which is not written until the daemon is ready
+// and may belong to a daemon lazydir did not start. A daemon lazydir does
+// not own is never touched.
 func (d *Daemon) Stop(timeout time.Duration) error {
 	d.mu.Lock()
 	owned, cmd, ch := d.owned, d.cmd, d.exited
 	d.mu.Unlock()
-	if !owned {
+	if !owned || cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	_ = exec.CommandContext(ctx, d.bin, d.args("stop")...).Run()
+	_ = terminate(cmd.Process)
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -157,9 +160,7 @@ func (d *Daemon) Stop(timeout time.Duration) error {
 		return nil
 	case <-timer.C:
 	}
-	if cmd.Process != nil {
-		_ = killGroup(cmd.Process)
-	}
+	_ = killGroup(cmd.Process)
 	select {
 	case <-ch:
 		return nil
