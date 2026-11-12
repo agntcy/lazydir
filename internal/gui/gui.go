@@ -40,6 +40,8 @@ type menuState struct {
 	cursor  int
 	options []menuOption
 	view    string // the gocui view name this menu is rendered in
+	// onClose runs when the menu is dismissed with esc instead of an option.
+	onClose func()
 }
 
 // syncStatusEntry is a single transient sync-status overlay record: the
@@ -88,6 +90,15 @@ type appState struct {
 	dirLastCfg       *dirclient.Config
 	client           *dirclient.Client
 	dirReconnStop    chan struct{}
+
+	// Local daemon. daemonStarting is set while a daemon lazydir started is
+	// coming up (display only: dirStatus stays connFailed so the health loop
+	// keeps pinging); daemonReady is closed when records first load.
+	// localDaemonHint adds a "dirctl daemon start" hint to the error popup
+	// when dirctl could not be found.
+	daemonStarting  bool
+	daemonReady     chan struct{}
+	localDaemonHint bool
 
 	// OASF connection
 	oasfAddr          string
@@ -241,6 +252,9 @@ type Gui struct {
 	state appState
 	cfg   Config
 	theme Theme
+	// daemon manages a local dirctl daemon; nil when disabled or dirctl is
+	// missing. Set once in New, read-only afterwards.
+	daemon localDaemon
 }
 
 // New creates and starts the lazydir GUI.
@@ -267,6 +281,7 @@ func New(cfg Config) error {
 			filters:      newFilterState(),
 			filterValues: newFilterValueAggregator(),
 		},
+		daemon: newLocalDaemon(cfg.LocalDaemon),
 	}
 
 	g, err := gocui.NewGui(gocui.NewGuiOpts{
@@ -336,7 +351,52 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		return
 	}
 
+	// A local server may simply not be running yet: ping it now (dialing is
+	// lazy) so a missing daemon can be offered instead of a bare error.
+	mode := app.cfg.LocalDaemon.EffectiveMode()
+	eligible := localDaemonEligible(mode, cfg.ServerAddress, cfg.AuthMode)
+	var pingErr error
+	var running, owned bool
+	if eligible {
+		pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+		pingErr = c.Ping(pingCtx)
+		cancel()
+		if pingErr != nil && app.daemon != nil {
+			owned = app.daemon.Owned()
+			runCtx, runCancel := context.WithTimeout(ctx, pingTimeout)
+			running, _ = app.daemon.Running(runCtx)
+			runCancel()
+		}
+	}
+	action := decideLocalDaemon(daemonDecision{
+		Mode: mode, Addr: cfg.ServerAddress, AuthMode: cfg.AuthMode,
+		PingErr: pingErr, HaveDirctl: app.daemon != nil, Running: running, Owned: owned,
+	})
+
+	if action == daemonNone && pingErr == nil {
+		app.g.Update(func(g *gocui.Gui) error {
+			app.stopReconnectLoop()
+			if app.state.client != nil {
+				app.state.client.Close()
+			}
+			app.state.client = c
+			app.state.serverAddr = cfg.ServerAddress
+			app.state.authMode = cfg.AuthMode
+			app.state.dirLastCfg = &cfg
+			app.state.dirStatus = connTrying
+			app.renderDirectory(g)
+			app.renderStatus(g)
+			app.startQuery(true)
+			return nil
+		})
+		return
+	}
+
 	app.g.Update(func(g *gocui.Gui) error {
+		if app.state.serverAddr != cfg.ServerAddress {
+			c.Close() // the user switched servers meanwhile
+			return nil
+		}
 		app.stopReconnectLoop()
 		if app.state.client != nil {
 			app.state.client.Close()
@@ -345,10 +405,26 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		app.state.serverAddr = cfg.ServerAddress
 		app.state.authMode = cfg.AuthMode
 		app.state.dirLastCfg = &cfg
-		app.state.dirStatus = connTrying
+		// connFailed (not connTrying) keeps the health loop pinging; once the
+		// server answers it runs startQuery itself, as no records are loaded.
+		app.state.dirStatus = connFailed
+		app.state.dirError = queryErrorText(pingErr)
+		app.state.loadedOnce = false
+		app.startReconnectLoop()
+
+		switch action {
+		case daemonAsk:
+			app.offerLocalDaemon(g, cfg.ServerAddress)
+		case daemonAuto:
+			app.startLocalDaemon(g)
+		case daemonWaitOwned:
+			app.state.daemonStarting = true
+		case daemonNone:
+			app.state.localDaemonHint = eligible && app.daemon == nil
+			app.openInfoPopup(g, viewDirectory)
+		}
 		app.renderDirectory(g)
 		app.renderStatus(g)
-		app.startQuery(true)
 		return nil
 	})
 }
@@ -811,6 +887,7 @@ func (app *Gui) showRecordsError(g *gocui.Gui, text string) {
 // idempotent (guarded against duplicate goroutines), so firing them on every
 // query is safe. Must be called on the GUI goroutine.
 func (app *Gui) markQueryResponded(g *gocui.Gui, resetCursor bool) {
+	app.markDaemonReady()
 	app.state.dirStatus = connOK
 	app.state.dirLastConnected = time.Now()
 	app.state.dirError = ""

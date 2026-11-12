@@ -502,9 +502,13 @@ func (app *Gui) confirmMenuSelect(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) confirmMenuClose(g *gocui.Gui, v *gocui.View) error {
+	onClose := app.state.menu.onClose
 	app.state.confirmPopupText = ""
 	app.hidePopup(g, viewConfirmPopup)
 	app.state.menu = menuState{}
+	if onClose != nil {
+		onClose()
+	}
 	return nil
 }
 
