@@ -6,7 +6,10 @@ package gui
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/agntcy/lazydir/internal/config"
@@ -325,7 +328,21 @@ func New(cfg Config) error {
 	defer close(uiStop)
 	go app.uiRefreshLoop(uiStop)
 
-	if err := g.MainLoop(); !gocui.IsQuit(err) {
+	// Turn termination signals into a clean quit so an owned daemon is stopped.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP, os.Interrupt)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			g.Update(func(*gocui.Gui) error { return gocui.ErrQuit })
+		case <-uiStop:
+		}
+	}()
+
+	err = g.MainLoop()
+	app.stopOwnedDaemon()
+	if !gocui.IsQuit(err) {
 		return fmt.Errorf("main loop: %w", err)
 	}
 

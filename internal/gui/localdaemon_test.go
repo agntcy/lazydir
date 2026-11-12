@@ -207,7 +207,7 @@ func TestArmDaemonStart(t *testing.T) {
 
 	app := &Gui{}
 	exited := make(chan error) // never fires: the daemon keeps running
-	ready := app.armDaemonStart(fakeDaemon{exited: exited})
+	ready := app.armDaemonStart(&fakeDaemon{exited: exited})
 
 	if !app.state.daemonStarting {
 		t.Fatal("daemonStarting not set")
@@ -221,7 +221,7 @@ func TestArmDaemonStart(t *testing.T) {
 
 	// Re-arming (e.g. daemonWaitOwned after a switch back) replaces the
 	// channel, so the earlier watcher's guard no longer matches.
-	again := app.armDaemonStart(fakeDaemon{exited: exited})
+	again := app.armDaemonStart(&fakeDaemon{exited: exited})
 	if again == ready || app.daemonStartStillPending(ready) {
 		t.Fatal("re-arm must install a fresh channel")
 	}
@@ -237,14 +237,46 @@ func TestArmDaemonStart(t *testing.T) {
 	close(ready)
 }
 
-// fakeDaemon satisfies localDaemon in tests.
-type fakeDaemon struct{ exited chan error }
+// fakeDaemon satisfies localDaemon in tests and records Stop calls.
+type fakeDaemon struct {
+	exited chan error
+	owned  bool
+	stops  []time.Duration
+}
 
-func (fakeDaemon) Running(context.Context) (bool, error) { return false, nil }
-func (fakeDaemon) Start() error                          { return nil }
-func (f fakeDaemon) Exited() <-chan error                { return f.exited }
-func (fakeDaemon) Owned() bool                           { return false }
-func (fakeDaemon) Stop(time.Duration) error              { return nil }
-func (fakeDaemon) LogPath() string                       { return "" }
+func (*fakeDaemon) Running(context.Context) (bool, error) { return false, nil }
+func (*fakeDaemon) Start() error                          { return nil }
+func (f *fakeDaemon) Exited() <-chan error                { return f.exited }
+func (f *fakeDaemon) Owned() bool                         { return f.owned }
+func (f *fakeDaemon) Stop(d time.Duration) error {
+	f.stops = append(f.stops, d)
+	return nil
+}
+func (*fakeDaemon) LogPath() string { return "" }
 
-var _ localDaemon = fakeDaemon{}
+var _ localDaemon = (*fakeDaemon)(nil)
+
+func TestStopOwnedDaemon_Owned(t *testing.T) {
+	t.Parallel()
+	fd := &fakeDaemon{owned: true}
+	app := &Gui{daemon: fd}
+	app.stopOwnedDaemon()
+	if len(fd.stops) != 1 || fd.stops[0] != daemonStopTimeout {
+		t.Errorf("stops = %v, want one call with %v", fd.stops, daemonStopTimeout)
+	}
+}
+
+func TestStopOwnedDaemon_NotOwned(t *testing.T) {
+	t.Parallel()
+	fd := &fakeDaemon{}
+	app := &Gui{daemon: fd}
+	app.stopOwnedDaemon()
+	if len(fd.stops) != 0 {
+		t.Errorf("Stop called %d times for a daemon we do not own", len(fd.stops))
+	}
+}
+
+func TestStopOwnedDaemon_NilDaemon(t *testing.T) {
+	t.Parallel()
+	(&Gui{}).stopOwnedDaemon()
+}

@@ -32,6 +32,19 @@ var _ localDaemon = (*localdaemon.Daemon)(nil)
 // daemonStartTimeout bounds how long a started daemon may take to answer.
 const daemonStartTimeout = 30 * time.Second
 
+// daemonStopTimeout bounds how long an owned daemon gets to stop gracefully
+// before its process group is killed.
+const daemonStopTimeout = 5 * time.Second
+
+// stopOwnedDaemon stops the daemon lazydir started, if any. A daemon lazydir
+// did not start is never touched.
+func (app *Gui) stopOwnedDaemon() {
+	if app.daemon == nil || !app.daemon.Owned() {
+		return
+	}
+	_ = app.daemon.Stop(daemonStopTimeout)
+}
+
 // daemonAction is what connect does about a local directory that did not
 // answer its ping.
 type daemonAction int
