@@ -159,6 +159,14 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.SelFgColor = gocui.ColorDefault
 		v.FrameRunes = roundedFrame
 	}
+	// Rows are laid out for the panel size (column widths, badge wrap, scroll),
+	// so redraw them when a resize changes it.
+	if v, err := gui.View(viewRecords); err == nil {
+		if w, h := v.Size(); w != g.state.recordsViewW || h != g.state.recordsViewH {
+			g.state.recordsViewW, g.state.recordsViewH = w, h
+			g.renderRecordsView(gui)
+		}
+	}
 
 	// Preview panel — extends to panelBottom
 	if v, err := gui.SetView(viewPreview, rightX0, 0, maxX-1, panelBottom, 0); err != nil {

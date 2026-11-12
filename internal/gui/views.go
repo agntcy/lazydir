@@ -257,11 +257,12 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 
 // rowScroll returns the view origin and cursor line that show every line of
 // the row at index cursor, each row being height lines tall, in a view viewH
-// lines high. The cursor sits on the row's first line.
+// lines high. The cursor sits on the row's first line; when the view is too
+// short for the whole row, the row's first line is kept at the top.
 func rowScroll(cursor, height, viewH int) (origin, line int) {
 	first := cursor * height
 	if last := first + height - 1; last >= viewH {
-		origin = last - viewH + 1
+		origin = min(last-viewH+1, first)
 	}
 	return origin, first - origin
 }

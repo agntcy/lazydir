@@ -118,6 +118,9 @@ type appState struct {
 	// recordRowHeight is how many lines each Records row takes: 2 when the
 	// panel is too narrow and the trust badges wrap, else 1.
 	recordRowHeight int
+	// recordsViewW and recordsViewH are the Records panel size the rows were
+	// last laid out for; layout redraws the rows when it changes.
+	recordsViewW, recordsViewH int
 
 	// page holds the server-side pagination state for the records panel
 	// (accumulated pages, offset, total, exhausted/loading flags).

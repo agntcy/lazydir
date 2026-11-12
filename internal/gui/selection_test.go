@@ -450,6 +450,7 @@ func TestRowScroll(t *testing.T) {
 		{"wrapped in view", 1, 2, 5, 0, 2},
 		{"wrapped second line below", 2, 2, 5, 1, 3},
 		{"wrapped below", 5, 2, 5, 7, 3},
+		{"wrapped in a one-line view", 3, 2, 1, 6, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
