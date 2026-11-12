@@ -11,6 +11,7 @@ import (
 
 	"github.com/agntcy/lazydir/internal/dirclient"
 	"github.com/jesseduffield/gocui"
+	"github.com/mattn/go-runewidth"
 )
 
 // syncedAgo renders roughly how long ago the displayed records were last
@@ -182,11 +183,19 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 
 	v.Title = app.recordsTitle()
 
-	viewW, _ := v.Size()
-	nameW := viewW - 14 - (rowGutterWidth - 1)
-	if nameW < 8 {
-		nameW = 8
+	viewW, viewH := v.Size()
+	wrap := viewW < oneLineRowMinWidth
+	nameW := viewW - rowGutterWidth - 2 - versionColWidth - 2 - badgeColWidth
+	if wrap {
+		// Badges go on their own line, so the name only shares with the version.
+		nameW = viewW - rowGutterWidth - 2 - versionColWidth
 	}
+	nameW = max(nameW, minNameColWidth)
+	app.state.recordRowHeight = 1
+	if wrap {
+		app.state.recordRowHeight = 2
+	}
+	height := app.state.recordRowHeight
 
 	rows := app.state.recordDisplayRows
 	if app.state.recordCursor >= len(rows) && len(rows) > 0 {
@@ -198,17 +207,10 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	red := "\033[31m"
 	green := ansiGreen
 
-	lineNum := 0
-	targetLine := 0
-
-	for i, row := range rows {
-		if i == app.state.recordCursor {
-			targetLine = lineNum
-		}
-
+	for _, row := range rows {
 		rec := row.record
 		if rec == nil {
-			lineNum++
+			fmt.Fprint(v, strings.Repeat("\n", height))
 			continue
 		}
 
@@ -230,9 +232,8 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 			statusColor = red
 		}
 
-		if len(name) > nameW {
-			name = name[:nameW-1] + "…"
-		}
+		name = runewidth.Truncate(name, nameW, "…")
+		version = runewidth.Truncate(version, versionColWidth, "…")
 		lineColor := ""
 		switch {
 		case statusColor != "":
@@ -242,41 +243,116 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		case rec.Published:
 			lineColor = green
 		}
-		fmt.Fprintln(v, recordRowLine(lineColor, app.isSelected(rec.CID), nameW, viewW, name, version))
-		lineNum++
+		selected := app.isSelected(rec.CID)
+		badges := trustBadges(rec, app.theme, rowStyle(lineColor, selected))
+		for _, line := range recordRowLines(lineColor, selected, wrap, nameW, viewW, name, version, badges) {
+			fmt.Fprintln(v, line)
+		}
 	}
 
-	_, viewH := v.Size()
-	if targetLine >= viewH {
-		_ = v.SetOrigin(0, targetLine-viewH+1)
-		_ = v.SetCursor(0, viewH-1)
-	} else {
-		_ = v.SetOrigin(0, 0)
-		_ = v.SetCursor(0, targetLine)
+	origin, cursor := rowScroll(app.state.recordCursor, height, viewH)
+	_ = v.SetOrigin(0, origin)
+	_ = v.SetCursor(0, cursor)
+}
+
+// rowScroll returns the view origin and cursor line that show every line of
+// the row at index cursor, each row being height lines tall, in a view viewH
+// lines high. The cursor sits on the row's first line; when the view is too
+// short for the whole row, the row's first line is kept at the top.
+func rowScroll(cursor, height, viewH int) (origin, line int) {
+	first := cursor * height
+	if last := first + height - 1; last >= viewH {
+		origin = min(last-viewH+1, first)
 	}
+	return origin, first - origin
 }
 
 // rowGutterWidth is the width of the column ahead of each record row that
 // holds the selection marker, so text lines up whether a row is selected or not.
 const rowGutterWidth = 2
 
-// recordRowLine formats one Records row. lineColor (may be empty) colors the
-// whole row. A selected row shows a green marker in the gutter and bold text;
-// after the marker only the foreground is reset, so a background color such
-// as the clipboard's carries on. Colored and selected rows are padded to the
-// panel width so their color spans the row.
-func recordRowLine(lineColor string, selected bool, nameW, viewW int, name, version string) string {
-	text := fmt.Sprintf("%-*s  %s", nameW, name, version)
+// Records row column widths. A longer version is cut with an ellipsis so the
+// badge column stays aligned.
+const (
+	minNameColWidth = 8
+	versionColWidth = 10
+	badgeColWidth   = 5 // "T V S"
+	// oneLineRowMinWidth is the narrowest panel that fits a whole row on one
+	// line; below it the badges wrap onto a second line.
+	oneLineRowMinWidth = rowGutterWidth + minNameColWidth + 2 + versionColWidth + 2 + badgeColWidth
+)
+
+// rowStyle is the ANSI style a Records row is drawn with: its line color, in
+// bold when the row is selected.
+func rowStyle(lineColor string, selected bool) string {
+	if selected {
+		return lineColor + ansiBold
+	}
+	return lineColor
+}
+
+// trustBadges renders the T(rusted) V(erified) S(afe) badge column for a
+// record. A set badge is colored; an unset one is a dim dot. A record a
+// scanner flagged unsafe shows a red "!" in the S slot, so "not scanned"
+// (dot) stays apart from "unsafe". After each glyph the foreground is reset
+// and restore re-applied, so the row's own style carries on.
+func trustBadges(r *dirclient.RecordSummary, t Theme, restore string) string {
+	glyph := func(color, g string) string {
+		return color + g + ansiDefaultFg + restore
+	}
+	dot := glyph(t.Color10, "·")
+	badge := func(on bool, letter string) string {
+		if on {
+			return glyph(t.Color9, letter)
+		}
+		return dot
+	}
+	safe := dot
+	switch r.Scan {
+	case dirclient.ScanSafe:
+		safe = glyph(t.Color9, "S")
+	case dirclient.ScanUnsafe:
+		safe = glyph(t.Color6, "!")
+	}
+	return badge(r.Trusted, "T") + " " + badge(r.Verified, "V") + " " + safe
+}
+
+// recordRowLines formats one Records row: name, version and the trust badges
+// on one line, or, with wrap, name and version on the first line and the
+// badges on a second one. lineColor (may be empty) colors the whole row.
+func recordRowLines(lineColor string, selected, wrap bool, nameW, viewW int, name, version, badges string) []string {
+	if !wrap {
+		return []string{recordRowLine(lineColor, selected, nameW, viewW, name, version, badges)}
+	}
+	return []string{
+		styledRowLine(lineColor, selected, true, viewW, runewidth.FillRight(name, nameW)+"  "+version),
+		styledRowLine(lineColor, selected, false, viewW, badges),
+	}
+}
+
+// recordRowLine formats a Records row that fits on one line.
+func recordRowLine(lineColor string, selected bool, nameW, viewW int, name, version, badges string) string {
+	text := runewidth.FillRight(name, nameW) + "  " + runewidth.FillRight(version, versionColWidth) + "  " + badges
+	return styledRowLine(lineColor, selected, true, viewW, text)
+}
+
+// styledRowLine lays text out behind the selection gutter. A selected row is
+// bold, and its first line (mark) shows a green marker in the gutter; after
+// the marker only the foreground is reset, so a background color such as the
+// clipboard's carries on. Colored and selected lines are padded to the panel
+// width so their color spans the row.
+func styledRowLine(lineColor string, selected, mark bool, viewW int, text string) string {
 	if lineColor == "" && !selected {
 		return strings.Repeat(" ", rowGutterWidth) + text
 	}
 	gutter := strings.Repeat(" ", rowGutterWidth)
-	style := lineColor
-	if selected {
-		style += ansiBold
+	if selected && mark {
 		gutter = ansiGreen + selectedMark + ansiDefaultFg + lineColor + strings.Repeat(" ", rowGutterWidth-1)
 	}
-	return fmt.Sprintf("%s%s%-*s%s", style, gutter, viewW-rowGutterWidth, text, ansiReset)
+	// Pad by display width: the badges carry ANSI codes, and wide characters
+	// take two cells.
+	pad := max(viewW-rowGutterWidth-runewidth.StringWidth(stripANSI(text)), 0)
+	return rowStyle(lineColor, selected) + gutter + text + strings.Repeat(" ", pad) + ansiReset
 }
 
 // wrapText splits text into lines that fit within maxWidth, breaking on word

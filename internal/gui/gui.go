@@ -115,6 +115,12 @@ type appState struct {
 	// recordDisplayRows are the flat display rows for the records panel: one
 	// row per record in the current page (no version grouping).
 	recordDisplayRows []recordDisplayRow
+	// recordRowHeight is how many lines each Records row takes: 2 when the
+	// panel is too narrow and the trust badges wrap, else 1.
+	recordRowHeight int
+	// recordsViewW and recordsViewH are the Records panel size the rows were
+	// last laid out for; layout redraws the rows when it changes.
+	recordsViewW, recordsViewH int
 
 	// page holds the server-side pagination state for the records panel
 	// (accumulated pages, offset, total, exhausted/loading flags).
@@ -140,6 +146,7 @@ type appState struct {
 	recordInfoCID     string // CID of the record whose info is expanded, "" if none
 	recordInfoText    string // cached description text
 	recordInfoError   bool   // true when recordInfoText is an error message
+	recordInfoTrust   string // record info toggle's trust line, shown below recordInfoText
 	recordInfoLoading bool   // fetch in progress
 
 	// distinct values usable as filter options for each category, as returned
@@ -887,7 +894,7 @@ func (app *Gui) loadNextPage() {
 // error.
 func queryErrorText(err error) string {
 	if rpcUnimplemented(err) {
-		return "server does not support ListRecordSummaries; lazydir requires dir v1.8.0 or newer"
+		return "server does not support ListRecordSummaries; lazydir requires dir v1.9.0 or newer"
 	}
 	return err.Error()
 }

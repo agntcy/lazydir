@@ -6,11 +6,12 @@ package gui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/agntcy/lazydir/internal/dirclient"
+	"github.com/mattn/go-runewidth"
 )
 
 func named(cid, name string) *dirclient.RecordSummary {
@@ -252,19 +253,19 @@ func TestOptionsBarText_SelectionAndProgress(t *testing.T) {
 }
 
 func TestRecordRowLine(t *testing.T) {
-	plain := recordRowLine("", false, 6, 20, "agent", "v1")
-	if plain != "  agent   v1" {
+	plain := recordRowLine("", false, 6, 30, "agent", "v1", "T V S")
+	if plain != "  agent   v1          T V S" {
 		t.Errorf("plain row = %q", plain)
 	}
 
-	sel := recordRowLine("", true, 6, 20, "agent", "v1")
-	want := ansiBold + ansiGreen + selectedMark + ansiDefaultFg + " " + fmt.Sprintf("%-18s", "agent   v1") + ansiReset
+	sel := recordRowLine("", true, 6, 30, "agent", "v1", "T V S")
+	want := ansiBold + ansiGreen + selectedMark + ansiDefaultFg + " " + "agent   v1          T V S   " + ansiReset
 	if sel != want {
 		t.Errorf("selected row = %q, want %q", sel, want)
 	}
 
 	// On a colored row the line color is re-applied after the green marker.
-	pub := recordRowLine("\033[32m", true, 6, 20, "agent", "v1")
+	pub := recordRowLine("\033[32m", true, 6, 30, "agent", "v1", "T V S")
 	if !strings.HasPrefix(pub, "\033[32m"+ansiBold+ansiGreen+selectedMark+ansiDefaultFg+"\033[32m ") {
 		t.Errorf("colored selected row = %q", pub)
 	}
@@ -272,6 +273,111 @@ func TestRecordRowLine(t *testing.T) {
 	// Plain text is aligned the same whether or not the row is selected.
 	if strings.Index(plain, "agent") != rowGutterWidth {
 		t.Errorf("text should start after the %d-column gutter: %q", rowGutterWidth, plain)
+	}
+
+	// Padding counts visible width, not the badges' ANSI codes.
+	colored := recordRowLine("\033[32m", false, 6, 30, "agent", "v1", trustBadges(&dirclient.RecordSummary{}, defaultTheme, "\033[32m"))
+	if got := utf8.RuneCountInString(stripANSI(colored)); got != 30 {
+		t.Errorf("colored row visible width = %d, want 30: %q", got, colored)
+	}
+}
+
+func TestTrustBadges(t *testing.T) {
+	tests := []struct {
+		name string
+		rec  dirclient.RecordSummary
+		want string
+	}{
+		{"none", dirclient.RecordSummary{}, "· · ·"},
+		{"all", dirclient.RecordSummary{Trusted: true, Verified: true, Scan: dirclient.ScanSafe}, "T V S"},
+		{"unsafe", dirclient.RecordSummary{Verified: true, Scan: dirclient.ScanUnsafe}, "· V !"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := trustBadges(&tt.rec, defaultTheme, "")
+			if plain := stripANSI(got); plain != tt.want {
+				t.Errorf("badges = %q, want %q", plain, tt.want)
+			}
+		})
+	}
+
+	// The unsafe marker is red; the row style is restored after each glyph.
+	got := trustBadges(&dirclient.RecordSummary{Scan: dirclient.ScanUnsafe}, defaultTheme, "\033[41m")
+	if !strings.Contains(got, defaultTheme.Color6+"!"+ansiDefaultFg+"\033[41m") {
+		t.Errorf("unsafe badge = %q", got)
+	}
+}
+
+func TestFormatTrustLine(t *testing.T) {
+	tests := []struct {
+		rec  dirclient.RecordSummary
+		want string
+	}{
+		{dirclient.RecordSummary{}, "✗ Trusted   ✗ Verified   ? Safe"},
+		{dirclient.RecordSummary{Trusted: true, Verified: true, Scan: dirclient.ScanSafe}, "✓ Trusted   ✓ Verified   ✓ Safe"},
+		{dirclient.RecordSummary{Scan: dirclient.ScanUnsafe}, "✗ Trusted   ✗ Verified   ✗ Safe"},
+	}
+	for _, tt := range tests {
+		raw := formatTrustLine(&tt.rec, defaultTheme)
+		if got := stripANSI(raw); got != tt.want {
+			t.Errorf("trust line = %q, want %q", got, tt.want)
+		}
+		if !strings.Contains(raw, defaultTheme.Color5+"Trusted"+defaultTheme.Reset) {
+			t.Errorf("Trusted label not in Color5: %q", raw)
+		}
+		// Marks share the row badges' colors.
+		if tt.rec.Trusted && !strings.Contains(raw, defaultTheme.Color9+markYes) {
+			t.Errorf("check mark not in Color9: %q", raw)
+		}
+		if !tt.rec.Trusted && !strings.Contains(raw, defaultTheme.Color6+markNo) {
+			t.Errorf("cross not in Color6: %q", raw)
+		}
+	}
+}
+
+func TestFormatRecordInfo_NoTrustLine(t *testing.T) {
+	// The trust line is rendered separately so it survives a PullInfo error
+	// and stays out of a copied error message.
+	got := stripANSI(formatRecordInfo(&dirclient.RecordInfo{CID: "bafy", SchemaVersion: "1.0.0"}, defaultTheme))
+	if got != "Schema version: 1.0.0" {
+		t.Fatalf("info = %q", got)
+	}
+}
+
+func TestRecordInfoBody(t *testing.T) {
+	app := &Gui{}
+	app.state.recordInfoTrust = "TRUST"
+
+	app.state.recordInfoLoading = true
+	if got, isErr := app.recordInfoBody("loading"); got != "loading\nTRUST" || isErr {
+		t.Errorf("loading body = %q, %v", got, isErr)
+	}
+
+	// A PullInfo error keeps the trust line, which the summary already holds.
+	app.state.recordInfoLoading = false
+	app.state.recordInfoText, app.state.recordInfoError = "pull failed", true
+	if got, isErr := app.recordInfoBody("loading"); got != "pull failed\nTRUST" || !isErr {
+		t.Errorf("error body = %q, %v", got, isErr)
+	}
+
+	app.state.recordInfoTrust = ""
+	if got, _ := app.recordInfoBody("loading"); got != "pull failed" {
+		t.Errorf("body without trust line = %q", got)
+	}
+}
+
+func TestRecordRowLine_WideCharacters(t *testing.T) {
+	// A wide name and a long non-ASCII version are cut by display width at a
+	// character boundary, and the row still fills the panel exactly.
+	wide := strings.Repeat(string(rune(0x65E5)), 10) // a two-cell CJK ideograph
+	name := runewidth.Truncate(wide, 8, "…")
+	version := runewidth.Truncate("v1.0.0-αβγδε", versionColWidth, "…")
+	if !utf8.ValidString(name) || !utf8.ValidString(version) {
+		t.Fatalf("truncation split a character: %q %q", name, version)
+	}
+	line := recordRowLine(ansiGreen, false, 8, 40, name, version, "T V S")
+	if got := runewidth.StringWidth(stripANSI(line)); got != 40 {
+		t.Fatalf("row display width = %d, want 40: %q", got, line)
 	}
 }
 
@@ -296,5 +402,63 @@ func TestBatchProgress_LateUpdateAfterEnd(t *testing.T) {
 	app.endBatch(id) // stale end from the previous batch
 	if app.state.batchRunning != next || app.state.batchProgress != "publishing 0/1" {
 		t.Fatalf("stale end stopped the next batch: running=%d progress=%q", app.state.batchRunning, app.state.batchProgress)
+	}
+}
+
+func TestRecordRowLines_Wrap(t *testing.T) {
+	one := recordRowLines("", false, false, 6, 30, "agent", "v1", "T V S")
+	if len(one) != 1 || one[0] != recordRowLine("", false, 6, 30, "agent", "v1", "T V S") {
+		t.Fatalf("unwrapped row = %q", one)
+	}
+
+	lines := recordRowLines("", false, true, 6, 20, "agent", "v1", "T V S")
+	if len(lines) != 2 || lines[0] != "  agent   v1" || lines[1] != "  T V S" {
+		t.Fatalf("wrapped row = %q", lines)
+	}
+
+	// A selected wrapped row marks only its first line, and both lines are
+	// padded to the panel width.
+	sel := recordRowLines("", true, true, 6, 20, "agent", "v1", "T V S")
+	if !strings.Contains(sel[0], selectedMark) || strings.Contains(sel[1], selectedMark) {
+		t.Errorf("selection mark placement wrong: %q", sel)
+	}
+	for _, l := range sel {
+		if got := utf8.RuneCountInString(stripANSI(l)); got != 20 {
+			t.Errorf("line visible width = %d, want 20: %q", got, l)
+		}
+	}
+}
+
+func TestOneLineRowMinWidth(t *testing.T) {
+	// The narrowest one-line row exactly fills a panel of that width.
+	w := oneLineRowMinWidth
+	line := recordRowLine("", false, minNameColWidth, w, "n", "v", "T V S")
+	if got := utf8.RuneCountInString(line); got != w {
+		t.Fatalf("row width = %d, want %d: %q", got, w, line)
+	}
+}
+
+func TestRowScroll(t *testing.T) {
+	tests := []struct {
+		name                  string
+		cursor, height, viewH int
+		wantOrigin, wantLine  int
+	}{
+		{"one-line top", 0, 1, 5, 0, 0},
+		{"one-line in view", 4, 1, 5, 0, 4},
+		{"one-line below", 7, 1, 5, 3, 4},
+		{"wrapped in view", 1, 2, 5, 0, 2},
+		{"wrapped second line below", 2, 2, 5, 1, 3},
+		{"wrapped below", 5, 2, 5, 7, 3},
+		{"wrapped in a one-line view", 3, 2, 1, 6, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origin, line := rowScroll(tt.cursor, tt.height, tt.viewH)
+			if origin != tt.wantOrigin || line != tt.wantLine {
+				t.Fatalf("rowScroll(%d, %d, %d) = %d, %d; want %d, %d",
+					tt.cursor, tt.height, tt.viewH, origin, line, tt.wantOrigin, tt.wantLine)
+			}
+		})
 	}
 }

@@ -40,14 +40,14 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 
 **[2] Filters** — collapsible categories (Skills, Domains, Modules, OASF version, Author, Trusted / Verified / Safe); toggle options with `enter`/`space` (include, then exclude); selected values within one category are combined with OR (two skills match records with either), categories with AND, and an excluded value drops every record that carries it; the trusted, verified, and safe options are separate checks and combine with AND, where "safe" matches records that every security scanner reported safe and excluding it shows the records a scanner flagged as unsafe (records that were never scanned match neither); `/` to search across all categories by name, caption, or ID; `i` to open a popup with the OASF class hierarchy and description.
 
-**[3] Records** — filtered list showing name and version; filtering is server-side and paginated, and the filter option lists come from the server's `ListFilterValues` RPC (only values actually present are offered); records load page by page as you scroll, and the panel title shows the total count; records are a flat list ordered by recency, one row per record version; `/` for live name filtering; `i` for record info popup (CID, annotations, schema version, created-at); `y` to yank/copy CID or full JSON; `r` to refetch records and filter options from the server; `space` selects records and `ctrl+a` selects every loaded record (records not yet loaded by scrolling are not included), and while a selection exists `d`, `P`, and `U` delete, publish, or unpublish the selected records instead of the highlighted one, skipping records that are still syncing or that the action does not apply to; changing filters, the name filter, or the server clears the selection, as does `esc`.
+**[3] Records** — filtered list showing name, version, and trust badges (`T` trusted, `V` verified, `S` safe, a red `!` when a scanner flagged the record unsafe, `·` when unset or not scanned; badges move to a second line when the panel is too narrow); filtering is server-side and paginated, and the filter option lists come from the server's `ListFilterValues` RPC (only values actually present are offered); records load page by page as you scroll, and the panel title shows the total count; records are a flat list ordered by recency, one row per record version; `/` for live name filtering; `i` for record info popup (CID, annotations, schema version, created-at, trusted / verified / safe marks); `y` to yank/copy CID or full JSON; `r` to refetch records and filter options from the server; `space` selects records and `ctrl+a` selects every loaded record (records not yet loaded by scrolling are not included), and while a selection exists `d`, `P`, and `U` delete, publish, or unpublish the selected records instead of the highlighted one, skipping records that are still syncing or that the action does not apply to; changing filters, the name filter, or the server clears the selection, as does `esc`.
 
 **[0] Preview** — syntax-highlighted JSON of the selected record; scrollable when focused.
 
 ## Prerequisites
 
-- **Go 1.27.2+**
-- A running [AGNTCY Directory](https://github.com/agntcy/dir) server (local daemon or remote), **`>= v1.8.0`**. lazydir lists records with `ListRecordSummaries` and fills the filter options with `ListFilterValues`; against an older server the Records panel shows an error asking for v1.8.0 or newer.
+- **Go 1.27.3+**
+- A running [AGNTCY Directory](https://github.com/agntcy/dir) server (local daemon or remote), **`>= v1.9.0`**. lazydir lists records with `ListRecordSummaries` and fills the filter options with `ListFilterValues`; against a server older than v1.8.0 the Records panel shows an error asking for v1.9.0 or newer. The trust badges and the info popup's trust status come from the `trusted`, `verified` and `safe` fields v1.9.0 added to `ListRecordSummaries`; a v1.8.x server still lists records but does not send them, so every record there shows as not trusted, not verified and not scanned.
 
 To start a local daemon for testing:
 
@@ -136,11 +136,11 @@ gui:
     color3: "magenta"       # modules, timestamps
     color4: "green"         # connected indicator, OASF version, loading
     color5: "blue"          # options bar, popup labels
-    color6: "red"           # disconnected indicator
+    color6: "red"           # disconnected indicator, unsafe badge
     color7: "brightRed"     # author filter
     color8: "brightYellow"  # trusted / verified / safe filter
-    color9: "brightGreen"   # (available)
-    color10: "brightBlack"  # dim/muted text (IDs)
+    color9: "brightGreen"   # trust badges and info popup marks
+    color10: "brightBlack"  # dim/muted text (IDs, unset badges)
     activeBorderColor: "green"    # focused panel border + cursor
     selectedRowBgColor: "8"       # highlighted row background (256-color)
 ```
