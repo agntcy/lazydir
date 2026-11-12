@@ -1,0 +1,215 @@
+// Copyright AGNTCY Contributors (https://github.com/agntcy)
+// SPDX-License-Identifier: Apache-2.0
+
+package gui
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/agntcy/lazydir/internal/config"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+const testLocalAddr = "localhost:8888"
+
+func TestLocalDaemonEligible(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		mode     string
+		addr     string
+		authMode string
+		want     bool
+	}{
+		{name: "ask localhost no auth", mode: config.LocalDaemonAsk, addr: testLocalAddr, authMode: "", want: true},
+		{name: "never", mode: config.LocalDaemonNever, addr: testLocalAddr, authMode: "", want: false},
+		{name: "tls", mode: config.LocalDaemonAsk, addr: testLocalAddr, authMode: "tls", want: false},
+		{name: "remote host", mode: config.LocalDaemonAsk, addr: "dir.example.com:443", authMode: "insecure", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := localDaemonEligible(tt.mode, tt.addr, tt.authMode); got != tt.want {
+				t.Errorf("localDaemonEligible(%q, %q, %q) = %v, want %v", tt.mode, tt.addr, tt.authMode, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDecideLocalDaemon(t *testing.T) {
+	t.Parallel()
+
+	unavailable := status.Error(codes.Unavailable, "down")
+	deadline := status.Error(codes.DeadlineExceeded, "slow")
+	local := daemonDecision{Mode: config.LocalDaemonAsk, Addr: testLocalAddr, AuthMode: "insecure", PingErr: unavailable, HaveDirctl: true}
+
+	with := func(f func(*daemonDecision)) daemonDecision {
+		d := local
+		f(&d)
+		return d
+	}
+
+	tests := []struct {
+		name string
+		d    daemonDecision
+		want daemonAction
+	}{
+		{name: "remote host", d: with(func(d *daemonDecision) { d.Addr = "dir.example.com:443" }), want: daemonNone},
+		{name: "ping ok", d: with(func(d *daemonDecision) { d.PingErr = nil }), want: daemonNone},
+		{name: "deadline exceeded", d: with(func(d *daemonDecision) { d.PingErr = deadline }), want: daemonNone},
+		{name: "no dirctl", d: with(func(d *daemonDecision) { d.HaveDirctl = false }), want: daemonNone},
+		{name: "already running", d: with(func(d *daemonDecision) { d.Running = true }), want: daemonNone},
+		{name: "owned", d: with(func(d *daemonDecision) { d.Owned = true; d.Running = true }), want: daemonWaitOwned},
+		{name: "ask", d: local, want: daemonAsk},
+		{name: "auto", d: with(func(d *daemonDecision) { d.Mode = config.LocalDaemonAuto }), want: daemonAuto},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := decideLocalDaemon(tt.d); got != tt.want {
+				t.Errorf("decideLocalDaemon(%+v) = %v, want %v", tt.d, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAwaitDaemonStart_Ready(t *testing.T) {
+	t.Parallel()
+
+	exited := make(chan error, 1)
+	ready := make(chan struct{})
+	close(ready)
+	got, err := awaitDaemonStart(exited, ready, 5*time.Second)
+	if got != startReady || err != nil {
+		t.Fatalf("awaitDaemonStart = (%v, %v), want (startReady, nil)", got, err)
+	}
+}
+
+func TestAwaitDaemonStart_EarlyExit(t *testing.T) {
+	t.Parallel()
+
+	exitErr := errors.New("exit 1")
+	exited := make(chan error, 1)
+	exited <- exitErr
+	ready := make(chan struct{})
+
+	start := time.Now()
+	got, err := awaitDaemonStart(exited, ready, 5*time.Second)
+	if got != startExited || !errors.Is(err, exitErr) {
+		t.Fatalf("awaitDaemonStart = (%v, %v), want (startExited, %v)", got, err, exitErr)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("awaitDaemonStart took %v, want well under the 5s timeout", elapsed)
+	}
+}
+
+func TestAwaitDaemonStart_ExitedClosed(t *testing.T) {
+	t.Parallel()
+
+	// A second receiver of Exited() sees the closed channel (nil): that is
+	// still an exit, never "still running".
+	exited := make(chan error)
+	close(exited)
+	got, _ := awaitDaemonStart(exited, make(chan struct{}), 5*time.Second)
+	if got != startExited {
+		t.Fatalf("awaitDaemonStart = %v, want startExited", got)
+	}
+}
+
+func TestAwaitDaemonStart_Timeout(t *testing.T) {
+	t.Parallel()
+
+	got, err := awaitDaemonStart(make(chan error), make(chan struct{}), 50*time.Millisecond)
+	if got != startTimeout || err != nil {
+		t.Fatalf("awaitDaemonStart = (%v, %v), want (startTimeout, nil)", got, err)
+	}
+}
+
+func TestDaemonFailureReason(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		outcome startOutcome
+		err     error
+		want    string
+	}{
+		{name: "exit error", outcome: startExited, err: errors.New("exit status 1"), want: "daemon exited: exit status 1"},
+		{name: "exit nil", outcome: startExited, err: nil, want: "daemon exited"},
+		{name: "timeout", outcome: startTimeout, want: "daemon did not become reachable within 30s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := daemonFailureReason(tt.outcome, tt.err); got != tt.want {
+				t.Errorf("daemonFailureReason = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMarkDaemonReady(t *testing.T) {
+	t.Parallel()
+
+	app := &Gui{}
+	ready := make(chan struct{})
+	app.state.daemonStarting = true
+	app.state.daemonReady = ready
+
+	app.markDaemonReady()
+
+	select {
+	case <-ready:
+	default:
+		t.Fatal("daemonReady not closed")
+	}
+	if app.state.daemonStarting {
+		t.Fatal("daemonStarting still true")
+	}
+	if app.state.daemonReady != nil {
+		t.Fatal("daemonReady not cleared")
+	}
+
+	app.markDaemonReady() // must not panic
+}
+
+func TestDaemonStartTimeout_IgnoredAfterSwitch(t *testing.T) {
+	t.Parallel()
+
+	app := &Gui{}
+	ready := make(chan struct{})
+	app.state.daemonStarting = true
+	app.state.daemonReady = ready
+
+	if !app.daemonStartStillPending(ready) {
+		t.Fatal("pending start not recognised")
+	}
+	if app.daemonStartStillPending(make(chan struct{})) {
+		t.Fatal("a different channel must not count as pending")
+	}
+
+	// What connectToDirectory does on a server switch.
+	app.state.daemonStarting = false
+	app.state.daemonReady = nil
+
+	if app.daemonStartStillPending(ready) {
+		t.Fatal("late timeout must be ignored after a switch")
+	}
+}
+
+// fakeDaemon satisfies localDaemon for compile-time interface checks.
+type fakeDaemon struct{}
+
+func (fakeDaemon) Running(context.Context) (bool, error) { return false, nil }
+func (fakeDaemon) Start() error                          { return nil }
+func (fakeDaemon) Exited() <-chan error                  { return nil }
+func (fakeDaemon) Owned() bool                           { return false }
+func (fakeDaemon) Stop(time.Duration) error              { return nil }
+func (fakeDaemon) LogPath() string                       { return "" }
+
+var _ localDaemon = fakeDaemon{}
