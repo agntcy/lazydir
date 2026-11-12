@@ -17,3 +17,8 @@ func sysProcAttr() *syscall.SysProcAttr {
 func killGroup(p *os.Process) error {
 	return syscall.Kill(-p.Pid, syscall.SIGKILL)
 }
+
+// terminate asks p to shut down gracefully.
+func terminate(p *os.Process) error {
+	return p.Signal(syscall.SIGTERM)
+}

@@ -18,25 +18,33 @@ import (
 )
 
 // fakeDirctl writes a fake dirctl shell script and returns its path. The pid
-// file lives next to it as "pid".
+// file lives next to it as "pid", and every invocation's subcommand is
+// appended to "calls". Its `start` runs in the foreground like the real
+// daemon and exits on SIGTERM; with the "ignore-term" option it ignores
+// SIGTERM so only a kill stops it.
 func fakeDirctl(t *testing.T, opts ...string) string {
 	t.Helper()
 	dir := t.TempDir()
-	stop := `kill "$(cat "$PIDFILE")" 2>/dev/null`
+	trap := `trap 'kill "$SLEEP" 2>/dev/null; exit 0' TERM`
 	for _, o := range opts {
-		if o == "stop-noop" {
-			stop = `:`
+		if o == "ignore-term" {
+			trap = `trap '' TERM`
 		}
 	}
 	script := `#!/bin/sh
-PIDFILE="$(dirname "$0")/pid"
+DIR="$(dirname "$0")"
+PIDFILE="$DIR/pid"
+echo "$2" >> "$DIR/calls"
 [ "$1" = daemon ] || exit 2
 case "$2" in
 start)
   if [ "$FAKE_START_FAIL" = 1 ]; then echo boom; exit 1; fi
+  ` + trap + `
   echo $$ > "$PIDFILE"
   echo starting
-  exec sleep 60
+  sleep 60 &
+  SLEEP=$!
+  wait "$SLEEP"
   ;;
 status)
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
@@ -44,9 +52,6 @@ status)
   else
     echo "Daemon is not running"
   fi
-  ;;
-stop)
-  ` + stop + `
   ;;
 esac
 exit 0
@@ -73,7 +78,7 @@ func newFake(t *testing.T, env []string, opts ...string) *Daemon {
 		b, err := os.ReadFile(filepath.Join(filepath.Dir(bin), "pid"))
 		if err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
+				_ = syscall.Kill(-pid, syscall.SIGKILL) // the fake and its sleep
 			}
 		}
 	})
@@ -191,17 +196,72 @@ func TestDaemon_StartFailWritesLog(t *testing.T) {
 	}
 }
 
-func TestDaemon_StopKillsAfterTimeout(t *testing.T) {
-	d := newFake(t, nil, "stop-noop")
-	if err := d.Start(); err != nil {
-		t.Fatal(err)
-	}
-	ex := d.Exited()
+// waitPidFile waits until the fake has written its pid file, i.e. has
+// installed its TERM trap.
+func waitPidFile(t *testing.T, d *Daemon) {
+	t.Helper()
 	pidFile := filepath.Join(filepath.Dir(d.bin), "pid")
 	if !waitFor(t, func() bool { _, err := os.Stat(pidFile); return err == nil }) {
 		t.Fatal("no pid file")
 	}
+}
+
+func TestDaemon_StopTerminatesChildWithoutStopCommand(t *testing.T) {
+	d := newFake(t, nil)
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ex := d.Exited()
+	waitPidFile(t, d)
+
+	start := time.Now()
+	if err := d.Stop(5 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("Stop took %v, want well under the 5s timeout", elapsed)
+	}
+	select {
+	case <-ex: // Stop consumed the exit; the channel is closed
+	case <-time.After(time.Second):
+		t.Fatal("child still running after Stop")
+	}
+	if d.Owned() {
+		t.Error("still owned after Stop")
+	}
+	calls, err := os.ReadFile(filepath.Join(filepath.Dir(d.bin), "calls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range strings.Split(strings.TrimSpace(string(calls)), "\n") {
+		if c == "stop" {
+			t.Fatalf("Stop invoked `dirctl daemon stop`; calls = %q", calls)
+		}
+	}
+}
+
+func TestDaemon_StopNotOwnedIsNoop(t *testing.T) {
+	d := newFake(t, nil)
+	if err := d.Stop(time.Second); err != nil {
+		t.Fatalf("Stop = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(d.bin), "calls")); err == nil {
+		t.Error("Stop on an unowned daemon ran dirctl")
+	}
+}
+
+func TestDaemon_StopKillsAfterTimeout(t *testing.T) {
+	d := newFake(t, nil, "ignore-term")
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ex := d.Exited()
+	waitPidFile(t, d)
+	start := time.Now()
 	_ = d.Stop(200 * time.Millisecond)
+	if elapsed := time.Since(start); elapsed < 200*time.Millisecond {
+		t.Errorf("Stop returned after %v: the TERM-ignoring fake should need the kill", elapsed)
+	}
 	select {
 	case <-ex:
 	case <-time.After(2 * time.Second):

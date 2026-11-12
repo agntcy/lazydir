@@ -13,3 +13,7 @@ import (
 func sysProcAttr() *syscall.SysProcAttr { return nil }
 
 func killGroup(p *os.Process) error { return p.Kill() }
+
+// terminate stops p. Windows has no SIGTERM for console processes, so this
+// is a hard kill.
+func terminate(p *os.Process) error { return p.Kill() }
