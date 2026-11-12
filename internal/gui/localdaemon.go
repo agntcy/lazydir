@@ -154,10 +154,20 @@ func (app *Gui) startLocalDaemon(g *gocui.Gui) {
 		app.showDaemonFailure(g, err.Error())
 		return
 	}
+	app.armDaemonStart(d)
+	app.renderDirectory(g)
+}
+
+// armDaemonStart enters the starting state for d with a fresh daemonReady
+// channel and spawns the watcher that reports an early exit or a timeout.
+// Shared by startLocalDaemon and connect's daemonWaitOwned branch so a
+// daemon lazydir already owns cannot leave the starting state forever. An
+// already exited daemon (closed Exited channel) fails immediately. Must be
+// called on the GUI goroutine.
+func (app *Gui) armDaemonStart(d localDaemon) chan struct{} {
 	ready := make(chan struct{})
 	app.state.daemonStarting = true
 	app.state.daemonReady = ready
-	app.renderDirectory(g)
 
 	exited := d.Exited()
 	go func() {
@@ -176,6 +186,7 @@ func (app *Gui) startLocalDaemon(g *gocui.Gui) {
 			return nil
 		})
 	}()
+	return ready
 }
 
 // daemonStartStillPending reports whether the start that owns ready is still

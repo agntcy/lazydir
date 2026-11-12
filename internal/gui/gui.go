@@ -418,7 +418,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		case daemonAuto:
 			app.startLocalDaemon(g)
 		case daemonWaitOwned:
-			app.state.daemonStarting = true
+			app.armDaemonStart(app.daemon)
 		case daemonNone:
 			app.state.localDaemonHint = eligible && app.daemon == nil
 			app.openInfoPopup(g, viewDirectory)

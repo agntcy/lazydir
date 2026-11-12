@@ -202,12 +202,47 @@ func TestDaemonStartTimeout_IgnoredAfterSwitch(t *testing.T) {
 	}
 }
 
-// fakeDaemon satisfies localDaemon for compile-time interface checks.
-type fakeDaemon struct{}
+func TestArmDaemonStart(t *testing.T) {
+	t.Parallel()
+
+	app := &Gui{}
+	exited := make(chan error) // never fires: the daemon keeps running
+	ready := app.armDaemonStart(fakeDaemon{exited: exited})
+
+	if !app.state.daemonStarting {
+		t.Fatal("daemonStarting not set")
+	}
+	if ready == nil || app.state.daemonReady != ready {
+		t.Fatal("daemonReady not armed with the returned channel")
+	}
+	if !app.daemonStartStillPending(ready) {
+		t.Fatal("armed start not pending")
+	}
+
+	// Re-arming (e.g. daemonWaitOwned after a switch back) replaces the
+	// channel, so the earlier watcher's guard no longer matches.
+	again := app.armDaemonStart(fakeDaemon{exited: exited})
+	if again == ready || app.daemonStartStillPending(ready) {
+		t.Fatal("re-arm must install a fresh channel")
+	}
+
+	// Records landing closes the current channel, ending the start; its
+	// watcher sees ready and exits without touching app.g. Close the
+	// superseded channel too so the first watcher exits instead of waiting
+	// out the 30s timeout (which would call the nil app.g).
+	app.markDaemonReady()
+	if app.state.daemonStarting {
+		t.Fatal("daemonStarting still set after markDaemonReady")
+	}
+	close(ready)
+}
+
+// fakeDaemon satisfies localDaemon in tests.
+type fakeDaemon struct{ exited chan error }
 
 func (fakeDaemon) Running(context.Context) (bool, error) { return false, nil }
 func (fakeDaemon) Start() error                          { return nil }
-func (fakeDaemon) Exited() <-chan error                  { return nil }
+func (f fakeDaemon) Exited() <-chan error                { return f.exited }
 func (fakeDaemon) Owned() bool                           { return false }
 func (fakeDaemon) Stop(time.Duration) error              { return nil }
 func (fakeDaemon) LogPath() string                       { return "" }
