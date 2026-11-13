@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -195,14 +196,43 @@ func DefaultLogPath() string {
 	return filepath.Join(base, "lazydir", "daemon.log")
 }
 
-// TailLog returns the last n lines of the file at path.
+// tailChunk is how much TailLog reads per step from the end of the file.
+const tailChunk = 4096
+
+// TailLog returns the last n lines of the file at path. It reads backwards
+// from the end in chunks, so a large log is never loaded whole.
 func TailLog(path string, n int) (string, error) {
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
-	if n >= 0 && len(lines) > n {
+	defer f.Close()
+	if n <= 0 {
+		return "", nil
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+
+	var buf []byte
+	for off := info.Size(); off > 0; {
+		size := min(int64(tailChunk), off)
+		off -= size
+		chunk := make([]byte, size)
+		if _, err := f.ReadAt(chunk, off); err != nil {
+			return "", err
+		}
+		buf = slices.Concat(chunk, buf)
+		// n lines need n newlines after trimming the trailing one, unless
+		// the start of the file is reached first.
+		if bytes.Count(bytes.TrimRight(buf, "\n"), []byte("\n")) >= n {
+			break
+		}
+	}
+
+	lines := strings.Split(strings.TrimRight(string(buf), "\n"), "\n")
+	if len(lines) > n {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n"), nil

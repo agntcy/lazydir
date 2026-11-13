@@ -20,6 +20,11 @@ const (
 	testRemoteAddr       = "dir.example.com:443"
 )
 
+const (
+	loopbackV4Addr = "127.0.0.1:8888"
+	loopbackV6Addr = "[::1]:8888"
+)
+
 func TestLocalDaemonEligible(t *testing.T) {
 	t.Parallel()
 
@@ -37,8 +42,12 @@ func TestLocalDaemonEligible(t *testing.T) {
 		{name: "tls", mode: config.LocalDaemonAsk, addr: testLocalAddr, authMode: "tls", daemonAddr: def, want: false},
 		{name: "remote host", mode: config.LocalDaemonAsk, addr: testRemoteAddr, authMode: "insecure", daemonAddr: def, want: false},
 		{name: "other loopback port", mode: config.LocalDaemonAsk, addr: "localhost:8080", daemonAddr: def, want: false},
-		{name: "127.0.0.1 default port", mode: config.LocalDaemonAsk, addr: "127.0.0.1:8888", daemonAddr: def, want: true},
-		{name: "ipv6 loopback default port", mode: config.LocalDaemonAsk, addr: "[::1]:8888", daemonAddr: def, want: true},
+		{name: "LOCALHOST case-insensitive", mode: config.LocalDaemonAsk, addr: "LOCALHOST:8888", daemonAddr: def, want: true},
+		{name: "127.0.0.1 vs localhost daemon", mode: config.LocalDaemonAsk, addr: loopbackV4Addr, daemonAddr: def, want: false},
+		{name: "ipv6 loopback vs localhost daemon", mode: config.LocalDaemonAsk, addr: loopbackV6Addr, daemonAddr: def, want: false},
+		{name: "127.0.0.1 daemon", mode: config.LocalDaemonAsk, addr: loopbackV4Addr, daemonAddr: loopbackV4Addr, want: true},
+		{name: "127.0.0.2 vs 127.0.0.1 daemon", mode: config.LocalDaemonAsk, addr: "127.0.0.2:8888", daemonAddr: loopbackV4Addr, want: false},
+		{name: "ipv6 loopback daemon", mode: config.LocalDaemonAsk, addr: loopbackV6Addr, daemonAddr: loopbackV6Addr, want: true},
 		{name: "custom daemon address", mode: config.LocalDaemonAsk, addr: testCustomDaemonAddr, daemonAddr: testCustomDaemonAddr, want: true},
 		{name: "custom daemon address other port", mode: config.LocalDaemonAsk, addr: testLocalAddr, daemonAddr: testCustomDaemonAddr, want: false},
 		{name: "daemon address not loopback", mode: config.LocalDaemonAsk, addr: testLocalAddr, daemonAddr: "10.0.0.1:8888", want: false},
@@ -350,16 +359,16 @@ func TestDaemonOfferOpen(t *testing.T) {
 	t.Parallel()
 
 	app := &Gui{}
-	if app.daemonOfferOpen() {
+	if app.daemonPopupOpen() {
 		t.Fatal("no popup open")
 	}
-	app.state.daemonOfferAddr = testLocalAddr
+	app.state.daemonPopupAddr = testLocalAddr
 	app.state.menu = menuState{view: viewConfirmPopup}
-	if !app.daemonOfferOpen() {
+	if !app.daemonPopupOpen() {
 		t.Fatal("offer popup not recognised")
 	}
-	app.state.daemonOfferAddr = "" // another confirm popup replaced it
-	if app.daemonOfferOpen() {
+	app.state.daemonPopupAddr = "" // another confirm popup replaced it
+	if app.daemonPopupOpen() {
 		t.Fatal("a different confirm popup must not count as the offer")
 	}
 }

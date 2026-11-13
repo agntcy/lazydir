@@ -98,7 +98,7 @@ type LocalDaemonConfig struct {
 	DataDir string `yaml:"dataDir"`
 	// Address is where the started daemon listens (dirctl's
 	// server.listen_address); empty means DefaultLocalDaemonAddress. lazydir
-	// only offers a daemon for a selected server on the same port.
+	// only offers a daemon for a selected server at the same host and port.
 	Address string `yaml:"address"`
 }
 
