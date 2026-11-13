@@ -71,9 +71,15 @@ func (app *Gui) connInfoText() (string, bool) {
 		if !app.state.dirLastConnected.IsZero() {
 			fmt.Fprintf(&sb, "\n%sConnected:%s %s", t.Color3, t.Reset, app.state.dirLastConnected.Format("15:04:05"))
 		}
+		if app.state.daemonStarting {
+			fmt.Fprintf(&sb, "\n\nStarting local daemon (log: %s)", app.daemonLogPath())
+		}
 		if app.state.dirError != "" {
 			fmt.Fprintf(&sb, "\n\n%sError:%s %s", t.Color6, t.Reset, app.state.dirError)
 			hasError = true
+			if app.state.localDaemonHint {
+				sb.WriteString("\nStart one with: dirctl daemon start")
+			}
 		}
 	} else {
 		fmt.Fprintf(&sb, "%sServer:%s    %s", t.Color1, t.Reset, app.state.oasfAddr)
@@ -216,6 +222,12 @@ func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
 	app.state.activeDir = entry
 	app.state.serverAddr = entry.Address
 	app.state.dirStatus = connTrying
+	// A late start timeout must not pop up over the new server. The daemon
+	// itself keeps running until quit.
+	app.state.daemonStarting = false
+	app.state.daemonReady = nil
+	app.state.localDaemonHint = false
+	app.state.daemonPopupAddr = ""
 	app.state.recordCursor = 0
 	app.state.page.reset()
 	app.state.dirUnsupported = false

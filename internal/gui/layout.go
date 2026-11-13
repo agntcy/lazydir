@@ -446,8 +446,13 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 	}
 	v.Clear()
 
+	dirIcon := g.connIcon(g.state.dirStatus)
 	dirSync := connSync(g.state.dirStatus)
-	fmt.Fprintf(v, " %s Directory: %s%s\n", g.connIcon(g.state.dirStatus), g.state.serverAddr, dirSync)
+	if g.state.daemonStarting {
+		dirIcon = g.connIcon(connTrying)
+		dirSync = connSync(connTrying) + " starting local daemon…"
+	}
+	fmt.Fprintf(v, " %s Directory: %s%s\n", dirIcon, g.state.serverAddr, dirSync)
 
 	oasfAddr := g.state.oasfAddr
 	if oasfAddr == "" {
