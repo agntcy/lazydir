@@ -26,7 +26,7 @@ server:
   #   mode: ask # ask | auto | never
   #   dirctlPath: "dirctl" # default: dirctl on PATH
   #   dataDir: "~/.agntcy/dir" # passed as --data-dir; default: dirctl's own
-  #   address: "localhost:8888" # where the daemon listens; only servers on this port get the offer
+  #   address: "localhost:8888" # where the daemon listens; only a server at exactly this host and port gets the offer
   # dirctlConfigPath: "~/.config/dirctl/config.yaml" # import named contexts from dirctl
   directoryServers: # predefined servers shown in popup (first = default)
     - address: "localhost:8888"

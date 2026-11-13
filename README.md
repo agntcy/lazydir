@@ -186,7 +186,7 @@ Servers with `oidcIssuer` and `oidcClientID` trigger an OIDC device-flow login w
 
 ### Local daemon
 
-When the selected server is a loopback address on the daemon's port (by default `localhost:8888`; `127.0.0.1` and `::1` count as the same host) using plain insecure gRPC and it is unreachable, lazydir can start a local daemon for you with `dirctl daemon start`. If `dirctl` cannot be found, lazydir shows the hint "Start one with: dirctl daemon start" instead.
+When the selected server is the loopback address the daemon listens on (by default `localhost:8888`; host and port must match exactly, so `127.0.0.1:8888` needs `address: "127.0.0.1:8888"`) using plain insecure gRPC and it is unreachable, lazydir can start a local daemon for you with `dirctl daemon start`. If `dirctl` cannot be found, lazydir shows the hint "Start one with: dirctl daemon start" instead.
 
 ```yaml
 server:
@@ -197,7 +197,7 @@ server:
     # address: "localhost:8888"            # where the daemon listens (default)
 ```
 
-- `address` should match the daemon's `server.listen_address`; lazydir only offers to start a daemon for a selected loopback server on that port.
+- `address` should match the daemon's `server.listen_address`; lazydir only offers to start a daemon for a selected server at exactly that host and port.
 - `ask` prompts before starting the daemon, `auto` starts it without asking, and `never` disables the feature.
 - The daemon's output is written to `<user cache dir>/lazydir/daemon.log` (see `os.UserCacheDir()`; `~/Library/Caches` on macOS, `~/.cache` on Linux).
 - A daemon that lazydir started is stopped when lazydir quits, or when the terminal tab closes. A daemon you started yourself is never stopped by lazydir.

@@ -83,9 +83,9 @@ func newLocalDaemon(cfg config.LocalDaemonConfig) localDaemon {
 
 // localDaemonEligible reports whether a server could be a local daemon that
 // lazydir may start: the feature is on, the connection is plain insecure
-// gRPC, and the selected address and the address the daemon listens on
-// (daemonAddr) are both loopback with the same port. Any loopback host
-// (localhost, 127.0.0.1, ::1) counts as the same host.
+// gRPC, and the selected address is the loopback address the daemon listens
+// on (daemonAddr). Hosts must match exactly: a daemon bound to 127.0.0.1 does
+// not answer on 127.0.0.2 or ::1, and localhost may resolve to either family.
 func localDaemonEligible(mode, addr, authMode, daemonAddr string) bool {
 	if mode == config.LocalDaemonNever {
 		return false
@@ -96,12 +96,12 @@ func localDaemonEligible(mode, addr, authMode, daemonAddr string) bool {
 	if !localdaemon.IsLoopback(addr) || !localdaemon.IsLoopback(daemonAddr) {
 		return false
 	}
-	_, port, err := net.SplitHostPort(addr)
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return false
 	}
-	_, daemonPort, err := net.SplitHostPort(daemonAddr)
-	return err == nil && port == daemonPort
+	daemonHost, daemonPort, err := net.SplitHostPort(daemonAddr)
+	return err == nil && port == daemonPort && strings.EqualFold(host, daemonHost)
 }
 
 // decideLocalDaemon picks what to do after the connect ping.
@@ -175,7 +175,7 @@ func (app *Gui) offerLocalDaemon(g *gocui.Gui, addr string) {
 			app.startLocalDaemon(g)
 		}
 	})
-	app.state.daemonOfferAddr = addr
+	app.state.daemonPopupAddr = addr
 	showError := func() {
 		if app.offerStillValid(addr) {
 			app.openInfoPopup(g, viewDirectory)
@@ -193,19 +193,20 @@ func (app *Gui) offerStillValid(addr string) bool {
 	return app.state.serverAddr == addr && app.state.dirStatus != connOK
 }
 
-// daemonOfferOpen reports whether the open confirm popup is the daemon offer.
-func (app *Gui) daemonOfferOpen() bool {
-	return app.state.daemonOfferAddr != "" && app.state.menu.view == viewConfirmPopup
+// daemonPopupOpen reports whether the open confirm popup is the daemon offer
+// or the daemon failure popup.
+func (app *Gui) daemonPopupOpen() bool {
+	return app.state.daemonPopupAddr != "" && app.state.menu.view == viewConfirmPopup
 }
 
-// closeStaleDaemonOffer closes the daemon offer once the server answered on
-// its own, without running the offer's cancel action. Must be called on the
-// GUI goroutine.
-func (app *Gui) closeStaleDaemonOffer(g *gocui.Gui) {
-	if !app.daemonOfferOpen() {
+// closeStaleDaemonPopup closes the daemon offer or failure popup once the
+// server answered, without running the offer's cancel action. Must be called
+// on the GUI goroutine.
+func (app *Gui) closeStaleDaemonPopup(g *gocui.Gui) {
+	if !app.daemonPopupOpen() {
 		return
 	}
-	app.state.daemonOfferAddr = ""
+	app.state.daemonPopupAddr = ""
 	app.state.confirmPopupText = ""
 	app.state.menu = menuState{}
 	app.hidePopup(g, viewConfirmPopup)
@@ -289,6 +290,7 @@ func (app *Gui) showDaemonFailure(g *gocui.Gui, reason string) {
 		}
 	}
 	app.openConfirmPopup(g, "Local daemon failed", sb.String(), nil)
+	app.state.daemonPopupAddr = app.state.serverAddr // close it if the server recovers
 }
 
 // daemonLogPath is the daemon log path, or "" without daemon support.

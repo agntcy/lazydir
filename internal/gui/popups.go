@@ -375,7 +375,7 @@ func (app *Gui) fetchAndCopyJSON(cid string) {
 // "confirm" / "cancel" option rows (or just "dismiss" when onConfirm is nil).
 func (app *Gui) openConfirmPopup(g *gocui.Gui, title, body string, onConfirm func()) {
 	app.state.confirmPopupText = body
-	app.state.daemonOfferAddr = "" // any new confirm popup replaces the offer
+	app.state.daemonPopupAddr = "" // any new confirm popup replaces the offer
 
 	var options []menuOption
 	if onConfirm != nil {
@@ -494,7 +494,7 @@ func (app *Gui) confirmMenuSelect(g *gocui.Gui, v *gocui.View) error {
 	}
 	action := ms.options[ms.cursor].action
 	app.state.confirmPopupText = ""
-	app.state.daemonOfferAddr = ""
+	app.state.daemonPopupAddr = ""
 	app.hidePopup(g, viewConfirmPopup)
 	app.state.menu = menuState{}
 	if action != nil {
@@ -506,7 +506,7 @@ func (app *Gui) confirmMenuSelect(g *gocui.Gui, v *gocui.View) error {
 func (app *Gui) confirmMenuClose(g *gocui.Gui, v *gocui.View) error {
 	onClose := app.state.menu.onClose
 	app.state.confirmPopupText = ""
-	app.state.daemonOfferAddr = ""
+	app.state.daemonPopupAddr = ""
 	app.hidePopup(g, viewConfirmPopup)
 	app.state.menu = menuState{}
 	if onClose != nil {

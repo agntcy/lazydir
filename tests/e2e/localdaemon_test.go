@@ -90,7 +90,11 @@ func TestLocalDaemon_StartStop(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	running, err = d.Running(ctx)
+	// Stop may use its whole grace period, so check with a fresh timeout.
+	afterCtx, afterCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer afterCancel()
+
+	running, err = d.Running(afterCtx)
 	if err != nil {
 		t.Fatalf("Running after Stop: %v", err)
 	}

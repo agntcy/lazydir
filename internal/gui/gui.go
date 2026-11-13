@@ -98,12 +98,13 @@ type appState struct {
 	// coming up (display only: dirStatus stays connFailed so the health loop
 	// keeps pinging); daemonReady is closed when records first load.
 	// localDaemonHint adds a "dirctl daemon start" hint to the error popup
-	// when dirctl could not be found. daemonOfferAddr is the server address
-	// while the "No local directory" offer is the open confirm popup.
+	// when dirctl could not be found. daemonPopupAddr is the server address
+	// while the "No local directory" offer or the "Local daemon failed" popup
+	// is the open confirm popup, so it can be closed once that server answers.
 	daemonStarting  bool
 	daemonReady     chan struct{}
 	localDaemonHint bool
-	daemonOfferAddr string
+	daemonPopupAddr string
 
 	// OASF connection
 	oasfAddr          string
@@ -395,6 +396,10 @@ func (app *Gui) connect(cfg dirclient.Config) {
 
 	if connectNormally(action, pingErr) {
 		app.g.Update(func(g *gocui.Gui) error {
+			if app.state.serverAddr != cfg.ServerAddress {
+				c.Close() // the user switched servers during the ping
+				return nil
+			}
 			app.stopReconnectLoop()
 			if app.state.client != nil {
 				app.state.client.Close()
@@ -561,6 +566,14 @@ func (app *Gui) dirHealthLoop(stop chan struct{}) {
 				app.g.Update(func(g *gocui.Gui) error {
 					if app.state.client != snap.client {
 						return nil
+					}
+					// Reachable is enough: a daemon start is done and a
+					// stale offer or failure popup can go, even if listing
+					// records fails afterwards.
+					if app.state.daemonStarting || app.daemonPopupOpen() {
+						app.markDaemonReady()
+						app.closeStaleDaemonPopup(g)
+						app.renderDirectory(g)
 					}
 					if app.state.dirUnsupported {
 						return nil // reachable, but too old to list records
@@ -908,7 +921,7 @@ func (app *Gui) showRecordsError(g *gocui.Gui, text string) {
 // query is safe. Must be called on the GUI goroutine.
 func (app *Gui) markQueryResponded(g *gocui.Gui, resetCursor bool) {
 	app.markDaemonReady()
-	app.closeStaleDaemonOffer(g)
+	app.closeStaleDaemonPopup(g)
 	app.state.dirStatus = connOK
 	app.state.dirLastConnected = time.Now()
 	app.state.dirError = ""
