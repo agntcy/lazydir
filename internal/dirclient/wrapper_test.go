@@ -269,7 +269,7 @@ func TestSummaryFromRPC_TrustStatus(t *testing.T) {
 		verified bool
 		scan     ScanVerdict
 	}{
-		{"none", &searchv1.RecordSummary{}, false, false, ScanNone},
+		{"no status", &searchv1.RecordSummary{}, false, false, ScanNone},
 		{"all good", &searchv1.RecordSummary{Trusted: true, Verified: true, Safe: &safe}, true, true, ScanSafe},
 		{"unsafe", &searchv1.RecordSummary{Trusted: true, Safe: &unsafe}, true, false, ScanUnsafe},
 	}
