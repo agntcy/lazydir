@@ -80,6 +80,7 @@ func buildConfig(userCfg config.Config) gui.Config {
 		InputDebounceDelay: userCfg.GUI.InputDebounceDelay,
 		DimLevel:           dimLevel,
 		PageSize:           userCfg.PageSize(),
+		LocalDaemon:        userCfg.Server.LocalDaemon.Resolved(),
 	}
 
 	// Honour environment variables also used by dirctl and the OASF SDK.
