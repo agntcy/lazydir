@@ -159,6 +159,7 @@ func (app *Gui) openInfoPopup(g *gocui.Gui, sourcePanel string) {
 		app.state.popupPrevView = cv.Name()
 	}
 	app.state.infoPopupPanel = sourcePanel
+	app.state.recordInfoTrust = "" // only the record info toggle sets it
 	ipv.Clear()
 	_ = ipv.SetOrigin(0, 0)
 	ipv.Visible = true
@@ -226,12 +227,9 @@ func (app *Gui) renderInfoPopup(g *gocui.Gui) {
 			hasError = app.state.filters.inlineDescError
 		}
 	case viewRecords:
-		if app.state.recordInfoLoading {
-			fmt.Fprintf(ipv, "%sloading…%s", app.theme.Color4, app.theme.Reset)
-		} else if app.state.recordInfoText != "" {
-			fmt.Fprint(ipv, app.state.recordInfoText)
-			hasError = app.state.recordInfoError
-		}
+		text, isErr := app.recordInfoBody(app.theme.Color4 + "loading…" + app.theme.Reset)
+		fmt.Fprint(ipv, text)
+		hasError = isErr
 	}
 
 	if hasError {
@@ -246,6 +244,23 @@ func (app *Gui) renderInfoPopup(g *gocui.Gui) {
 	}
 	g.SelFrameColor = ipv.FrameColor
 	g.SelFgColor = ipv.TitleColor
+}
+
+// recordInfoBody is the Records info popup's text: loading (while a fetch
+// runs) or recordInfoText, then the trust line, if any. It reports whether
+// the text is an error.
+func (app *Gui) recordInfoBody(loading string) (string, bool) {
+	text, isErr := app.state.recordInfoText, app.state.recordInfoError
+	if app.state.recordInfoLoading {
+		text, isErr = loading, false
+	}
+	if app.state.recordInfoTrust != "" {
+		if text != "" {
+			text += "\n"
+		}
+		text += app.state.recordInfoTrust
+	}
+	return text, isErr
 }
 
 // infoPopupCopyError copies the current error message to the system clipboard.

@@ -44,7 +44,7 @@ func (app *Gui) recordMouseClick(g *gocui.Gui, v *gocui.View) error {
 	}
 	_, cy := v.Cursor()
 	_, oy := v.Origin()
-	idx := oy + cy
+	idx := (oy + cy) / max(app.state.recordRowHeight, 1)
 	rows := app.state.recordDisplayRows
 	if idx >= 0 && idx < len(rows) {
 		app.state.recordCursor = idx
@@ -162,11 +162,16 @@ func (app *Gui) recordToggleInfo(g *gocui.Gui, v *gocui.View) error {
 	app.state.recordInfoText = ""
 	app.state.recordInfoLoading = true
 	app.openInfoPopup(g, viewRecords)
+	// Trust status comes with the summary, so it shows right away and stays
+	// when PullInfo fails.
+	app.state.recordInfoTrust = formatTrustLine(r, app.theme)
+	app.renderInfoPopup(g)
 
 	go app.fetchRecordInfo(cid)
 	return nil
 }
 
+// fetchRecordInfo pulls the record's metadata and fills the info popup with it.
 func (app *Gui) fetchRecordInfo(cid string) {
 	client := app.state.client
 	if client == nil {
@@ -224,6 +229,43 @@ func formatRecordInfo(info *dirclient.RecordInfo, t Theme) string {
 	}
 
 	return sb.String()
+}
+
+// formatTrustLine renders a record's trust and scan status as the info
+// popup's one-line summary, each item led by its mark.
+func formatTrustLine(rec *dirclient.RecordSummary, t Theme) string {
+	return fmt.Sprintf("%s %sTrusted%s   %s %sVerified%s   %s %sSafe%s",
+		statusMark(rec.Trusted, t), t.Color5, t.Reset,
+		statusMark(rec.Verified, t), t.Color5, t.Reset,
+		scanMark(rec.Scan, t), t.Color5, t.Reset)
+}
+
+// Info popup status marks: a check and a cross in the trust badges' colors,
+// and a dim question mark for a record no scanner reached a verdict on.
+const (
+	markYes     = "✓"
+	markNo      = "✗"
+	markUnknown = "?"
+)
+
+// statusMark is the info popup's colored mark for a true/false status.
+func statusMark(b bool, t Theme) string {
+	if b {
+		return t.Color9 + markYes + t.Reset
+	}
+	return t.Color6 + markNo + t.Reset
+}
+
+// scanMark is the info popup's colored mark for a scan verdict.
+func scanMark(s dirclient.ScanVerdict, t Theme) string {
+	switch s {
+	case dirclient.ScanSafe:
+		return statusMark(true, t)
+	case dirclient.ScanUnsafe:
+		return statusMark(false, t)
+	default:
+		return t.Color10 + markUnknown + t.Reset
+	}
 }
 
 // recordDelete opens a confirmation popup for the currently selected record.
