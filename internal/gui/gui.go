@@ -52,11 +52,6 @@ type syncStatusEntry struct {
 // appState holds all mutable application state. Fields are only mutated on
 // the GUI goroutine (inside g.Update callbacks or key handlers).
 type appState struct {
-	// When the currently-displayed records were fetched from the directory.
-	// Set when a query's first page lands so the records panel can show how
-	// stale the data is. Zero if never loaded.
-	dataFetchedAt time.Time
-
 	// Publish enrichment. RecordSummary.Published is filled in the background
 	// from RoutingService.List after the first page lands. publishEnriched is
 	// true once resolution completed for the current server; publishEnriching
@@ -124,9 +119,6 @@ type appState struct {
 	// from a superseded query.
 	queryGen uint64
 
-	// loadedOnce is true once a query has completed (first page landed), used
-	// to gate the "synced N ago" staleness indicator.
-	loadedOnce bool
 	// dirUnsupported is set, per connection, when the server answered
 	// ListRecordSummaries with Unimplemented (dir < v1.8.0). The server stays
 	// marked failed even though it answers pings, so the health loop does not
@@ -303,12 +295,6 @@ func New(cfg Config) error {
 	app.state.oasfStatus = connTrying
 	go app.pingOASF(oasfClient)
 
-	// Refresh the records panel on a timer so the "synced N ago" staleness
-	// indicator in its title stays current. Stopped when the main loop exits.
-	uiStop := make(chan struct{})
-	defer close(uiStop)
-	go app.uiRefreshLoop(uiStop)
-
 	if err := g.MainLoop(); !gocui.IsQuit(err) {
 		return fmt.Errorf("main loop: %w", err)
 	}
@@ -325,7 +311,6 @@ func (app *Gui) connect(cfg dirclient.Config) {
 			app.state.dirStatus = connFailed
 			app.state.dirError = err.Error()
 			app.state.dirLastCfg = &cfg
-			app.state.loadedOnce = false
 			app.renderDirectory(g)
 			app.renderStatus(g)
 			app.openInfoPopup(g, viewDirectory)
@@ -374,38 +359,6 @@ func (app *Gui) startReconnectLoop() {
 	stop := make(chan struct{})
 	app.state.dirReconnStop = stop
 	go app.dirHealthLoop(stop)
-}
-
-// uiRefreshLoop keeps the records panel's relative "synced N ago" staleness
-// indicator current. It only rewrites the panel title (never clears/repaints
-// the record list) and only when the title actually changes, so it stays cheap
-// even for large lists. It runs for the lifetime of the GUI and exits when stop
-// is closed.
-func (app *Gui) uiRefreshLoop(stop chan struct{}) {
-	// Coarse (minute-granular) label, so a low-frequency tick is plenty.
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-			app.g.Update(func(g *gocui.Gui) error {
-				if !app.state.loadedOnce || app.state.dataFetchedAt.IsZero() {
-					return nil
-				}
-				v, err := g.View(viewRecords)
-				if err != nil {
-					return nil
-				}
-				if title := app.recordsTitle(); title != v.Title {
-					v.Title = title
-				}
-				return nil
-			})
-		}
-	}
 }
 
 func (app *Gui) stopReconnectLoop() {
@@ -819,8 +772,6 @@ func (app *Gui) markQueryResponded(g *gocui.Gui, resetCursor bool) {
 	if app.state.infoPopupPanel == viewDirectory {
 		_ = app.closeInfoPopup(g, nil)
 	}
-	app.state.loadedOnce = true
-	app.state.dataFetchedAt = time.Now()
 	app.startReconnectLoop()
 	app.startPublishEnrichment()
 	app.startFilterValuesFetch(false)
