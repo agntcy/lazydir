@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -42,6 +43,16 @@ type ClassInfo struct {
 	Description string
 	Type        ClassType
 	Ancestors   []ClassEntry // path from the taxonomy root to the parent (not including the item)
+}
+
+// TreeNode is a taxonomy item with its children, for rendering the hierarchy.
+// Name is the full slash path as reported by the schema server.
+type TreeNode struct {
+	ID       int
+	Name     string
+	Caption  string
+	Category bool
+	Children []TreeNode
 }
 
 // Config configures the OASF schema client.
@@ -168,6 +179,55 @@ func (c *Client) FetchAll(ctx context.Context, classType ClassType, schemaVersio
 		entries[k] = e
 	}
 	return entries, nil
+}
+
+// FetchTree returns the taxonomy of the given type as a tree, siblings sorted
+// by ID. schemaVersion may be empty to use the default.
+func (c *Client) FetchTree(ctx context.Context, classType ClassType, schemaVersion string) ([]TreeNode, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, c.timeout())
+	defer cancel()
+
+	taxonomy, err := c.getTaxonomyVersioned(reqCtx, classType, schemaVersion)
+	if err != nil {
+		return nil, err
+	}
+	return buildTree(taxonomy), nil
+}
+
+// SchemaVersions lists the schema versions the server offers and which one is
+// the default.
+func (c *Client) SchemaVersions(ctx context.Context) ([]string, string, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, c.timeout())
+	defer cancel()
+
+	versions, err := c.sdk.GetAvailableSchemaVersions(reqCtx)
+	if err != nil {
+		return nil, "", err
+	}
+	def, err := c.sdk.GetDefaultSchemaVersion(reqCtx)
+	if err != nil {
+		return nil, "", err
+	}
+	return versions, def, nil
+}
+
+func buildTree(t sdkschema.Taxonomy) []TreeNode {
+	return buildNodes(map[string]sdkschema.TaxonomyItem(t))
+}
+
+func buildNodes(items map[string]sdkschema.TaxonomyItem) []TreeNode {
+	nodes := make([]TreeNode, 0, len(items))
+	for _, item := range items {
+		nodes = append(nodes, TreeNode{
+			ID:       item.ID,
+			Name:     item.Name,
+			Caption:  item.Caption,
+			Category: item.Category,
+			Children: buildNodes(item.Classes),
+		})
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	return nodes
 }
 
 func collectEntries(items map[string]sdkschema.TaxonomyItem, out map[string]ClassEntry) {

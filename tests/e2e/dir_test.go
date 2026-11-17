@@ -17,7 +17,12 @@ import (
 	"github.com/agntcy/lazydir/internal/dirclient"
 )
 
-const defaultDirAddr = "localhost:8888"
+const (
+	defaultDirAddr = "localhost:8888"
+
+	// seedSkill is the skill every seeded record carries.
+	seedSkill = "natural_language_processing/analytical_reasoning"
+)
 
 func dirAddr(t *testing.T) string {
 	t.Helper()
@@ -52,7 +57,7 @@ func requireDaemon(t *testing.T) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
+	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr, AuthMode: "insecure"})
 	if err != nil {
 		t.Fatalf("cannot connect to dir daemon at %s: %v", addr, err)
 	}
@@ -78,7 +83,7 @@ func seedRecord(t *testing.T, ctx context.Context, addr, dirctl string) (string,
 		"description":    "lazydir e2e test record",
 		"authors":        []string{"lazydir-e2e"},
 		"skills": []map[string]string{
-			{"name": "natural_language_processing/analytical_reasoning"},
+			{"name": seedSkill},
 		},
 		"created_at": "2025-01-01T00:00:00Z",
 	}
@@ -111,7 +116,7 @@ func TestDir_Ping(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
+	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr, AuthMode: "insecure"})
 	if err != nil {
 		t.Fatalf("Connect(%s): %v", addr, err)
 	}
@@ -132,7 +137,7 @@ func TestDir_ListSummaries(t *testing.T) {
 	cid, _ := seedRecord(t, ctx, addr, dirctl)
 	seedRecord(t, ctx, addr, dirctl)
 
-	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
+	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr, AuthMode: "insecure"})
 	if err != nil {
 		t.Fatalf("Connect(%s): %v", addr, err)
 	}
@@ -187,7 +192,7 @@ func TestDir_ListSummaries_Safe(t *testing.T) {
 
 	cid, _ := seedRecord(t, ctx, addr, dirctl)
 
-	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
+	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr, AuthMode: "insecure"})
 	if err != nil {
 		t.Fatalf("Connect(%s): %v", addr, err)
 	}
@@ -218,7 +223,7 @@ func TestDir_PushAndPull(t *testing.T) {
 
 	t.Logf("pushed record, CID: %s", cid)
 
-	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
+	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr, AuthMode: "insecure"})
 	if err != nil {
 		t.Fatalf("Connect(%s): %v", addr, err)
 	}
@@ -252,7 +257,7 @@ func TestDir_ListFilterValues(t *testing.T) {
 
 	seedRecord(t, ctx, addr, dirctl)
 
-	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr})
+	c, err := dirclient.Connect(ctx, dirclient.Config{ServerAddress: addr, AuthMode: "insecure"})
 	if err != nil {
 		t.Fatalf("Connect(%s): %v", addr, err)
 	}
@@ -264,7 +269,7 @@ func TestDir_ListFilterValues(t *testing.T) {
 	}
 
 	want := map[dirclient.FilterCategory]string{
-		dirclient.FilterSkill:         "natural_language_processing/analytical_reasoning",
+		dirclient.FilterSkill:         seedSkill,
 		dirclient.FilterAuthor:        "lazydir-e2e",
 		dirclient.FilterSchemaVersion: "1.0.0",
 	}

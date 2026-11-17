@@ -143,6 +143,14 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewFilters, 'x', gocui.ModNone, app.filterClearAll); err != nil {
 		return err
 	}
+	for _, view := range []string{viewFilters, viewRecords} {
+		if err := g.SetKeybinding(view, '+', gocui.ModNone, app.minScoreUp); err != nil {
+			return err
+		}
+		if err := g.SetKeybinding(view, '-', gocui.ModNone, app.minScoreDown); err != nil {
+			return err
+		}
+	}
 
 	// ── Records panel ────────────────────────────────────────────────────────
 	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
@@ -158,7 +166,7 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewRecords, gocui.KeyEnter, gocui.ModNone, app.recordSelect); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, '/', gocui.ModNone, app.openFilterDialog); err != nil {
+	if err := g.SetKeybinding(viewRecords, '/', gocui.ModNone, app.localOnly(app.openFilterDialog)); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewRecords, gocui.KeyEsc, gocui.ModNone, app.clearFilter); err != nil {
@@ -167,10 +175,10 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewRecords, 'i', gocui.ModNone, app.recordToggleInfo); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'y', gocui.ModNone, app.openCopyMenu); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'y', gocui.ModNone, app.localOnly(app.openCopyMenu)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'd', gocui.ModNone, app.recordDelete); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'd', gocui.ModNone, app.localOnly(app.recordDelete)); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewRecords, gocui.KeySpace, gocui.ModNone, app.recordToggleSelect); err != nil {
@@ -179,19 +187,26 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewRecords, gocui.KeyCtrlA, gocui.ModNone, app.recordSelectAll); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'C', gocui.ModNone, app.clipboardToggle); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'C', gocui.ModNone, app.localOnly(app.clipboardToggle)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'V', gocui.ModNone, app.clipboardPaste); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'V', gocui.ModNone, app.localOnly(app.clipboardPaste)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'P', gocui.ModNone, app.recordPublish); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'P', gocui.ModNone, app.localOnly(app.recordPublish)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'U', gocui.ModNone, app.recordUnpublish); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'U', gocui.ModNone, app.localOnly(app.recordUnpublish)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewRecords, 'X', gocui.ModNone, app.recordCancelSync); err != nil {
+	if err := g.SetKeybinding(viewRecords, 'X', gocui.ModNone, app.localOnly(app.recordCancelSync)); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewRecords, 'S', gocui.ModNone, app.networkSync); err != nil {
+		return err
+	}
+	// The unreachable-peer preview offers S, so it works from Preview too.
+	if err := g.SetKeybinding(viewPreview, 'S', gocui.ModNone, app.networkSync); err != nil {
 		return err
 	}
 
@@ -450,6 +465,13 @@ func (app *Gui) cycleFocus(g *gocui.Gui, dir int) error {
 // ── Refresh ───────────────────────────────────────────────────────────────────
 
 func (app *Gui) refresh(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		// Also retries a taxonomy fetch that failed; loaded versions are kept.
+		app.startNetworkTaxonomyFetch()
+		app.renderFiltersView(g)
+		app.startNetworkSearch()
+		return nil
+	}
 	if app.state.client == nil {
 		return nil
 	}

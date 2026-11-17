@@ -32,6 +32,10 @@ func (app *Gui) renderFiltersView(g *gocui.Gui) {
 		return
 	}
 	v.Clear()
+	if app.state.browse == browseNetwork {
+		app.renderNetFiltersList(v)
+		return
+	}
 	app.renderFiltersList(g, v)
 }
 
@@ -148,6 +152,15 @@ func (app *Gui) recordsTitle() string {
 	return title
 }
 
+// recordsPanelTitle is the [3] Records panel title for the current browse
+// mode.
+func (app *Gui) recordsPanelTitle() string {
+	if app.state.browse == browseNetwork {
+		return app.networkTitle()
+	}
+	return app.recordsTitle()
+}
+
 // renderRecordsView redraws the [3] Records panel and updates its title to
 // reflect the current record count, stream state, and name filter.
 func (app *Gui) renderRecordsView(g *gocui.Gui) {
@@ -156,8 +169,12 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		return
 	}
 	v.Clear()
+	if app.state.browse == browseNetwork {
+		app.renderNetRecordsView(v)
+		return
+	}
 
-	v.Title = app.recordsTitle()
+	v.Title = app.recordsPanelTitle()
 
 	viewW, viewH := v.Size()
 	wrap := viewW < oneLineRowMinWidth
@@ -179,8 +196,8 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	}
 
 	clipBg := "\033[41m"
-	yellow := "\033[33m"
-	red := "\033[31m"
+	yellow := ansiYellow
+	red := ansiRed
 	green := ansiGreen
 
 	for _, row := range rows {
@@ -309,6 +326,12 @@ func recordRowLines(lineColor string, selected, wrap bool, nameW, viewW int, nam
 // recordRowLine formats a Records row that fits on one line.
 func recordRowLine(lineColor string, selected bool, nameW, viewW int, name, version, badges string) string {
 	text := runewidth.FillRight(name, nameW) + "  " + runewidth.FillRight(version, versionColWidth) + "  " + badges
+	return styledRowLine(lineColor, selected, true, viewW, text)
+}
+
+// styledRow lays out a one-line row behind the selection gutter; see
+// styledRowLine.
+func styledRow(lineColor string, selected bool, viewW int, text string) string {
 	return styledRowLine(lineColor, selected, true, viewW, text)
 }
 

@@ -44,6 +44,15 @@ func (app *Gui) recordMouseClick(g *gocui.Gui, v *gocui.View) error {
 	}
 	_, cy := v.Cursor()
 	_, oy := v.Origin()
+	if app.state.browse == browseNetwork {
+		idx := oy + cy
+		if idx >= 0 && idx < len(app.netRecordRows()) {
+			app.state.net.cursor = idx
+			app.renderRecordsView(g)
+			app.autoPreviewRecord(g)
+		}
+		return nil
+	}
 	idx := (oy + cy) / max(app.state.recordRowHeight, 1)
 	rows := app.state.recordDisplayRows
 	if idx >= 0 && idx < len(rows) {
@@ -55,6 +64,10 @@ func (app *Gui) recordMouseClick(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) recordCursorUp(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netRecordCursorUp(g)
+		return nil
+	}
 	if app.state.recordCursor > 0 {
 		app.state.recordCursor--
 		app.renderRecordsView(g)
@@ -64,6 +77,10 @@ func (app *Gui) recordCursorUp(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) recordCursorDown(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		app.netRecordCursorDown(g)
+		return nil
+	}
 	rows := app.state.recordDisplayRows
 	if app.state.recordCursor < len(rows)-1 {
 		app.state.recordCursor++
@@ -80,6 +97,14 @@ func (app *Gui) recordCursorDown(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		r, ok := app.netCursorRow()
+		if !ok {
+			return nil
+		}
+		app.previewNetworkResult(g, r)
+		return app.focusTo(g, viewPreview)
+	}
 	rows := app.state.recordDisplayRows
 	if app.state.recordCursor >= len(rows) {
 		return nil
@@ -96,8 +121,29 @@ func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
 	if rec.Version != "" {
 		subtitle += " " + rec.Version
 	}
-	go app.pullRecord(subtitle, rec.CID)
+	go app.pullRecord(app.state.browse, subtitle, rec.CID)
 	return app.focusTo(g, viewPreview)
+}
+
+// clearNetSelection empties the network selection and reports whether there
+// was one to clear.
+func (app *Gui) clearNetSelection() bool {
+	if len(app.state.net.selection) == 0 {
+		return false
+	}
+	app.state.net.selection = nil
+	return true
+}
+
+// localOnly wraps a Records handler that only applies to This-node records, so
+// the key does nothing in network mode.
+func (app *Gui) localOnly(h func(*gocui.Gui, *gocui.View) error) func(*gocui.Gui, *gocui.View) error {
+	return func(g *gocui.Gui, v *gocui.View) error {
+		if app.state.browse == browseNetwork {
+			return nil
+		}
+		return h(g, v)
+	}
 }
 
 func (app *Gui) openFilterDialog(g *gocui.Gui, v *gocui.View) error {
@@ -126,6 +172,13 @@ func (app *Gui) openFilterDialog(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) clearFilter(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		if app.clearNetSelection() {
+			app.renderRecordsView(g)
+			app.renderStatus(g)
+		}
+		return nil
+	}
 	if app.state.filterQuery != "" {
 		app.state.filterQuery = ""
 		app.startQuery(true)
@@ -144,6 +197,9 @@ func (app *Gui) clearFilter(g *gocui.Gui, v *gocui.View) error {
 // recordToggleInfo opens/closes the info popup for the currently highlighted
 // record, fetching details via the directory's PullInfo RPC.
 func (app *Gui) recordToggleInfo(g *gocui.Gui, v *gocui.View) error {
+	if app.state.browse == browseNetwork {
+		return app.netRecordToggleInfo(g, v)
+	}
 	r := app.cursorRecord()
 	if r == nil {
 		return nil
@@ -366,6 +422,7 @@ func (app *Gui) deleteRecord(cid string) {
 			return nil
 		}
 		app.removeRecordFromState(cid)
+		app.forgetNetSynced(cid)
 		// The deleted record may have carried the last instance of some
 		// filter values; refetch so they drop out of the pick-lists.
 		app.startFilterValuesFetch(true)
@@ -705,50 +762,63 @@ func (app *Gui) runSync(ctx context.Context, sourceURL string, cids []string) {
 	app.pollSync(ctx, targetClient, syncID)
 }
 
-// pollSync polls the sync operation until it completes or fails.
-func (app *Gui) pollSync(ctx context.Context, client *dirclient.Client, syncID string) {
-	ticker := time.NewTicker(500 * time.Millisecond)
+// waitForSync polls the sync operation every interval until it completes or
+// fails and returns its last info. It returns ctx's error once ctx is done.
+func waitForSync(ctx context.Context, client *dirclient.Client, syncID string, every time.Duration) (*dirclient.SyncInfo, error) {
+	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
-			return
+			return nil, ctx.Err()
 		}
 
 		info, err := client.GetSyncInfo(ctx, syncID)
 		if err != nil {
-			app.syncFailed(ctx, "Sync status check failed: "+err.Error())
-			return
+			return nil, err
 		}
-
 		switch info.Status {
-		case dirclient.SyncCompleted:
-			app.g.Update(func(g *gocui.Gui) error {
-				if ctx.Err() != nil {
-					return nil
-				}
-				app.setRecordStatus(app.state.syncCIDs, dirclient.StatusReconciling, "")
-				app.renderRecordsView(g)
-				app.renderStatus(g)
-				return nil
-			})
-			go app.pollReconcile(ctx, client)
-			return
-		case dirclient.SyncFailed:
-			msg := fmt.Sprintf("Sync failed\n\n"+
-				"  id:     %s\n"+
-				"  source: %s\n"+
-				"  target: %s\n"+
-				"  last:   %s\n\n"+
-				"Ensure you are authenticated (dirctl auth login).",
-				syncID, info.RemoteDirectoryURL,
-				app.state.serverAddr, info.LastUpdateTime)
-			app.syncFailed(ctx, msg)
-			return
+		case dirclient.SyncCompleted, dirclient.SyncFailed:
+			return info, nil
 		}
 	}
+}
+
+// pollSync polls the sync operation until it completes or fails.
+func (app *Gui) pollSync(ctx context.Context, client *dirclient.Client, syncID string) {
+	info, err := waitForSync(ctx, client, syncID, 500*time.Millisecond)
+	if ctx.Err() != nil {
+		return
+	}
+	if err != nil {
+		app.syncFailed(ctx, "Sync status check failed: "+err.Error())
+		return
+	}
+
+	if info.Status == dirclient.SyncCompleted {
+		app.g.Update(func(g *gocui.Gui) error {
+			if ctx.Err() != nil {
+				return nil
+			}
+			app.setRecordStatus(app.state.syncCIDs, dirclient.StatusReconciling, "")
+			app.renderRecordsView(g)
+			app.renderStatus(g)
+			return nil
+		})
+		go app.pollReconcile(ctx, client)
+		return
+	}
+	msg := fmt.Sprintf("Sync failed\n\n"+
+		"  id:     %s\n"+
+		"  source: %s\n"+
+		"  target: %s\n"+
+		"  last:   %s\n\n"+
+		"Ensure you are authenticated (dirctl auth login).",
+		syncID, info.RemoteDirectoryURL,
+		app.state.serverAddr, info.LastUpdateTime)
+	app.syncFailed(ctx, msg)
 }
 
 // setRecordStatus sets the transient sync-status overlay entry for each of the
