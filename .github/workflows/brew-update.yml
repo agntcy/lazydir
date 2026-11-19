@@ -30,8 +30,19 @@ jobs:
     name: Update Formula
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ secrets.AGNTCY_BUILD_BOT_GH_TOKEN }}
+      # The PR step overrides it with the GitHub App token so that the PR
+      # triggers CI.
+      GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Authenticate as the GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.PROJECT_APP_ID }}
+          private-key: ${{ secrets.PROJECT_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -111,6 +122,8 @@ jobs:
 
       - name: Create PR
         if: ${{ steps.brew-formula.outputs.DIFF_FOUND == 1 && inputs.dry-run != true }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           gh pr create \
             --title "chore(brew): update formula to ${{ steps.release-infos.outputs.LATEST_VERSION }}" \
